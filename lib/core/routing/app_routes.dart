@@ -16,6 +16,9 @@ class AppRoutes {
 
   static const home = '/';
   static const diaryEdit = '/diary/edit';
+
+  static String diaryEditPath([String? id]) =>
+      id == null ? diaryEdit : '$diaryEdit?id=$id';
   static const insight = '/insight';
   static const shapingStone = '/shaping-stone';
   static const companion = '/companion';
@@ -26,7 +29,8 @@ class AppRoutes {
   static const customAi = '/settings/custom-ai';
 
   static Route<dynamic>? onGenerateRoute(RouteSettings settings) {
-    if (settings.name == diaryEdit) {
+    final name = settings.name ?? '';
+    if (name == diaryEdit || name.startsWith('$diaryEdit?')) {
       return MaterialPageRoute(
         settings: settings,
         builder: (_) => const DiaryEditPage(),

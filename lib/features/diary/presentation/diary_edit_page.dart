@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../data/models/diary_entry.dart';
 import '../../../data/repositories/diary_repository.dart';
+import '../../../data/services/ai_repair_service.dart';
 import '../../../data/services/location_weather_service.dart';
 
 class DiaryEditPage extends StatefulWidget {
@@ -24,18 +25,26 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   final _focusNode = FocusNode();
   final _picker = ImagePicker();
   final _repository = const DiaryRepository();
+  final _aiRepairService = const AiRepairService();
   final _locationWeatherService = const LocationWeatherService();
   final _images = <XFile>[];
 
   Timer? _autoSaveTimer;
   bool _routeLoaded = false;
   bool _isPreview = false;
+  bool _isAiFixing = false;
   bool _isLoadingLocation = false;
+  bool _suppressHistory = false;
+  final List<String> _undoStack = [];
+  final List<String> _redoStack = [];
+  String _lastHistoryValue = '';
   bool _hasManualLocation = false;
   bool _hasManualWeather = false;
   bool _autoSave = true;
   bool _hasUnsavedChanges = false;
   bool _isBootstrapping = true;
+  bool _useCustomAiFix = false;
+  String _customAiFixRule = '';
 
   String _entryId = const Uuid().v4();
   DateTime _createdAt = DateTime.now();
@@ -65,7 +74,12 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     super.didChangeDependencies();
     if (_routeLoaded) return;
     _routeLoaded = true;
-    final id = ModalRoute.of(context)?.settings.arguments as String?;
+    final routeId = ModalRoute.of(context)?.settings.arguments as String?;
+    final urlId = Uri.base.queryParameters['id'];
+    final id = routeId ?? urlId;
+    if (id != null) {
+      _restoreFocus();
+    }
     if (id == null) {
       _loadNewEntryState();
     } else {
@@ -75,6 +89,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
 
   @override
   void dispose() {
+    ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
     _autoSaveTimer?.cancel();
     _controller.removeListener(_onTextChanged);
     _focusNode.dispose();
@@ -91,6 +106,8 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
           .clamp(0, _ListStyle.values.length - 1);
       _listStyle = _ListStyle.values[listIndex];
       _autoSave = prefs.getBool('diary.autoSave') ?? true;
+      _useCustomAiFix = prefs.getBool('diary.aiFix.useCustom') ?? false;
+      _customAiFixRule = prefs.getString('diary.aiFix.customRule') ?? '';
     });
   }
 
@@ -109,34 +126,46 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _hasManualLocation = false;
       _hasManualWeather = false;
       _hasUnsavedChanges = false;
+      _undoStack.clear();
+      _redoStack.clear();
+      _lastHistoryValue = '';
       _isBootstrapping = false;
     });
     await _loadCurrentLocationWeather();
   }
 
   Future<void> _loadExistingEntryState(String id) async {
-    final entry = await _repository.getEntryById(id);
+    DiaryEntry? entry = await _repository.getEntryById(id);
+    entry ??= await _repository.getRecoverySnapshot(id);
+    if (entry == null) {
+      final entries = await _repository.listEntries();
+      entry = entries.where((e) => e.id == id).firstOrNull;
+    }
     if (!mounted) return;
     if (entry == null) {
       setState(() => _isBootstrapping = false);
       return;
     }
+    final resolvedEntry = entry;
     _controller.removeListener(_onTextChanged);
-    _controller.text = entry.content;
+    _controller.text = resolvedEntry.content;
     _controller.addListener(_onTextChanged);
     setState(() {
-      _entryId = entry.id;
-      _createdAt = entry.createdAt;
-      _selectedDate = entry.date;
-      _selectedLocation = entry.location;
-      _weather = entry.weather;
-      _temperature = entry.temperature;
-      _hasManualLocation = entry.location.trim().isNotEmpty &&
-          entry.location != '未选择地点' &&
-          entry.location != '点击选择地点';
-      _hasManualWeather =
-          entry.weather.trim().isNotEmpty && entry.weather != '天气';
+      _entryId = resolvedEntry.id;
+      _createdAt = resolvedEntry.createdAt;
+      _selectedDate = resolvedEntry.date;
+      _selectedLocation = resolvedEntry.location;
+      _weather = resolvedEntry.weather;
+      _temperature = resolvedEntry.temperature;
+      _hasManualLocation = resolvedEntry.location.trim().isNotEmpty &&
+          resolvedEntry.location != '未选择地点' &&
+          resolvedEntry.location != '点击选择地点';
+      _hasManualWeather = resolvedEntry.weather.trim().isNotEmpty &&
+          resolvedEntry.weather != '天气';
       _hasUnsavedChanges = false;
+      _undoStack.clear();
+      _redoStack.clear();
+      _lastHistoryValue = resolvedEntry.content;
       _isBootstrapping = false;
     });
   }
@@ -169,11 +198,227 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
 
   void _onTextChanged() {
     if (_isBootstrapping) return;
+    if (!_suppressHistory && _controller.text != _lastHistoryValue) {
+      _undoStack.add(_lastHistoryValue);
+      _lastHistoryValue = _controller.text;
+      _redoStack.clear();
+    }
     if (_autoSave) {
       _saveEntry();
     } else {
       setState(() => _hasUnsavedChanges = true);
     }
+  }
+
+  void _restoreText(String value) {
+    _suppressHistory = true;
+    _controller.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
+    _lastHistoryValue = value;
+    _suppressHistory = false;
+    _restoreFocus();
+  }
+
+  void _undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_controller.text);
+    _restoreText(_undoStack.removeLast());
+  }
+
+  void _redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_controller.text);
+    _restoreText(_redoStack.removeLast());
+  }
+
+  Future<void> _runAiFix() async {
+    if (_controller.text.trim().isEmpty || _isAiFixing) return;
+    setState(() => _isAiFixing = true);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Expanded(child: Text('AI 正在修复日记内容…')),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final before = _controller.text;
+      final result = await _aiRepairService.repair(
+        before,
+        customRule: _useCustomAiFix ? _customAiFixRule : null,
+      );
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+
+      final hasTextChange = result.correctedText != before;
+      final shouldApplyResult = result.applied &&
+          (_useCustomAiFix ? hasTextChange : result.totalFixes > 0);
+
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.clearSnackBars();
+      if (!shouldApplyResult) {
+        messenger.showSnackBar(const SnackBar(
+          content: Text('无需优化'),
+          duration: Duration(seconds: 2),
+        ));
+      } else {
+        _undoStack.add(before);
+        _redoStack.clear();
+        _restoreText(result.correctedText);
+        await _saveEntry();
+        if (!mounted) return;
+        final message = _useCustomAiFix
+            ? '已完成自定义修复'
+            : '已修复 ${result.typoCount} 个错别字，${result.grammarCount} 个语法问题，${result.punctuationCount} 个标点问题';
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(message),
+            duration: const Duration(seconds: 3),
+            action: SnackBarAction(label: '撤回', onPressed: _undo),
+          ),
+        );
+      }
+      if (result.warnings.isNotEmpty && mounted) {
+        final title = result.applied ? 'AI 修复提醒' : 'AI 修复未自动应用';
+        showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(title),
+            content: Text(result.warnings.join('\n')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('知道了'),
+              ),
+            ],
+          ),
+        );
+      }
+    } on AiRepairException catch (error) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _isAiFixing = false);
+    }
+  }
+
+  bool get _canUndo => _undoStack.isNotEmpty;
+  bool get _canRedo => _redoStack.isNotEmpty;
+  bool get _canAiFix => !_isAiFixing && _controller.text.trim().isNotEmpty;
+
+  Future<void> _openAiFixMenu([Offset? position]) async {
+    if (!context.mounted) return;
+    final action = await showMenu<_AiFixMenuAction>(
+      context: context,
+      position: _menuPosition(position),
+      items: [
+        CheckedPopupMenuItem(
+          value: _AiFixMenuAction.toggleCustom,
+          checked: _useCustomAiFix,
+          child: const Text('启用自定义修复'),
+        ),
+        PopupMenuItem(
+          value: _AiFixMenuAction.custom,
+          enabled: _useCustomAiFix,
+          child: const Text('自定义修复'),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    if (action == _AiFixMenuAction.toggleCustom) {
+      await _setAiFixMode(!_useCustomAiFix);
+      return;
+    }
+    if (action == _AiFixMenuAction.custom) {
+      final controller = TextEditingController(text: _customAiFixRule);
+      if (!context.mounted) return;
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('自定义修复'),
+          content: TextField(
+            controller: controller,
+            maxLines: 6,
+            decoration: const InputDecoration(
+              hintText: '例如：\n只修复错别字\n统一标题和列表格式\n轻微润色，但保留原意',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('保存并启用'),
+            ),
+          ],
+        ),
+      );
+      if (result == null) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('diary.aiFix.customRule', result);
+      await prefs.setBool('diary.aiFix.useCustom', true);
+      setState(() {
+        _customAiFixRule = result;
+        _useCustomAiFix = true;
+      });
+    }
+  }
+
+  Future<void> _chooseListStyle([Offset? position]) async {
+    final style = await showMenu<_ListStyle>(
+      context: context,
+      position: _menuPosition(position),
+      items: const [
+        PopupMenuItem(value: _ListStyle.unordered, child: Text('无序列表  - 列表项')),
+        PopupMenuItem(value: _ListStyle.ordered, child: Text('有序列表  1. 列表项')),
+        PopupMenuItem(
+            value: _ListStyle.checkbox, child: Text('复选框  - [ ] 待办项')),
+      ],
+    );
+    if (style == null) return;
+    setState(() => _listStyle = style);
+    await _saveListStyle(style);
+    _restoreFocus();
+  }
+
+  RelativeRect _menuPosition(Offset? position) {
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final offset = position ?? overlay.size.center(Offset.zero);
+    return RelativeRect.fromRect(
+      Rect.fromCircle(center: offset, radius: 1),
+      Offset.zero & overlay.size,
+    );
+  }
+
+  Future<void> _chooseHeadingLevel([Offset? position]) async {
+    final level = await showMenu<int>(
+      context: context,
+      position: _menuPosition(position),
+      items: [
+        for (var level = 1; level <= 6; level++)
+          PopupMenuItem(
+              value: level, child: Text('H$level  ${'#' * level} 标题')),
+      ],
+    );
+    if (level == null) return;
+    setState(() => _headingLevel = level);
+    await _saveHeadingLevel(level);
+    _restoreFocus();
   }
 
   Future<void> _saveHeadingLevel(int level) async {
@@ -191,6 +436,47 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     await prefs.setBool('diary.autoSave', value);
     setState(() => _autoSave = value);
     if (value) await _saveEntry();
+  }
+
+  Future<void> _setAiFixMode(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('diary.aiFix.useCustom', value);
+    setState(() => _useCustomAiFix = value);
+  }
+
+  Future<void> _editCustomAiFixRule() async {
+    final controller = TextEditingController(text: _customAiFixRule);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('自定义修复'),
+        content: TextField(
+          controller: controller,
+          maxLines: 6,
+          decoration: const InputDecoration(
+            hintText: '例如：\n只修复错别字\n统一 Markdown 标题和列表格式\n轻微润色，但保留原意',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('保存并启用'),
+          ),
+        ],
+      ),
+    );
+    if (result == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('diary.aiFix.customRule', result);
+    await prefs.setBool('diary.aiFix.useCustom', true);
+    setState(() {
+      _customAiFixRule = result;
+      _useCustomAiFix = true;
+    });
   }
 
   Future<void> _discardAndClose() async {
@@ -239,6 +525,26 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
             ],
           ),
         ),
+        PopupMenuItem(
+          value: _EditorMenuAction.toggleAiFixMode,
+          child: Row(
+            children: [
+              Icon(_useCustomAiFix ? Icons.tune : Icons.auto_fix_high),
+              const SizedBox(width: 8),
+              Text(_useCustomAiFix ? '切换到标准修复' : '切换到自定义修复'),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: _EditorMenuAction.customAiFix,
+          child: Row(
+            children: [
+              Icon(Icons.edit_note_outlined),
+              SizedBox(width: 8),
+              Text('编辑自定义修复'),
+            ],
+          ),
+        ),
         const PopupMenuItem(
           value: _EditorMenuAction.discard,
           child: Row(
@@ -272,6 +578,10 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
         await _saveEntry();
       case _EditorMenuAction.toggleAutoSave:
         await _setAutoSave(!_autoSave);
+      case _EditorMenuAction.toggleAiFixMode:
+        await _setAiFixMode(!_useCustomAiFix);
+      case _EditorMenuAction.customAiFix:
+        await _editCustomAiFixRule();
       case _EditorMenuAction.discard:
         await _discardAndClose();
       case _EditorMenuAction.delete:
@@ -312,49 +622,6 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       case null:
         return false;
     }
-  }
-
-  Future<void> _chooseHeadingLevel([Offset? position]) async {
-    final level = await showMenu<int>(
-      context: context,
-      position: _menuPosition(position),
-      items: [
-        for (var level = 1; level <= 6; level++)
-          PopupMenuItem(
-              value: level, child: Text('H$level  ${'#' * level} 标题')),
-      ],
-    );
-    if (level == null) return;
-    setState(() => _headingLevel = level);
-    await _saveHeadingLevel(level);
-    _restoreFocus();
-  }
-
-  Future<void> _chooseListStyle([Offset? position]) async {
-    final style = await showMenu<_ListStyle>(
-      context: context,
-      position: _menuPosition(position),
-      items: const [
-        PopupMenuItem(value: _ListStyle.unordered, child: Text('无序列表  - 列表项')),
-        PopupMenuItem(value: _ListStyle.ordered, child: Text('有序列表  1. 列表项')),
-        PopupMenuItem(
-            value: _ListStyle.checkbox, child: Text('复选框  - [ ] 待办项')),
-      ],
-    );
-    if (style == null) return;
-    setState(() => _listStyle = style);
-    await _saveListStyle(style);
-    _restoreFocus();
-  }
-
-  RelativeRect _menuPosition(Offset? position) {
-    final overlay =
-        Overlay.of(context).context.findRenderObject()! as RenderBox;
-    final offset = position ?? overlay.size.center(Offset.zero);
-    return RelativeRect.fromRect(
-      Rect.fromCircle(center: offset, radius: 1),
-      Offset.zero & overlay.size,
-    );
   }
 
   void _toggleHeading() {
@@ -736,6 +1003,13 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
                 onListLongPress: _chooseListStyle,
                 onDivider: _insertDivider,
                 onImage: _pickImages,
+                onUndo: _undo,
+                onRedo: _redo,
+                onAiFix: _runAiFix,
+                onAiFixLongPress: _openAiFixMenu,
+                canUndo: _canUndo,
+                canRedo: _canRedo,
+                canAiFix: _canAiFix,
               ),
             ),
           ],
@@ -858,6 +1132,13 @@ class _EditorAccessoryBar extends StatelessWidget {
     required this.onListLongPress,
     required this.onDivider,
     required this.onImage,
+    required this.onUndo,
+    required this.onRedo,
+    required this.onAiFix,
+    required this.onAiFixLongPress,
+    required this.canUndo,
+    required this.canRedo,
+    required this.canAiFix,
   });
 
   final int headingLevel;
@@ -870,6 +1151,13 @@ class _EditorAccessoryBar extends StatelessWidget {
   final Future<void> Function([Offset? position]) onListLongPress;
   final VoidCallback onDivider;
   final VoidCallback onImage;
+  final VoidCallback onUndo;
+  final VoidCallback onRedo;
+  final VoidCallback onAiFix;
+  final Future<void> Function([Offset? position]) onAiFixLongPress;
+  final bool canUndo;
+  final bool canRedo;
+  final bool canAiFix;
 
   @override
   Widget build(BuildContext context) {
@@ -886,11 +1174,12 @@ class _EditorAccessoryBar extends StatelessWidget {
                   GestureDetector(
                     onSecondaryTapDown: (details) =>
                         onHeadingLongPress(details.globalPosition),
+                    onLongPressStart: (details) =>
+                        onHeadingLongPress(details.globalPosition),
                     child: IconButton(
                       tooltip: '小标题',
                       visualDensity: VisualDensity.compact,
                       onPressed: onHeading,
-                      onLongPress: onHeadingLongPress,
                       icon: Text('H$headingLevel',
                           style: const TextStyle(fontWeight: FontWeight.w700)),
                     ),
@@ -916,11 +1205,12 @@ class _EditorAccessoryBar extends StatelessWidget {
                   GestureDetector(
                     onSecondaryTapDown: (details) =>
                         onListLongPress(details.globalPosition),
+                    onLongPressStart: (details) =>
+                        onListLongPress(details.globalPosition),
                     child: IconButton(
                       tooltip: '列表',
                       visualDensity: VisualDensity.compact,
                       onPressed: onList,
-                      onLongPress: onListLongPress,
                       icon: const Icon(Icons.format_list_bulleted),
                     ),
                   ),
@@ -940,6 +1230,36 @@ class _EditorAccessoryBar extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(width: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: '撤销',
+                visualDensity: VisualDensity.compact,
+                onPressed: canUndo ? onUndo : null,
+                icon: const Icon(Icons.undo),
+              ),
+              IconButton(
+                tooltip: '重做',
+                visualDensity: VisualDensity.compact,
+                onPressed: canRedo ? onRedo : null,
+                icon: const Icon(Icons.redo),
+              ),
+              GestureDetector(
+                onSecondaryTapDown: (details) =>
+                    onAiFixLongPress(details.globalPosition),
+                onLongPressStart: (details) =>
+                    onAiFixLongPress(details.globalPosition),
+                child: IconButton(
+                  tooltip: 'AI修复',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: canAiFix ? onAiFix : null,
+                  icon: const Icon(Icons.auto_fix_high),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -950,9 +1270,13 @@ enum _EditorMenuAction {
   togglePreview,
   saveNow,
   toggleAutoSave,
+  toggleAiFixMode,
+  customAiFix,
   discard,
   delete
 }
+
+enum _AiFixMenuAction { toggleCustom, custom }
 
 enum _ListStyle { unordered, ordered, checkbox }
 

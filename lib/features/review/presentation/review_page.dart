@@ -84,7 +84,7 @@ class _ReviewPageState extends State<ReviewPage> {
       return;
     }
     Navigator.of(context)
-        .pushNamed(AppRoutes.diaryEdit, arguments: id)
+        .pushNamed(AppRoutes.diaryEditPath(id), arguments: id)
         .then((_) {
       if (mounted) {
         setState(() {

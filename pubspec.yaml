@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
 
   calendar_date_picker2: ^2.0.1
+  characters: ^1.4.1
   cupertino_icons: ^1.0.8
   go_router: ^14.6.2
   flutter_riverpod: ^2.6.1

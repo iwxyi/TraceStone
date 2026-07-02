@@ -41,7 +41,7 @@ class _TodayPageState extends State<TodayPage> {
 
   Future<void> _openEditor([String? entryId]) async {
     await Navigator.of(context)
-        .pushNamed(AppRoutes.diaryEdit, arguments: entryId);
+        .pushNamed(AppRoutes.diaryEditPath(entryId), arguments: entryId);
     if (mounted) {
       setState(() {
         _entriesFuture = repository.getEntriesForDate(DateTime.now());
