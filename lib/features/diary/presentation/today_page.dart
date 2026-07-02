@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../data/models/diary_entry.dart';
+import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
+import '../../../data/repositories/insight_repository.dart';
+import '../../../data/services/diary_analysis_service.dart';
 
 class TodayPage extends StatefulWidget {
   const TodayPage({super.key, this.onDiaryChanged});
@@ -17,8 +20,12 @@ class TodayPage extends StatefulWidget {
 
 class _TodayPageState extends State<TodayPage> {
   final repository = const DiaryRepository();
+  final insightRepository = const InsightRepository();
+  final analysisService = const DiaryAnalysisService();
   late Future<List<DiaryEntry>> _entriesFuture =
       repository.getEntriesForDate(DateTime.now());
+  String? _analyzingEntryId;
+  String? _analysisError;
 
   @override
   void initState() {
@@ -40,13 +47,35 @@ class _TodayPageState extends State<TodayPage> {
   }
 
   Future<void> _openEditor([String? entryId]) async {
-    await Navigator.of(context)
+    final result = await Navigator.of(context)
         .pushNamed(AppRoutes.diaryEditPath(entryId), arguments: entryId);
-    if (mounted) {
-      setState(() {
-        _entriesFuture = repository.getEntriesForDate(DateTime.now());
-      });
-      widget.onDiaryChanged?.call();
+    if (!mounted) return;
+    setState(() {
+      _entriesFuture = repository.getEntriesForDate(DateTime.now());
+    });
+    widget.onDiaryChanged?.call();
+    if (result is DiaryEntry) {
+      _analyzeEntry(result);
+    }
+  }
+
+  Future<void> _analyzeEntry(DiaryEntry entry) async {
+    setState(() {
+      _analyzingEntryId = entry.id;
+      _analysisError = null;
+    });
+    try {
+      await analysisService.analyzeEntry(entry);
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _analysisError = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _analyzingEntryId = null;
+          _entriesFuture = repository.getEntriesForDate(DateTime.now());
+        });
+      }
     }
   }
 
@@ -56,8 +85,7 @@ class _TodayPageState extends State<TodayPage> {
       future: _entriesFuture,
       builder: (context, snapshot) {
         final entries = snapshot.data ?? [];
-        final String? diaryInsight = null;
-        final String? advice = null;
+        final latestEntry = entries.isEmpty ? null : entries.first;
 
         return Scaffold(
           appBar: AppBar(
@@ -87,13 +115,14 @@ class _TodayPageState extends State<TodayPage> {
                   ),
                   const SizedBox(height: 10),
                 ],
-              if (diaryInsight != null) ...[
+              if (latestEntry != null) ...[
                 const SizedBox(height: 16),
-                _InsightCard(text: diaryInsight),
-              ],
-              if (advice != null) ...[
-                const SizedBox(height: 16),
-                _AdviceCard(text: advice),
+                _TodayAnalysisCard(
+                  entry: latestEntry,
+                  insightRepository: insightRepository,
+                  isAnalyzing: _analyzingEntryId == latestEntry.id,
+                  error: _analysisError,
+                ),
               ],
             ],
           ),
@@ -178,10 +207,134 @@ class _DiaryPreviewCard extends StatelessWidget {
   }
 }
 
-class _InsightCard extends StatelessWidget {
-  const _InsightCard({required this.text});
+class _TodayAnalysisCard extends StatelessWidget {
+  const _TodayAnalysisCard({
+    required this.entry,
+    required this.insightRepository,
+    required this.isAnalyzing,
+    required this.error,
+  });
 
-  final String text;
+  final DiaryEntry entry;
+  final InsightRepository insightRepository;
+  final bool isAnalyzing;
+  final String? error;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isAnalyzing) return const _AnalysisLoadingCard();
+    if (error != null) return _AnalysisErrorCard(message: error!);
+    return FutureBuilder<DiaryInsight?>(
+      future: insightRepository.getInsight(entry.id),
+      builder: (context, snapshot) {
+        final insight = snapshot.data;
+        if (insight == null) return const _AnalysisEmptyCard();
+        return _AnalysisResultCard(insight: insight);
+      },
+    );
+  }
+}
+
+class _AnalysisEmptyCard extends StatelessWidget {
+  const _AnalysisEmptyCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _HomeCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('今日日记分析',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+          SizedBox(height: 10),
+          Text('还没有分析结果。退出编辑页后，会开始结合今天日记和历史经历生成分析。'),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnalysisErrorCard extends StatelessWidget {
+  const _AnalysisErrorCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return _HomeCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('分析失败',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          Text(message),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnalysisLoadingCard extends StatefulWidget {
+  const _AnalysisLoadingCard();
+
+  @override
+  State<_AnalysisLoadingCard> createState() => _AnalysisLoadingCardState();
+}
+
+class _AnalysisLoadingCardState extends State<_AnalysisLoadingCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _HomeCard(
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) {
+          final opacity = 0.45 + _controller.value * 0.35;
+          return Opacity(
+            opacity: opacity,
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 10),
+                    Text('正在分析今天',
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                SizedBox(height: 10),
+                Text('正在结合今天的日记和曾经的经历，生成分析和建议。'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AnalysisResultCard extends StatelessWidget {
+  const _AnalysisResultCard({required this.insight});
+
+  final DiaryInsight insight;
 
   @override
   Widget build(BuildContext context) {
@@ -192,28 +345,29 @@ class _InsightCard extends StatelessWidget {
           const Text('今日日记分析',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
           const SizedBox(height: 10),
-          Text(text),
-        ],
-      ),
-    );
-  }
-}
-
-class _AdviceCard extends StatelessWidget {
-  const _AdviceCard({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return _HomeCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('给我的建议',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 10),
-          Text(text),
+          if (insight.reflection.isNotEmpty) Text(insight.reflection),
+          if (insight.relatedMemories.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('和过去的关联', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 6),
+            for (final memory in insight.relatedMemories.take(2))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                    '· ${memory.title}${memory.reason.isEmpty ? '' : '：${memory.reason}'}'),
+              ),
+          ],
+          if (insight.stoneTitle.isNotEmpty ||
+              insight.stoneDescription.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('给我的建议', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 6),
+            if (insight.stoneTitle.isNotEmpty)
+              Text(insight.stoneTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            if (insight.stoneDescription.isNotEmpty)
+              Text(insight.stoneDescription),
+          ],
         ],
       ),
     );

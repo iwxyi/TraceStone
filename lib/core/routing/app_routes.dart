@@ -36,8 +36,7 @@ class AppRoutes {
         builder: (_) => const DiaryEditPage(),
       );
     }
-    final builder = routes[settings.name];
-    if (builder == null) return null;
+    final builder = routes[settings.name] ?? routes[home]!;
     return MaterialPageRoute(settings: settings, builder: builder);
   }
 

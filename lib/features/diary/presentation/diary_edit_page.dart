@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:calendar_date_picker2/calendar_date_picker2.dart';
@@ -29,7 +28,6 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   final _locationWeatherService = const LocationWeatherService();
   final _images = <XFile>[];
 
-  Timer? _autoSaveTimer;
   bool _routeLoaded = false;
   bool _isPreview = false;
   bool _isAiFixing = false;
@@ -65,7 +63,6 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     super.initState();
     _controller.addListener(_onTextChanged);
     _loadEditorPreferences();
-    _startAutoSaveLoop();
     _restoreFocus();
   }
 
@@ -89,8 +86,6 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
 
   @override
   void dispose() {
-    ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
-    _autoSaveTimer?.cancel();
     _controller.removeListener(_onTextChanged);
     _focusNode.dispose();
     _controller.dispose();
@@ -187,13 +182,6 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     final entry = _currentEntry();
     if (entry.content.trim().isEmpty) return;
     await _repository.saveEntry(entry);
-    if (mounted) setState(() => _hasUnsavedChanges = false);
-  }
-
-  void _startAutoSaveLoop() {
-    _autoSaveTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (_autoSave) _saveEntry();
-    });
   }
 
   void _onTextChanged() {
@@ -205,7 +193,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     }
     if (_autoSave) {
       _saveEntry();
-    } else {
+    } else if (mounted) {
       setState(() => _hasUnsavedChanges = true);
     }
   }
@@ -479,6 +467,30 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     });
   }
 
+  Future<void> _finishEditing() async {
+    final entry = _currentEntry();
+    if (entry.content.trim().isNotEmpty) {
+      await _repository.saveEntry(entry);
+    }
+    if (mounted) {
+      Navigator.of(context).pop(entry.content.trim().isEmpty ? true : entry);
+    }
+  }
+
+  Future<void> _closeEditor() async {
+    if (_autoSave) {
+      await _finishEditing();
+      return;
+    }
+    final action = await _confirmLeave();
+    if (!mounted || action == _LeaveAction.cancel) return;
+    if (action == _LeaveAction.discard) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    await _finishEditing();
+  }
+
   Future<void> _discardAndClose() async {
     if (mounted) Navigator.of(context).pop();
   }
@@ -589,8 +601,8 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     }
   }
 
-  Future<bool> _confirmLeave() async {
-    if (_autoSave || !_hasUnsavedChanges) return true;
+  Future<_LeaveAction> _confirmLeave() async {
+    if (_autoSave || !_hasUnsavedChanges) return _LeaveAction.save;
     final action = await showDialog<_LeaveAction>(
       context: context,
       builder: (context) => AlertDialog(
@@ -615,12 +627,12 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     switch (action) {
       case _LeaveAction.save:
         await _saveEntry();
-        return true;
+        return _LeaveAction.save;
       case _LeaveAction.discard:
-        return true;
+        return _LeaveAction.discard;
       case _LeaveAction.cancel:
       case null:
-        return false;
+        return _LeaveAction.cancel;
     }
   }
 
@@ -932,17 +944,15 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (_autoSave) {
-          await _saveEntry();
-          if (context.mounted) Navigator.of(context).pop(true);
-          return;
-        }
-        if (await _confirmLeave() && context.mounted) {
-          Navigator.of(context).pop(true);
-        }
+        await _closeEditor();
       },
       child: Scaffold(
         appBar: AppBar(
+          leading: IconButton(
+            tooltip: '返回',
+            onPressed: _closeEditor,
+            icon: const Icon(Icons.arrow_back),
+          ),
           title: const Text('写日记'),
           actions: [
             IconButton(
