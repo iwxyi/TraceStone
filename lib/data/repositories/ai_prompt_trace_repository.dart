@@ -37,6 +37,33 @@ class AiPromptTraceRepository {
     await prefs.remove('$_prefix$id');
   }
 
+  Future<void> deleteForEntry(String entryId) async {
+    final value = entryId.trim();
+    if (value.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs
+        .getKeys()
+        .where((key) => key.startsWith(_prefix))
+        .toList(growable: false);
+    for (final key in keys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) continue;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          await prefs.remove(key);
+          continue;
+        }
+        final trace = AiPromptTrace.fromJson(decoded);
+        if (_traceReferencesEntry(trace, value)) {
+          await prefs.remove(key);
+        }
+      } on Object {
+        await prefs.remove(key);
+      }
+    }
+  }
+
   Future<int> deleteAllTraces() async {
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs
@@ -52,5 +79,18 @@ class AiPromptTraceRepository {
   String? _safeGetString(SharedPreferences prefs, String key) {
     final value = prefs.get(key);
     return value is String ? value : null;
+  }
+
+  bool _traceReferencesEntry(AiPromptTrace trace, String entryId) {
+    if (trace.id == entryId) return true;
+    return [
+      trace.contextSummary,
+      trace.systemPromptPreview,
+      trace.userPromptPreview,
+      trace.rawResponsePreview,
+      trace.systemPrompt ?? '',
+      trace.userPrompt ?? '',
+      trace.rawResponse ?? '',
+    ].any((value) => value.contains(entryId));
   }
 }

@@ -167,6 +167,75 @@ void main() {
       expect(await retrievalRepository.getTrace('entry'), isNull);
     });
 
+    test('clears prompt and retrieval traces that reference an entry',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const promptRepository = AiPromptTraceRepository();
+      const retrievalRepository = AiRetrievalTraceRepository();
+      final date = DateTime(2026, 7, 3);
+      await promptRepository.saveTrace(AiPromptTrace(
+        id: 'companion:last',
+        scenario: 'question',
+        createdAt: date,
+        contextSummary: 'sources=1',
+        systemPromptPreview: 'system',
+        userPromptPreview: 'entry_summary:deleted-entry',
+        systemPromptLength: 6,
+        userPromptLength: 28,
+        userPrompt: 'source_id=entry_summary:deleted-entry｜散步摘要',
+      ));
+      await promptRepository.saveTrace(AiPromptTrace(
+        id: 'unrelated',
+        scenario: 'question',
+        createdAt: date,
+        contextSummary: 'sources=0',
+        systemPromptPreview: 'system',
+        userPromptPreview: 'unrelated-entry',
+        systemPromptLength: 6,
+        userPromptLength: 15,
+      ));
+      await retrievalRepository.saveTrace(AiRetrievalTrace(
+        entryId: 'search:last',
+        generatedAt: date,
+        scenario: 'search',
+        items: const [
+          AiRetrievalTraceItem(
+            sourceType: 'entry_summary',
+            sourceId: 'deleted-entry',
+            title: '旧摘要',
+            summary: '这条 trace 引用了已删除日记',
+            score: 8,
+            reasons: ['关键词重合'],
+            matchedTokens: ['散步'],
+          ),
+        ],
+      ));
+      await retrievalRepository.saveTrace(AiRetrievalTrace(
+        entryId: 'question:last',
+        generatedAt: date,
+        scenario: 'question',
+        items: const [
+          AiRetrievalTraceItem(
+            sourceType: 'entry_summary',
+            sourceId: 'kept-entry',
+            title: '保留摘要',
+            summary: '未引用删除日记',
+            score: 8,
+            reasons: ['关键词重合'],
+            matchedTokens: ['散步'],
+          ),
+        ],
+      ));
+
+      await promptRepository.deleteForEntry('deleted-entry');
+      await retrievalRepository.deleteForEntry('deleted-entry');
+
+      expect(await promptRepository.getTrace('companion:last'), isNull);
+      expect(await promptRepository.getTrace('unrelated'), isNotNull);
+      expect(await retrievalRepository.getTrace('search:last'), isNull);
+      expect(await retrievalRepository.getTrace('question:last'), isNotNull);
+    });
+
     test('ignores invalid prompt and retrieval trace storage values', () async {
       SharedPreferences.setMockInitialValues({
         'ai.promptTraces.list': <String>['not-json'],
@@ -4537,6 +4606,52 @@ void main() {
 
       expect(await periodRepository.getSummary('month:2026-07'), isNull);
       expect(await periodRepository.getSummary('year:2026'), isNull);
+    });
+
+    test('move to trash clears debug traces referencing the entry', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const promptRepository = AiPromptTraceRepository();
+      const retrievalRepository = AiRetrievalTraceRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'trash-debug-source',
+        date: date,
+        content: '这篇日记曾经进入搜索和问答调试记录。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await promptRepository.saveTrace(AiPromptTrace(
+        id: 'companion:last',
+        scenario: 'question',
+        createdAt: date,
+        contextSummary: 'sources=1',
+        systemPromptPreview: 'system',
+        userPromptPreview: 'entry_summary:${entry.id}',
+        systemPromptLength: 6,
+        userPromptLength: 24,
+        userPrompt: 'source_id=entry_summary:${entry.id}',
+      ));
+      await retrievalRepository.saveTrace(AiRetrievalTrace(
+        entryId: 'search:last',
+        generatedAt: date,
+        scenario: 'search',
+        items: [
+          AiRetrievalTraceItem(
+            sourceType: 'entry_summary',
+            sourceId: entry.id,
+            title: '搜索命中',
+            summary: '引用了待删除日记',
+            score: 8,
+            reasons: const ['关键词重合'],
+            matchedTokens: const ['搜索'],
+          ),
+        ],
+      ));
+
+      await diaryRepository.moveToTrash(entry.id);
+
+      expect(await promptRepository.getTrace('companion:last'), isNull);
+      expect(await retrievalRepository.getTrace('search:last'), isNull);
     });
   });
 

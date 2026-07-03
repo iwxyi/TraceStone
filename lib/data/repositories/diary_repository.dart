@@ -113,7 +113,7 @@ class DiaryRepository {
     await const AiAnalysisQueueRepository().deleteJob(id);
     await const AiEmbeddingRepository().deleteForEntry(id);
     await const AiFeedbackRepository().deleteFeedback(id);
-    await const AiPromptTraceRepository().deleteTrace(id);
+    await const AiPromptTraceRepository().deleteForEntry(id);
     await const EntrySummaryRepository().deleteForEntry(id);
     await const AiRetrievalTraceRepository().deleteForEntry(id);
     await const PeriodSummaryRepository().deleteForEntry(id);
@@ -174,7 +174,7 @@ class DiaryRepository {
     await const AiAnalysisQueueRepository().deleteJob(id);
     await const AiEmbeddingRepository().deleteForEntry(id);
     await const AiFeedbackRepository().deleteFeedback(id);
-    await const AiPromptTraceRepository().deleteTrace(id);
+    await const AiPromptTraceRepository().deleteForEntry(id);
     await const EntrySummaryRepository().deleteForEntry(id);
     await const AiRetrievalTraceRepository().deleteForEntry(id);
     await const PeriodSummaryRepository().deleteForEntry(id);
@@ -199,7 +199,7 @@ class DiaryRepository {
         await const AiAnalysisQueueRepository().deleteJob(id);
         await const AiEmbeddingRepository().deleteForEntry(id);
         await const AiFeedbackRepository().deleteFeedback(id);
-        await const AiPromptTraceRepository().deleteTrace(id);
+        await const AiPromptTraceRepository().deleteForEntry(id);
         await const EntrySummaryRepository().deleteForEntry(id);
         await const AiRetrievalTraceRepository().deleteForEntry(id);
         await const PeriodSummaryRepository().deleteForEntry(id);
