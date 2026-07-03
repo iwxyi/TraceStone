@@ -1129,6 +1129,137 @@ void main() {
       expect(entryEmbedding?.generatedAt, oldGeneratedAt);
     });
 
+    test(
+        'runner keeps local artifacts recoverable when insight generation fails',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const insightRepository = InsightRepository();
+      final entry = _entry(
+        id: 'recoverable-stage-error',
+        date: DateTime(2026, 7, 3),
+        content: '今天先记录工作压力。\n\n---\n\n晚上散步后恢复了一点。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueEntry(entry);
+
+      await AiAnalysisQueueRunner(
+        analysisService: const _ThrowingDiaryAnalysisService(),
+      ).processNext();
+
+      final job = await queueRepository.getJob(entry.id);
+      final status = await insightRepository.getStatus(entry.id);
+      final summary = await summaryRepository.getSummary(entry.id);
+      final segments = await summaryRepository.listSegments(entry.id);
+      final embeddings = await embeddingRepository.listForEntry(entry.id);
+
+      expect(job?.state, AiAnalysisJobState.incomplete);
+      expect(job?.currentStage, AiAnalysisStage.generatingInsight);
+      expect(job?.retryCount, 1);
+      expect(job?.lastError, contains('simulated insight failure'));
+      expect(job?.completedStages, contains(AiAnalysisStage.embedding));
+      expect(job?.summaryId, entry.id);
+      expect(job?.segmentIds, segments.map((segment) => segment.id).toList());
+      expect(job?.embeddingIds, [
+        'entry:${entry.id}',
+        'summary:${entry.id}',
+        for (final segment in segments) 'segment:${segment.id}',
+      ]);
+      expect(job?.stageLogs.last.message, '阶段被中断，等待继续');
+      expect(job?.stageLogs.last.outputSummary, contains('summaryId='));
+      expect(status?.state, DiaryAnalysisState.incomplete);
+      expect(status?.message, contains('已保留本地资料'));
+      expect(summary?.brief, contains('工作压力'));
+      expect(segments, hasLength(2));
+      expect(embeddings, hasLength(4));
+    });
+
+    test('runner continues with structured summaries when embeddings fail',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const insightRepository = InsightRepository();
+      final entry = _entry(
+        id: 'embedding-fallback-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天工作压力很大。\n\n---\n\n晚上散步后恢复了一些。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueEntry(entry);
+
+      await AiAnalysisQueueRunner(
+        analysisService: const _FakeDiaryAnalysisService(),
+        embeddingService: const _ThrowingEmbeddingService(),
+      ).processNext();
+
+      final job = await queueRepository.getJob(entry.id);
+      final status = await insightRepository.getStatus(entry.id);
+      final summary = await summaryRepository.getSummary(entry.id);
+      final segments = await summaryRepository.listSegments(entry.id);
+      final embeddings = await embeddingRepository.listForEntry(entry.id);
+      final insight = await insightRepository.getInsight(entry.id);
+
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.completedStages, contains(AiAnalysisStage.embedding));
+      expect(job?.embeddingIds, isEmpty);
+      expect(
+          job?.stageLogs.map((log) => log.message), contains('向量生成失败，保留结构化摘要'));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('embeddingSkipped=true'));
+      expect(status?.state, DiaryAnalysisState.completed);
+      expect(summary?.brief, contains('工作压力'));
+      expect(segments, hasLength(2));
+      expect(embeddings, isEmpty);
+      expect(insight?.reflection, '本地测试洞察');
+    });
+
+    test('runner uses body preview fallback when summary generation fails',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'summary-fallback-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天记录了一次重要对话，后来又去散步恢复状态。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueEntry(entry);
+
+      await AiAnalysisQueueRunner(
+        analysisService: const _FakeDiaryAnalysisService(),
+        summaryService: const _ThrowingSummaryService(),
+      ).processNext();
+
+      final job = await queueRepository.getJob(entry.id);
+      final summary = await summaryRepository.getSummary(entry.id);
+      final segments = await summaryRepository.listSegments(entry.id);
+      final embeddings = await embeddingRepository.listForEntry(entry.id);
+
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.stageLogs.map((log) => log.message),
+          contains('日记片段拆分失败，使用全文片段'));
+      expect(
+          job?.stageLogs.map((log) => log.message), contains('摘要生成失败，使用正文预览'));
+      expect(summary?.generator, 'fallback-local-v1');
+      expect(summary?.brief, contains('重要对话'));
+      expect(segments.single.boundary, DiarySegmentBoundary.wholeEntry);
+      expect(embeddings, hasLength(3));
+      expect(job?.embeddingIds, [
+        'entry:${entry.id}',
+        'summary:${entry.id}',
+        'segment:${entry.id}#s1',
+      ]);
+    });
+
     test('runner rebuilds stale summary and segments after entry edits',
         () async {
       SharedPreferences.setMockInitialValues({});
@@ -2518,9 +2649,187 @@ void main() {
       expect(memoryMatch.entryId, memory.sourceEntryId);
       expect(memoryMatch.reasons.join(' '), contains('向量相似度'));
       expect(memoryMatch.reasons.join(' '), contains('记忆重要度'));
+      expect(memoryMatch.reasons.join(' '), contains('记忆置信度'));
+      expect(memoryMatch.rerankSignals['confidence'], 0.76);
     });
 
-    test('skips archived long term memories in search', () async {
+    test('uses memory lifecycle signals when ranking search matches', () async {
+      SharedPreferences.setMockInitialValues({});
+      const memoryRepository = MemoryRepository();
+      final date = DateTime(2026, 7, 3);
+      await memoryRepository.saveMemory(MemoryEntry(
+        id: 'memory:lifecycle-low',
+        sourceEntryId: 'low-memory-source',
+        date: date,
+        createdAt: date,
+        summary: '散步后焦虑下降。',
+        keywords: const ['散步', '焦虑'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['自我调节'],
+        importance: 0.6,
+        confidence: 0.56,
+        decay: 0.8,
+      ));
+      await memoryRepository.saveMemory(MemoryEntry(
+        id: 'memory:lifecycle-high',
+        sourceEntryId: 'high-memory-source',
+        date: date,
+        createdAt: date,
+        summary: '散步后焦虑下降。',
+        keywords: const ['散步', '焦虑'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['自我调节'],
+        importance: 0.6,
+        confidence: 0.86,
+        referenceCount: 3,
+      ));
+
+      final matches = await const AiSearchService().search('散步 焦虑');
+      final memoryMatches =
+          matches.where((match) => match.sourceType == 'memory').toList();
+
+      expect(memoryMatches.first.sourceId, 'memory:lifecycle-high');
+      expect(memoryMatches.first.reasons.join(' '), contains('历史引用 2'));
+      expect(memoryMatches.first.rerankSignals['confidence'], 0.86);
+      expect(memoryMatches.first.rerankSignals['reference'], 2);
+      expect(
+        memoryMatches
+            .firstWhere((match) => match.sourceId == 'memory:lifecycle-low')
+            .rerankSignals['decay'],
+        -2,
+      );
+    });
+
+    test('returns profile and relationship matches with traceable signals',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const insightRepository = InsightRepository();
+      await insightRepository.saveInsight(_insight(
+        entryId: 'profile-search-source',
+        date: DateTime(2026, 7, 1),
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.64,
+          evidence: [
+            InsightEvidence(
+              type: 'current_entry',
+              id: 'profile-search-source#s1',
+              summary: '散步帮助恢复',
+            ),
+          ],
+        ),
+      ));
+      await insightRepository.saveInsight(_insight(
+        entryId: 'relationship-search-source',
+        date: DateTime(2026, 7, 2),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '妈妈',
+          relationship: 'family',
+          summary: '晚饭后沟通更平和',
+          emotion: '平和',
+          pattern: '晚间沟通更顺畅',
+          confidence: 0.66,
+          evidence: [
+            InsightEvidence(
+              type: 'current_entry',
+              id: 'relationship-search-source#s1',
+              summary: '晚间沟通',
+            ),
+          ],
+        ),
+      ));
+
+      final matches = await const AiSearchService().search('妈妈 散步 恢复');
+      final profile =
+          matches.firstWhere((match) => match.sourceType == 'profile');
+      final relationship =
+          matches.firstWhere((match) => match.sourceType == 'relationship');
+
+      expect(profile.sourceId, contains('self_regulation'));
+      expect(profile.entryId, 'profile-search-source');
+      expect(profile.reasons.join(' '), contains('画像匹配'));
+      expect(profile.rerankSignals['confidence'], 0.64);
+      expect(profile.rerankSignals['evidence'], 1);
+      expect(relationship.sourceId, '妈妈');
+      expect(relationship.entryId, 'relationship-search-source');
+      expect(relationship.reasons.join(' '), contains('关系匹配'));
+      expect(relationship.rerankSignals['confidence'], 0.66);
+      expect(relationship.rerankSignals['evidence'], 1);
+    });
+
+    test('respects profile and relationship preferences in search', () async {
+      SharedPreferences.setMockInitialValues({});
+      const insightRepository = InsightRepository();
+      const preferenceRepository = AiProfilePreferenceRepository();
+      await insightRepository.saveInsight(_insight(
+        entryId: 'profile-preference-visible',
+        date: DateTime(2026, 7, 1),
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.64,
+        ),
+      ));
+      await insightRepository.saveInsight(_insight(
+        entryId: 'profile-preference-hidden',
+        date: DateTime(2026, 7, 2),
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'preference',
+          value: '可能喜欢夜间写作',
+          confidence: 0.65,
+        ),
+      ));
+      await insightRepository.saveInsight(_insight(
+        entryId: 'relationship-preference-hidden',
+        date: DateTime(2026, 7, 3),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '小林',
+          relationship: '同事',
+          summary: '讨论产品方案',
+          confidence: 0.66,
+        ),
+      ));
+      final projection = const ProfileProjectionService().build(
+        await insightRepository.listInsights(),
+      );
+      final visibleFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'self_regulation');
+      final hiddenFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'preference');
+      await preferenceRepository.setCorrectedValue(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: visibleFact.id,
+        correctedValue: '晚饭后散步最能帮助恢复状态',
+      );
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: hiddenFact.id,
+        hidden: true,
+      );
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: '小林',
+        hidden: true,
+      );
+
+      final matches = await const AiSearchService().search('散步 夜间 小林');
+
+      final profile =
+          matches.firstWhere((match) => match.sourceType == 'profile');
+      expect(profile.sourceId, visibleFact.id);
+      expect(profile.summary, '晚饭后散步最能帮助恢复状态');
+      expect(profile.rerankSignals['userConfirmed'], 1);
+      expect(matches.map((match) => match.sourceId),
+          isNot(contains(hiddenFact.id)));
+      expect(matches.map((match) => match.sourceId), isNot(contains('小林')));
+    });
+
+    test(
+        'returns archived long term memories in explicit search with penalties',
+        () async {
       SharedPreferences.setMockInitialValues({});
       final date = DateTime(2026, 7, 3);
       await const MemoryRepository().saveMemory(MemoryEntry(
@@ -2537,9 +2846,12 @@ void main() {
       ));
 
       final matches = await const AiSearchService().search('散步 焦虑');
+      final archived = matches
+          .firstWhere((match) => match.sourceId == 'memory:archived-search');
 
-      expect(matches.map((match) => match.sourceId),
-          isNot(contains('memory:archived-search')));
+      expect(archived.sourceType, 'memory');
+      expect(archived.reasons.join(' '), contains('已归档记忆'));
+      expect(archived.rerankSignals['archived'], -1);
     });
   });
 
@@ -3155,6 +3467,18 @@ void main() {
       expect(package.debugSummary, contains('profile='));
       expect(package.retrievalTrace?.items.map((item) => item.sourceType),
           containsAll(['profile', 'relationship', 'stone']));
+      expect(
+        package.retrievalTrace?.items
+            .firstWhere((item) => item.sourceType == 'profile')
+            .rerankSignals['confidence'],
+        closeTo(0.64, 0.02),
+      );
+      expect(
+        package.retrievalTrace?.items
+            .firstWhere((item) => item.sourceType == 'relationship')
+            .rerankSignals['evidence'],
+        1,
+      );
     });
 
     test('search returns entry summaries and diary segments', () async {
@@ -3300,6 +3624,74 @@ void main() {
       expect(package.relatedMemories.single.rerankSignals, isNotEmpty);
       expect(trace?.items.single.rerankSignals, isNotEmpty);
       expect(trace?.items.single.rerankSignals.keys, contains('keyword'));
+    });
+
+    test('today context keeps related memory budget within design limit',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const memoryRepository = MemoryRepository();
+      const traceRepository = AiRetrievalTraceRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'today-memory-budget-entry',
+        date: date,
+        content: '今天散步以后焦虑下降，状态恢复。',
+      );
+      for (var index = 0; index < 10; index++) {
+        await memoryRepository.saveMemory(MemoryEntry(
+          id: 'memory:today-budget-$index',
+          sourceEntryId: 'budget-memory-source-$index',
+          date: date.subtract(Duration(days: index + 1)),
+          createdAt: date.subtract(Duration(days: index + 1)),
+          summary: '散步帮助焦虑下降并恢复状态，第 $index 条。',
+          keywords: const ['散步', '焦虑', '恢复'],
+          emotion: '放松',
+          people: const [],
+          tags: const ['情绪调节'],
+          importance: 0.8,
+          confidence: 0.74,
+        ));
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(entry);
+      final trace = await traceRepository.getTrace(entry.id);
+
+      expect(package.relatedMemories, hasLength(8));
+      expect(
+        trace?.items.where((item) => item.sourceType == 'memory'),
+        hasLength(8),
+      );
+      expect(package.debugSummary, contains('memories=8'));
+    });
+
+    test('today context keeps profile fact budget within design limit',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const insightRepository = InsightRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'today-profile-budget-entry',
+        date: date,
+        content: '今天散步后状态恢复。',
+      );
+      for (var index = 0; index < 7; index++) {
+        await insightRepository.saveInsight(_insight(
+          entryId: 'profile-budget-$index',
+          date: date.subtract(Duration(days: index)),
+          profileCandidate: ProfileUpdateCandidate(
+            field: 'profile_budget_$index',
+            value: '画像预算测试 $index',
+            confidence: 0.66,
+          ),
+        ));
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(entry);
+
+      expect(package.profileFacts, hasLength(5));
+      expect(package.debugSummary, contains('profile=5'));
     });
   });
 
@@ -4009,7 +4401,7 @@ class _FakeDiaryAnalysisService extends DiaryAnalysisService {
 
   @override
   Future<DiaryInsight> analyzeEntry(DiaryEntry entry) async {
-    return DiaryInsight(
+    final insight = DiaryInsight(
       entryId: entry.id,
       entryDate: entry.date,
       generatedAt: DateTime(2026, 7, 3),
@@ -4042,6 +4434,40 @@ class _FakeDiaryAnalysisService extends DiaryAnalysisService {
         ),
       ],
     );
+    await const InsightRepository().saveInsight(insight);
+    return insight;
+  }
+}
+
+class _ThrowingDiaryAnalysisService extends DiaryAnalysisService {
+  const _ThrowingDiaryAnalysisService();
+
+  @override
+  Future<DiaryInsight> analyzeEntry(DiaryEntry entry) async {
+    throw StateError('simulated insight failure');
+  }
+}
+
+class _ThrowingEmbeddingService extends EmbeddingService {
+  const _ThrowingEmbeddingService();
+
+  @override
+  AiEmbeddingResult embed(String text) {
+    throw StateError('simulated embedding failure');
+  }
+}
+
+class _ThrowingSummaryService extends EntrySummaryService {
+  const _ThrowingSummaryService();
+
+  @override
+  List<DiarySegment> buildSegments(DiaryEntry entry) {
+    throw StateError('simulated segment failure');
+  }
+
+  @override
+  EntrySummary buildSummary(DiaryEntry entry, List<DiarySegment> segments) {
+    throw StateError('simulated summary failure');
   }
 }
 

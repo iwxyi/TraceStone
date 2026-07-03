@@ -169,19 +169,38 @@ class AiAnalysisQueueRunner {
           !summary.entryUpdatedAt.isAtSameMomentAs(entry.updatedAt);
       var segments = await _summaryRepository.listSegments(entry.id);
       if (segments.isEmpty || staleArtifacts) {
-        segments = _summaryService.buildSegments(entry);
-        await _saveStage(
-          job,
-          state: AiAnalysisJobState.running,
-          stage: AiAnalysisStage.segmenting,
-          analysisState: DiaryAnalysisState.analyzing,
-          message: staleArtifacts ? '日记已更新，重建日记片段' : '拆分日记片段',
-          retryCount: job.retryCount,
-          completedStages: completedStages,
-          outputSummary: _segmentOutputSummary(segments),
-          segmentIds: segments.map((segment) => segment.id).toList(),
-          clearLastError: true,
-        );
+        var segmentMessage = staleArtifacts ? '日记已更新，重建日记片段' : '拆分日记片段';
+        try {
+          segments = _summaryService.buildSegments(entry);
+        } on Object catch (error) {
+          segments = _fallbackSegments(entry);
+          segmentMessage = '日记片段拆分失败，使用全文片段';
+          await _saveStage(
+            job,
+            state: AiAnalysisJobState.running,
+            stage: AiAnalysisStage.segmenting,
+            analysisState: DiaryAnalysisState.analyzing,
+            message: segmentMessage,
+            retryCount: job.retryCount,
+            completedStages: completedStages,
+            outputSummary: 'fallback=true error=$error',
+            segmentIds: segments.map((segment) => segment.id).toList(),
+          );
+        }
+        if (segmentMessage != '日记片段拆分失败，使用全文片段') {
+          await _saveStage(
+            job,
+            state: AiAnalysisJobState.running,
+            stage: AiAnalysisStage.segmenting,
+            analysisState: DiaryAnalysisState.analyzing,
+            message: segmentMessage,
+            retryCount: job.retryCount,
+            completedStages: completedStages,
+            outputSummary: _segmentOutputSummary(segments),
+            segmentIds: segments.map((segment) => segment.id).toList(),
+            clearLastError: true,
+          );
+        }
         await _summaryRepository.saveSegments(entry.id, segments);
       } else {
         await _saveStage(
@@ -203,19 +222,38 @@ class AiAnalysisQueueRunner {
       );
 
       if (summary == null || staleArtifacts) {
-        summary = _summaryService.buildSummary(entry, segments);
-        await _saveStage(
-          job,
-          state: AiAnalysisJobState.running,
-          stage: AiAnalysisStage.generatingSummary,
-          analysisState: DiaryAnalysisState.analyzing,
-          message: staleArtifacts ? '日记已更新，重建摘要包' : '生成摘要包',
-          retryCount: job.retryCount,
-          completedStages: completedStages,
-          outputSummary: _summaryOutputSummary(summary),
-          summaryId: summary.entryId,
-          clearLastError: true,
-        );
+        var summaryMessage = staleArtifacts ? '日记已更新，重建摘要包' : '生成摘要包';
+        try {
+          summary = _summaryService.buildSummary(entry, segments);
+        } on Object catch (error) {
+          summary = _fallbackSummary(entry, segments);
+          summaryMessage = '摘要生成失败，使用正文预览';
+          await _saveStage(
+            job,
+            state: AiAnalysisJobState.running,
+            stage: AiAnalysisStage.generatingSummary,
+            analysisState: DiaryAnalysisState.analyzing,
+            message: summaryMessage,
+            retryCount: job.retryCount,
+            completedStages: completedStages,
+            outputSummary: 'fallback=true error=$error',
+            summaryId: summary.entryId,
+          );
+        }
+        if (summaryMessage != '摘要生成失败，使用正文预览') {
+          await _saveStage(
+            job,
+            state: AiAnalysisJobState.running,
+            stage: AiAnalysisStage.generatingSummary,
+            analysisState: DiaryAnalysisState.analyzing,
+            message: summaryMessage,
+            retryCount: job.retryCount,
+            completedStages: completedStages,
+            outputSummary: _summaryOutputSummary(summary),
+            summaryId: summary.entryId,
+            clearLastError: true,
+          );
+        }
         await _summaryRepository.saveSummary(summary);
       } else {
         await _saveStage(
@@ -236,33 +274,51 @@ class AiAnalysisQueueRunner {
         AiAnalysisStage.generatingSummary,
       );
 
-      final embeddingsReady = await _hasAllEmbeddings(entry, summary, segments);
-      if (!embeddingsReady) {
+      var embeddingIds = <String>[];
+      try {
+        final embeddingsReady =
+            await _hasAllEmbeddings(entry, summary, segments);
+        embeddingIds = _embeddingIds(entry, segments);
+        if (!embeddingsReady) {
+          await _saveStage(
+            job,
+            state: AiAnalysisJobState.running,
+            stage: AiAnalysisStage.embedding,
+            analysisState: DiaryAnalysisState.analyzing,
+            message: '生成多级向量',
+            retryCount: job.retryCount,
+            completedStages: completedStages,
+            outputSummary: _embeddingOutputSummary(segments),
+            embeddingIds: embeddingIds,
+            clearLastError: true,
+          );
+          await _saveEmbeddings(entry, summary, segments);
+        } else {
+          await _saveStage(
+            job,
+            state: AiAnalysisJobState.running,
+            stage: AiAnalysisStage.embedding,
+            analysisState: DiaryAnalysisState.analyzing,
+            message: '复用已有多级向量',
+            retryCount: job.retryCount,
+            completedStages: completedStages,
+            outputSummary: _embeddingOutputSummary(segments),
+            embeddingIds: embeddingIds,
+            clearLastError: true,
+          );
+        }
+      } on Object catch (error) {
+        embeddingIds = const [];
         await _saveStage(
           job,
           state: AiAnalysisJobState.running,
           stage: AiAnalysisStage.embedding,
           analysisState: DiaryAnalysisState.analyzing,
-          message: '生成多级向量',
+          message: '向量生成失败，保留结构化摘要',
           retryCount: job.retryCount,
           completedStages: completedStages,
-          outputSummary: _embeddingOutputSummary(segments),
-          embeddingIds: _embeddingIds(entry, segments),
-          clearLastError: true,
-        );
-        await _saveEmbeddings(entry, summary, segments);
-      } else {
-        await _saveStage(
-          job,
-          state: AiAnalysisJobState.running,
-          stage: AiAnalysisStage.embedding,
-          analysisState: DiaryAnalysisState.analyzing,
-          message: '复用已有多级向量',
-          retryCount: job.retryCount,
-          completedStages: completedStages,
-          outputSummary: _embeddingOutputSummary(segments),
-          embeddingIds: _embeddingIds(entry, segments),
-          clearLastError: true,
+          outputSummary: 'embeddingSkipped=true error=$error',
+          embeddingIds: embeddingIds,
         );
       }
       completedStages = _markCompleted(
@@ -337,7 +393,7 @@ class AiAnalysisQueueRunner {
             'completed=${completedStages.map((item) => item.name).join(',')}',
         summaryId: summary.entryId,
         segmentIds: segments.map((segment) => segment.id).toList(),
-        embeddingIds: _embeddingIds(entry, segments),
+        embeddingIds: embeddingIds,
         insightId: insight.entryId,
         retrievalTraceId: trace?.entryId ?? entry.id,
         clearLastError: true,
@@ -345,33 +401,69 @@ class AiAnalysisQueueRunner {
     } on AiClientException catch (error) {
       await _deferJobForAi(job, error.message);
     } on Object catch (error) {
-      final latest = await _queueRepository.getJob(job.id) ?? job;
-      await _queueRepository.saveJob(latest.copyWith(
-        state: AiAnalysisJobState.failed,
-        currentStage: latest.currentStage,
-        updatedAt: now,
-        retryCount: latest.retryCount + 1,
-        lastError: error.toString(),
-        stageLogs: _appendStageLog(
-          latest.stageLogs,
-          AiAnalysisStageLog(
-            stage: latest.currentStage,
-            startedAt: DateTime.now(),
-            message: '阶段失败',
-            inputSummary: 'entryId=${job.entryId}',
-            outputSummary: '',
-            error: error.toString(),
-            retryCount: latest.retryCount + 1,
-          ),
-        ),
-      ));
-      await _insightRepository.saveStatus(DiaryAnalysisStatus(
-        entryId: job.entryId,
-        state: DiaryAnalysisState.failed,
-        updatedAt: DateTime.now(),
-        message: error.toString(),
-      ));
+      await _handleUnexpectedStageError(job, error, now);
     }
+  }
+
+  Future<void> _handleUnexpectedStageError(
+    AiAnalysisJob job,
+    Object error,
+    DateTime now,
+  ) async {
+    final latest = await _queueRepository.getJob(job.id) ?? job;
+    final nextRetry = latest.retryCount + 1;
+    final hasRecoverableArtifacts = latest.completedStages.isNotEmpty ||
+        (latest.summaryId?.isNotEmpty ?? false) ||
+        latest.segmentIds.isNotEmpty ||
+        latest.embeddingIds.isNotEmpty ||
+        (latest.retrievalTraceId?.isNotEmpty ?? false);
+    final shouldKeepRecoverable = hasRecoverableArtifacts && nextRetry < 3;
+    final nextState = shouldKeepRecoverable
+        ? AiAnalysisJobState.incomplete
+        : AiAnalysisJobState.failed;
+    final analysisState = shouldKeepRecoverable
+        ? DiaryAnalysisState.incomplete
+        : DiaryAnalysisState.failed;
+    final message = shouldKeepRecoverable ? '阶段被中断，等待继续' : '阶段失败';
+    final statusMessage =
+        shouldKeepRecoverable ? '已保留本地资料，下次将从未完成阶段继续' : error.toString();
+
+    await _queueRepository.saveJob(latest.copyWith(
+      state: nextState,
+      currentStage: latest.currentStage,
+      updatedAt: now,
+      retryCount: nextRetry,
+      lastError: error.toString(),
+      stageLogs: _appendStageLog(
+        latest.stageLogs,
+        AiAnalysisStageLog(
+          stage: latest.currentStage,
+          startedAt: DateTime.now(),
+          message: message,
+          inputSummary: 'entryId=${job.entryId}',
+          outputSummary: shouldKeepRecoverable
+              ? [
+                  if (latest.completedStages.isNotEmpty)
+                    'completed=${latest.completedStages.map((item) => item.name).join(',')}',
+                  if (latest.summaryId?.isNotEmpty ?? false)
+                    'summaryId=${latest.summaryId}',
+                  if (latest.segmentIds.isNotEmpty)
+                    'segments=${latest.segmentIds.length}',
+                  if (latest.embeddingIds.isNotEmpty)
+                    'embeddings=${latest.embeddingIds.length}',
+                ].join(' ')
+              : '',
+          error: error.toString(),
+          retryCount: nextRetry,
+        ),
+      ),
+    ));
+    await _insightRepository.saveStatus(DiaryAnalysisStatus(
+      entryId: job.entryId,
+      state: analysisState,
+      updatedAt: DateTime.now(),
+      message: statusMessage,
+    ));
   }
 
   Future<void> _deferJobForAi(AiAnalysisJob job, String message) async {
@@ -565,6 +657,53 @@ class AiAnalysisQueueRunner {
       generatedAt: DateTime.now(),
       textHash: result.textHash,
     ));
+  }
+
+  List<DiarySegment> _fallbackSegments(DiaryEntry entry) {
+    return [
+      DiarySegment(
+        id: '${entry.id}#s1',
+        entryId: entry.id,
+        index: 0,
+        text: entry.content,
+        summary: entry.excerpt,
+        topics: const [],
+        people: const [],
+        boundary: DiarySegmentBoundary.wholeEntry,
+        createdAt: DateTime.now(),
+      ),
+    ];
+  }
+
+  EntrySummary _fallbackSummary(
+    DiaryEntry entry,
+    List<DiarySegment> segments,
+  ) {
+    final brief = entry.bodyPreview.trim().isEmpty
+        ? entry.excerpt
+        : entry.bodyPreview.trim();
+    return EntrySummary(
+      entryId: entry.id,
+      date: entry.date,
+      entryUpdatedAt: entry.updatedAt,
+      generatedAt: DateTime.now(),
+      title: entry.title ?? entry.excerpt,
+      brief: brief,
+      keyPoints: [
+        if (segments.isNotEmpty) segments.first.summary else entry.excerpt,
+      ],
+      topics: const [],
+      people: const [],
+      places: [
+        if (entry.location.trim().isNotEmpty &&
+            entry.location.trim() != '未选择地点')
+          entry.location.trim(),
+      ],
+      emotion: '',
+      importance: 0.42,
+      importantQuotes: const [],
+      generator: 'fallback-local-v1',
+    );
   }
 
   String _dateLabel(DateTime date) =>

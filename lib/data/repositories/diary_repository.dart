@@ -272,7 +272,8 @@ class DiaryRepository {
 
   String? _safeGetString(SharedPreferences prefs, String key) {
     try {
-      return prefs.getString(key);
+      final value = prefs.get(key);
+      return value is String ? value : null;
     } on Object {
       return null;
     }
@@ -280,7 +281,10 @@ class DiaryRepository {
 
   List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
     try {
-      return prefs.getStringList(key);
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
     } on Object {
       return null;
     }

@@ -1,11 +1,16 @@
 import '../models/ai_context_package.dart';
 import '../models/ai_embedding.dart';
+import '../models/ai_profile.dart';
+import '../models/diary_insight.dart';
 import '../models/memory_entry.dart';
 import '../repositories/ai_embedding_repository.dart';
+import '../repositories/ai_profile_preference_repository.dart';
 import '../repositories/diary_repository.dart';
 import '../repositories/entry_summary_repository.dart';
+import '../repositories/insight_repository.dart';
 import '../repositories/memory_repository.dart';
 import 'embedding_service.dart';
+import 'profile_projection_service.dart';
 
 class AiSearchService {
   const AiSearchService({
@@ -13,6 +18,9 @@ class AiSearchService {
     DiaryRepository? diaryRepository,
     EntrySummaryRepository? summaryRepository,
     MemoryRepository? memoryRepository,
+    InsightRepository? insightRepository,
+    AiProfilePreferenceRepository? profilePreferenceRepository,
+    ProfileProjectionService? profileProjectionService,
     EmbeddingService? embeddingService,
   })  : _embeddingRepository =
             embeddingRepository ?? const AiEmbeddingRepository(),
@@ -20,12 +28,20 @@ class AiSearchService {
         _summaryRepository =
             summaryRepository ?? const EntrySummaryRepository(),
         _memoryRepository = memoryRepository ?? const MemoryRepository(),
+        _insightRepository = insightRepository ?? const InsightRepository(),
+        _profilePreferenceRepository = profilePreferenceRepository ??
+            const AiProfilePreferenceRepository(),
+        _profileProjectionService =
+            profileProjectionService ?? const ProfileProjectionService(),
         _embeddingService = embeddingService ?? const EmbeddingService();
 
   final AiEmbeddingRepository _embeddingRepository;
   final DiaryRepository _diaryRepository;
   final EntrySummaryRepository _summaryRepository;
   final MemoryRepository _memoryRepository;
+  final InsightRepository _insightRepository;
+  final AiProfilePreferenceRepository _profilePreferenceRepository;
+  final ProfileProjectionService _profileProjectionService;
   final EmbeddingService _embeddingService;
 
   Future<List<AiSearchMatch>> search(String query, {int limit = 12}) async {
@@ -83,11 +99,13 @@ class AiSearchService {
       final structuredScore = _structuredScore(queryTokens, source);
       final importanceBonus = _importanceBonus(source.importance);
       final recencyBonus = _recencyBonus(source.date);
+      final lifecycleScore = _memoryLifecycleScore(source);
       final score = (similarity * 12).round() +
           keywordScore +
           structuredScore +
           importanceBonus +
-          recencyBonus;
+          recencyBonus +
+          lifecycleScore;
       candidates.add(AiSearchMatch(
         sourceType: source.sourceType,
         sourceId: source.sourceId,
@@ -102,6 +120,7 @@ class AiSearchService {
           if (importanceBonus > 0)
             '摘要重要度 ${source.importance.toStringAsFixed(2)}',
           if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
+          ..._memoryLifecycleReasons(source),
         ],
         matchedTokens:
             _matchedTokens(queryTokens, _tokens(_searchableText(source))),
@@ -111,6 +130,7 @@ class AiSearchService {
           structured: _structuredSignals(queryTokens, source),
           importance: importanceBonus,
           recency: recencyBonus,
+          lifecycle: _memoryLifecycleSignals(source),
         ),
       ));
     }
@@ -192,7 +212,138 @@ class AiSearchService {
       final match = _matchSource(queryTokens: queryTokens, source: source);
       if (match != null) matches.add(match);
     }
+    matches.addAll(await _profileMatches(queryTokens));
     return matches;
+  }
+
+  Future<List<AiSearchMatch>> _profileMatches(Set<String> queryTokens) async {
+    final projection = _profileProjectionService
+        .build(await _insightRepository.listInsights());
+    final profileFacts = await _profilePreferenceRepository.applyToProfileFacts(
+      projection.profileFacts,
+    );
+    final relationshipProfiles =
+        await _profilePreferenceRepository.applyToRelationshipProfiles(
+      projection.relationshipProfiles,
+    );
+    final matches = <AiSearchMatch>[];
+    for (final fact in profileFacts) {
+      final match = _profileFactMatch(queryTokens, fact);
+      if (match != null) matches.add(match);
+    }
+    for (final profile in relationshipProfiles) {
+      final match = _relationshipMatch(queryTokens, profile);
+      if (match != null) matches.add(match);
+    }
+    return matches;
+  }
+
+  AiSearchMatch? _profileFactMatch(
+    Set<String> queryTokens,
+    ProfileFact fact,
+  ) {
+    final text = [
+      fact.field,
+      fact.value,
+      fact.status.name,
+      for (final evidence in fact.evidence) ...[
+        evidence.summary ?? '',
+        evidence.quote ?? '',
+        evidence.relevance ?? '',
+      ],
+    ].join(' ');
+    final sourceTokens = _tokens(text);
+    final matchedTokens = _matchedTokens(queryTokens, sourceTokens);
+    if (matchedTokens.isEmpty) return null;
+    final score = _keywordScore(queryTokens, sourceTokens) +
+        _profileStatusScore(fact.status) +
+        (fact.confidence * 4).round() +
+        fact.evidenceCount.clamp(0, 3).toInt() +
+        (fact.userConfirmed ? 3 : 0) +
+        _recencyBonus(fact.lastSeenAt);
+    return AiSearchMatch(
+      sourceType: 'profile',
+      sourceId: fact.id,
+      entryId: _firstEvidenceEntryId(fact.evidence),
+      title: fact.field,
+      summary: fact.value,
+      score: score,
+      reasons: [
+        '画像匹配：${matchedTokens.take(6).join('、')}',
+        '${fact.evidenceCount} 条证据',
+        '${fact.distinctDays} 天',
+        '置信度 ${fact.confidence.toStringAsFixed(2)}',
+        if (fact.userConfirmed) '用户确认',
+      ],
+      matchedTokens: matchedTokens.take(12).toList(),
+      rerankSignals: {
+        'keyword': _keywordScore(queryTokens, sourceTokens).toDouble(),
+        'status': _profileStatusScore(fact.status).toDouble(),
+        'confidence': fact.confidence,
+        'evidence': fact.evidenceCount.clamp(0, 3).toDouble(),
+        if (fact.userConfirmed) 'userConfirmed': 1,
+        if (_recencyBonus(fact.lastSeenAt) > 0)
+          'time': _recencyBonus(fact.lastSeenAt).toDouble(),
+      },
+    );
+  }
+
+  AiSearchMatch? _relationshipMatch(
+    Set<String> queryTokens,
+    RelationshipProfile profile,
+  ) {
+    final text = [
+      profile.personName,
+      ...profile.names,
+      profile.relationship ?? '',
+      ...profile.emotions,
+      ...profile.patterns,
+      for (final interaction in profile.recentInteractions)
+        '${interaction.summary} ${interaction.emotion ?? ''}',
+      for (final evidence in profile.evidence) ...[
+        evidence.summary ?? '',
+        evidence.quote ?? '',
+        evidence.relevance ?? '',
+      ],
+    ].join(' ');
+    final sourceTokens = _tokens(text);
+    final matchedTokens = _matchedTokens(queryTokens, sourceTokens);
+    if (matchedTokens.isEmpty) return null;
+    final score = _keywordScore(queryTokens, sourceTokens) +
+        _profileStatusScore(profile.status) +
+        (profile.confidence * 4).round() +
+        profile.interactionCount.clamp(0, 4).toInt() +
+        (profile.userConfirmed ? 3 : 0) +
+        _recencyBonus(profile.lastInteractionAt);
+    return AiSearchMatch(
+      sourceType: 'relationship',
+      sourceId: profile.personName,
+      entryId: _firstEvidenceEntryId(profile.evidence),
+      title: profile.personName,
+      summary: [
+        if (profile.relationship?.isNotEmpty ?? false) profile.relationship,
+        ...profile.patterns.take(2),
+        ...profile.emotions.take(2),
+      ].whereType<String>().join('；'),
+      score: score,
+      reasons: [
+        '关系匹配：${matchedTokens.take(6).join('、')}',
+        '${profile.interactionCount} 次互动',
+        '${profile.distinctDays} 天',
+        '置信度 ${profile.confidence.toStringAsFixed(2)}',
+        if (profile.userConfirmed) '用户确认',
+      ],
+      matchedTokens: matchedTokens.take(12).toList(),
+      rerankSignals: {
+        'keyword': _keywordScore(queryTokens, sourceTokens).toDouble(),
+        'status': _profileStatusScore(profile.status).toDouble(),
+        'confidence': profile.confidence,
+        'evidence': profile.interactionCount.clamp(0, 4).toDouble(),
+        if (profile.userConfirmed) 'userConfirmed': 1,
+        if (_recencyBonus(profile.lastInteractionAt) > 0)
+          'time': _recencyBonus(profile.lastInteractionAt).toDouble(),
+      },
+    );
   }
 
   Future<_SearchSource?> _sourceForEmbedding(
@@ -270,7 +421,6 @@ class AiSearchService {
 
   _SearchSource? _sourceForMemory(MemoryEntry? memory) {
     if (memory == null) return null;
-    if (memory.archived || memory.confidence < 0.2) return null;
     return _SearchSource(
       sourceType: 'memory',
       sourceId: memory.id,
@@ -282,6 +432,10 @@ class AiSearchService {
       topics: memory.tags,
       people: memory.people,
       emotion: memory.emotion,
+      confidence: memory.confidence,
+      referenceCount: memory.referenceCount,
+      decay: memory.decay,
+      archived: memory.archived,
       text: [
         memory.summary,
         ...memory.keywords,
@@ -332,10 +486,12 @@ class AiSearchService {
     final importanceBonus = _importanceBonus(source.importance);
     final structuredScore = _structuredScore(queryTokens, source);
     final recencyBonus = _recencyBonus(source.date);
+    final lifecycleScore = _memoryLifecycleScore(source);
     final score = _keywordScore(queryTokens, sourceTokens) +
         structuredScore +
         importanceBonus +
-        recencyBonus;
+        recencyBonus +
+        lifecycleScore;
     return AiSearchMatch(
       sourceType: source.sourceType,
       sourceId: source.sourceId,
@@ -349,6 +505,7 @@ class AiSearchService {
         if (importanceBonus > 0)
           '${source.sourceType == 'memory' ? '记忆重要度' : '摘要重要度'} ${source.importance.toStringAsFixed(2)}',
         if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
+        ..._memoryLifecycleReasons(source),
       ],
       matchedTokens: matchedTokens.take(12).toList(),
       rerankSignals: _signals(
@@ -356,6 +513,7 @@ class AiSearchService {
         structured: _structuredSignals(queryTokens, source),
         importance: importanceBonus,
         recency: recencyBonus,
+        lifecycle: _memoryLifecycleSignals(source),
       ),
     );
   }
@@ -387,6 +545,61 @@ class AiSearchService {
     if (importance >= 0.75) return 2;
     if (importance >= 0.6) return 1;
     return 0;
+  }
+
+  int _profileStatusScore(ProfileFactStatus status) {
+    switch (status) {
+      case ProfileFactStatus.stable:
+        return 6;
+      case ProfileFactStatus.emerging:
+        return 4;
+      case ProfileFactStatus.weak:
+        return 2;
+    }
+  }
+
+  int _memoryLifecycleScore(_SearchSource source) {
+    if (source.sourceType != 'memory') return 0;
+    final confidenceBonus = source.confidence >= 0.8
+        ? 2
+        : source.confidence >= 0.55
+            ? 1
+            : 0;
+    final referenceBonus = source.referenceCount.clamp(0, 2).toInt();
+    final decayPenalty = (source.decay * 3).round();
+    final archivedPenalty = source.archived ? 4 : 0;
+    final confidencePenalty = source.confidence < 0.2 ? 2 : 0;
+    return confidenceBonus +
+        referenceBonus -
+        decayPenalty -
+        archivedPenalty -
+        confidencePenalty;
+  }
+
+  List<String> _memoryLifecycleReasons(_SearchSource source) {
+    if (source.sourceType != 'memory') return const [];
+    return [
+      if (source.confidence >= 0.55)
+        '记忆置信度 ${source.confidence.toStringAsFixed(2)}',
+      if (source.referenceCount > 0)
+        '历史引用 ${source.referenceCount.clamp(0, 2).toInt()}',
+      if ((source.decay * 3).round() > 0) '记忆衰减 -${(source.decay * 3).round()}',
+      if (source.archived) '已归档记忆',
+      if (source.confidence < 0.2) '低置信记忆',
+    ];
+  }
+
+  Map<String, double> _memoryLifecycleSignals(_SearchSource source) {
+    if (source.sourceType != 'memory') return const {};
+    final decayPenalty = (source.decay * 3).round();
+    return {
+      'confidence': source.confidence,
+      if (source.referenceCount > 0)
+        'reference': source.referenceCount.clamp(0, 2).toDouble(),
+      if (decayPenalty > 0) 'decay': -decayPenalty.toDouble(),
+      if (source.archived) 'archived': -1,
+      if (source.confidence < 0.2) 'lowConfidence': -1,
+    };
   }
 
   int _structuredScore(Set<String> queryTokens, _SearchSource source) {
@@ -441,6 +654,7 @@ class AiSearchService {
     Map<String, double> structured = const {},
     int importance = 0,
     int recency = 0,
+    Map<String, double> lifecycle = const {},
   }) {
     return {
       if (semantic != null) 'semantic': semantic,
@@ -448,6 +662,7 @@ class AiSearchService {
       ...structured,
       if (importance > 0) 'importance': importance.toDouble(),
       if (recency > 0) 'time': recency.toDouble(),
+      ...lifecycle,
     };
   }
 
@@ -497,6 +712,15 @@ class AiSearchService {
       source.emotion,
     ].join(' ');
   }
+
+  String _firstEvidenceEntryId(List<InsightEvidence> evidence) {
+    for (final item in evidence) {
+      final id = item.id.trim();
+      if (id.isEmpty) continue;
+      return id.split('#').first;
+    }
+    return '';
+  }
 }
 
 class _SearchSource {
@@ -511,6 +735,10 @@ class _SearchSource {
     this.topics = const [],
     this.people = const [],
     this.emotion = '',
+    this.confidence = 1,
+    this.referenceCount = 0,
+    this.decay = 0,
+    this.archived = false,
     required this.text,
   });
 
@@ -524,5 +752,9 @@ class _SearchSource {
   final List<String> topics;
   final List<String> people;
   final String emotion;
+  final double confidence;
+  final int referenceCount;
+  final double decay;
+  final bool archived;
   final String text;
 }

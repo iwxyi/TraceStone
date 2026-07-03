@@ -57,12 +57,17 @@ class AiContextBuilder {
   final AiSearchService _searchService;
   final AiRetrievalTraceRepository _retrievalTraceRepository;
 
+  static const _todayMemoryLimit = 8;
+  static const _profileFactLimit = 5;
+
   Future<AiContextPackage> buildForTodayInsight(DiaryEntry entry) async {
     final recentEntries = await _recentEntries(entry);
     final summary = await _summaryRepository.getSummary(entry.id);
     final segments = await _summaryRepository.listSegments(entry.id);
-    final relatedMemories =
-        await _memoryRepository.findRelatedWithReasons(entry: entry);
+    final relatedMemories = await _memoryRepository.findRelatedWithReasons(
+      entry: entry,
+      limit: _todayMemoryLimit,
+    );
     final calendarMatches = await _calendarMatches(entry);
     final projection = await _profileProjection();
     final profileFacts = _topProfileFacts(projection.profileFacts);
@@ -305,7 +310,7 @@ class AiContextBuilder {
     return facts
         .where((fact) =>
             fact.status != ProfileFactStatus.weak || fact.userConfirmed)
-        .take(6)
+        .take(_profileFactLimit)
         .toList(growable: false);
   }
 
@@ -604,8 +609,10 @@ class AiContextBuilder {
               '${fact.evidenceCount} 条证据',
               '${fact.distinctDays} 天',
               '置信度 ${fact.confidence.toStringAsFixed(2)}',
+              if (fact.userConfirmed) '用户确认',
             ],
             matchedTokens: const [],
+            rerankSignals: _profileFactSignals(fact),
           ),
         for (final profile in relationshipProfiles)
           AiRetrievalTraceItem(
@@ -622,8 +629,10 @@ class AiContextBuilder {
               '${profile.interactionCount} 次互动',
               '${profile.distinctDays} 天',
               '置信度 ${profile.confidence.toStringAsFixed(2)}',
+              if (profile.userConfirmed) '用户确认',
             ],
             matchedTokens: const [],
+            rerankSignals: _relationshipSignals(profile),
           ),
         for (final task in stoneTasks)
           AiRetrievalTraceItem(
@@ -661,6 +670,26 @@ class AiContextBuilder {
       case ProfileFactStatus.weak:
         return 2;
     }
+  }
+
+  Map<String, double> _profileFactSignals(ProfileFact fact) {
+    return {
+      'status': _profileStatusScore(fact.status).toDouble(),
+      'confidence': fact.confidence,
+      'evidence': fact.evidenceCount.clamp(0, 6).toDouble(),
+      'days': fact.distinctDays.clamp(0, 6).toDouble(),
+      if (fact.userConfirmed) 'userConfirmed': 1,
+    };
+  }
+
+  Map<String, double> _relationshipSignals(RelationshipProfile profile) {
+    return {
+      'status': _profileStatusScore(profile.status).toDouble(),
+      'confidence': profile.confidence,
+      'evidence': profile.interactionCount.clamp(0, 6).toDouble(),
+      'days': profile.distinctDays.clamp(0, 6).toDouble(),
+      if (profile.userConfirmed) 'userConfirmed': 1,
+    };
   }
 }
 

@@ -977,6 +977,33 @@ void main() {
     expect(find.text('运动恢复'), findsOneWidget);
   });
 
+  testWidgets('search shows archived memory status in normal mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    await const MemoryRepository().saveMemory(MemoryEntry(
+      id: 'memory-archived-widget',
+      sourceEntryId: 'memory-archived-source',
+      date: date,
+      createdAt: date,
+      summary: '散步后焦虑下降，但这条记忆已归档。',
+      keywords: const ['散步', '焦虑'],
+      emotion: '放松',
+      people: const [],
+      tags: const ['运动恢复'],
+      archived: true,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: SearchPage()));
+    await tester.enterText(find.byType(SearchBar), '散步 焦虑');
+    await tester.tap(find.byIcon(Icons.arrow_forward));
+    await tester.pumpAndSettle();
+
+    expect(find.text('运动恢复'), findsOneWidget);
+    expect(find.text('已归档记忆'), findsOneWidget);
+    expect(find.textContaining('score'), findsNothing);
+  });
+
   testWidgets('search shows debug scores in developer mode', (tester) async {
     SharedPreferences.setMockInitialValues({
       'settings.developerMode': true,

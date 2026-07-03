@@ -103,10 +103,17 @@ class _SearchPageState extends State<SearchPage> {
                   final package = snapshot.data;
                   final searchMatches = package?.searchMatches ?? const [];
                   final diaryMatches = searchMatches
-                      .where((match) => match.sourceType != 'memory')
+                      .where((match) =>
+                          !_nonDiarySourceTypes.contains(match.sourceType))
                       .toList(growable: false);
                   final memorySearchMatches = searchMatches
                       .where((match) => match.sourceType == 'memory')
+                      .toList(growable: false);
+                  final profileSearchMatches = searchMatches
+                      .where((match) => match.sourceType == 'profile')
+                      .toList(growable: false);
+                  final relationshipSearchMatches = searchMatches
+                      .where((match) => match.sourceType == 'relationship')
                       .toList(growable: false);
                   final memoryResults = package?.relatedMemories ?? const [];
                   final memorySearchIds = memorySearchMatches
@@ -119,15 +126,33 @@ class _SearchPageState extends State<SearchPage> {
                   final profileFacts = package?.profileFacts ?? const [];
                   final relationshipProfiles =
                       package?.relationshipProfiles ?? const [];
+                  final profileFactIds =
+                      profileFacts.map((fact) => fact.id).toSet();
+                  final relationshipNames = relationshipProfiles
+                      .map((profile) => profile.personName)
+                      .toSet();
+                  final visibleProfileSearchMatches = profileSearchMatches
+                      .where(
+                          (match) => !profileFactIds.contains(match.sourceId))
+                      .toList(growable: false);
+                  final visibleRelationshipSearchMatches =
+                      relationshipSearchMatches
+                          .where((match) =>
+                              !relationshipNames.contains(match.sourceId))
+                          .toList(growable: false);
                   final stoneTasks = package?.stoneTasks ?? const [];
-                  final hasVisibleResults = (_showDiary &&
-                          diaryMatches.isNotEmpty) ||
-                      (_showMemory &&
-                          (memorySearchMatches.isNotEmpty ||
-                              relatedMemoryResults.isNotEmpty)) ||
-                      (_showProfile && profileFacts.isNotEmpty) ||
-                      (_showRelationship && relationshipProfiles.isNotEmpty) ||
-                      (_showStone && stoneTasks.isNotEmpty);
+                  final hasVisibleResults =
+                      (_showDiary && diaryMatches.isNotEmpty) ||
+                          (_showMemory &&
+                              (memorySearchMatches.isNotEmpty ||
+                                  relatedMemoryResults.isNotEmpty)) ||
+                          (_showProfile &&
+                              (visibleProfileSearchMatches.isNotEmpty ||
+                                  profileFacts.isNotEmpty)) ||
+                          (_showRelationship &&
+                              (visibleRelationshipSearchMatches.isNotEmpty ||
+                                  relationshipProfiles.isNotEmpty)) ||
+                          (_showStone && stoneTasks.isNotEmpty);
                   if (!hasVisibleResults) {
                     return const _EmptyResult();
                   }
@@ -177,7 +202,15 @@ class _SearchPageState extends State<SearchPage> {
                           const SizedBox(height: 10),
                         ],
                       ],
-                      if (_showRelationship)
+                      if (_showRelationship) ...[
+                        for (final result
+                            in visibleRelationshipSearchMatches) ...[
+                          _SearchMatchCard(
+                            result: result,
+                            developerMode: developerMode,
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                         for (final profile in relationshipProfiles) ...[
                           _RelationshipResultCard(
                             profile: profile,
@@ -185,7 +218,15 @@ class _SearchPageState extends State<SearchPage> {
                           ),
                           const SizedBox(height: 10),
                         ],
-                      if (_showProfile)
+                      ],
+                      if (_showProfile) ...[
+                        for (final result in visibleProfileSearchMatches) ...[
+                          _SearchMatchCard(
+                            result: result,
+                            developerMode: developerMode,
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                         for (final fact in profileFacts) ...[
                           _ProfileResultCard(
                             fact: fact,
@@ -193,6 +234,7 @@ class _SearchPageState extends State<SearchPage> {
                           ),
                           const SizedBox(height: 10),
                         ],
+                      ],
                       if (_showStone)
                         for (final task in stoneTasks) ...[
                           _StoneResultCard(
@@ -244,6 +286,13 @@ class _SearchPageState extends State<SearchPage> {
 }
 
 enum _SearchSourceFilter { all, diary, memory, relationship, profile, stone }
+
+const _nonDiarySourceTypes = {
+  'memory',
+  'profile',
+  'relationship',
+  'stone',
+};
 
 class _SearchDebugContextText {
   const _SearchDebugContextText(this.package);
@@ -419,6 +468,10 @@ class _SearchMatchCard extends StatelessWidget {
         return Icons.notes_outlined;
       case 'memory':
         return Icons.psychology_alt_outlined;
+      case 'profile':
+        return Icons.badge_outlined;
+      case 'relationship':
+        return Icons.people_alt_outlined;
       default:
         return Icons.article_outlined;
     }
@@ -434,6 +487,10 @@ class _SearchMatchCard extends StatelessWidget {
         return '日记全文预览';
       case 'memory':
         return '长期记忆';
+      case 'profile':
+        return '画像命中';
+      case 'relationship':
+        return '关系命中';
       default:
         return '相关记录';
     }
@@ -655,6 +712,17 @@ class _ResultCard extends StatelessWidget {
             ],
             const SizedBox(height: 8),
             Text(body),
+            if (!developerMode && _visibleCautionReasons.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final reason in _visibleCautionReasons)
+                    Chip(label: Text(reason)),
+                ],
+              ),
+            ],
             if (developerMode && reasons.isNotEmpty) ...[
               const SizedBox(height: 12),
               Wrap(
@@ -669,5 +737,11 @@ class _ResultCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<String> get _visibleCautionReasons {
+    return reasons
+        .where((reason) => reason == '已归档记忆' || reason == '低置信记忆')
+        .toList(growable: false);
   }
 }
