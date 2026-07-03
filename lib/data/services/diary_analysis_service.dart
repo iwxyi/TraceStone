@@ -65,6 +65,14 @@ class DiaryAnalysisService {
       userPrompt: userPrompt,
       maxTokens: 1600,
     );
+    await _savePromptTrace(
+      id: entry.id,
+      scenario: context.scenario.name,
+      contextSummary: context.debugSummary,
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
+      rawResponse: jsonText,
+    );
     final decoded = jsonDecode(jsonText);
     final parsed = _mapValue(decoded);
     final evidenceStats = _EvidenceFilterStats();
@@ -76,6 +84,7 @@ class DiaryAnalysisService {
         contextSummary: '${context.debugSummary} ${evidenceStats.debugSummary}',
         systemPrompt: systemPrompt,
         userPrompt: userPrompt,
+        rawResponse: jsonText,
       );
     }
     await _insightRepository.saveInsight(insight);
@@ -509,6 +518,7 @@ $feedbackBlock
     required String contextSummary,
     required String systemPrompt,
     required String userPrompt,
+    String? rawResponse,
   }) async {
     await _promptTraceRepository.saveTrace(AiPromptTrace(
       id: id,
@@ -521,6 +531,9 @@ $feedbackBlock
       userPromptLength: userPrompt.length,
       systemPrompt: systemPrompt,
       userPrompt: userPrompt,
+      rawResponsePreview: rawResponse == null ? '' : _preview(rawResponse),
+      rawResponseLength: rawResponse?.length ?? 0,
+      rawResponse: rawResponse,
     ));
   }
 

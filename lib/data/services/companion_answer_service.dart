@@ -47,6 +47,21 @@ class CompanionAnswerService {
         userPrompt: userPrompt,
         maxTokens: 1200,
       );
+      await _promptTraceRepository.saveTrace(AiPromptTrace(
+        id: trace.id,
+        scenario: trace.scenario,
+        createdAt: trace.createdAt,
+        contextSummary: trace.contextSummary,
+        systemPromptPreview: trace.systemPromptPreview,
+        userPromptPreview: trace.userPromptPreview,
+        systemPromptLength: trace.systemPromptLength,
+        userPromptLength: trace.userPromptLength,
+        rawResponsePreview: _preview(jsonText),
+        rawResponseLength: jsonText.length,
+        systemPrompt: trace.systemPrompt,
+        userPrompt: trace.userPrompt,
+        rawResponse: jsonText,
+      ));
       final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
       final sourceFilter = _CompanionSourceFilter(context);
       final sources = sourceFilter.sources(parsed['sources']);
@@ -61,8 +76,11 @@ class CompanionAnswerService {
           userPromptPreview: trace.userPromptPreview,
           systemPromptLength: trace.systemPromptLength,
           userPromptLength: trace.userPromptLength,
+          rawResponsePreview: _preview(jsonText),
+          rawResponseLength: jsonText.length,
           systemPrompt: trace.systemPrompt,
           userPrompt: trace.userPrompt,
+          rawResponse: jsonText,
         ));
       }
       return CompanionAnswer(

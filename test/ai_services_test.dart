@@ -81,8 +81,11 @@ void main() {
         userPromptPreview: 'user preview',
         systemPromptLength: 6,
         userPromptLength: 4,
+        rawResponsePreview: '{"reflection":"preview"}',
+        rawResponseLength: 25,
         systemPrompt: '完整 system prompt',
         userPrompt: '完整 user prompt',
+        rawResponse: '{"reflection":"raw"}',
       );
 
       final restored = AiPromptTrace.fromJson(trace.toJson());
@@ -99,7 +102,11 @@ void main() {
 
       expect(restored.systemPrompt, '完整 system prompt');
       expect(restored.userPrompt, '完整 user prompt');
+      expect(restored.rawResponse, '{"reflection":"raw"}');
+      expect(restored.rawResponseLength, 25);
       expect(legacy.systemPrompt, isNull);
+      expect(legacy.rawResponse, isNull);
+      expect(legacy.rawResponsePreview, isEmpty);
       expect(legacy.userPromptPreview, 'old user');
     });
 
@@ -454,6 +461,8 @@ void main() {
       expect(client.lastUserPrompt, isNot(contains('小王')));
       expect(client.lastUserPrompt, isNot(contains('隐藏的协作摩擦')));
       expect(trace?.userPrompt, contains('不要把轻松判断成焦虑'));
+      expect(trace?.rawResponse, contains('"reflection"'));
+      expect(trace?.rawResponsePreview, contains('"reflection"'));
       expect(trace?.contextSummary, contains('evidenceFiltered=3'));
       expect(trace?.contextSummary, contains('relatedSourceFiltered=1'));
       expect(insight?.relatedMemories.map((item) => item.entryId), [
@@ -2360,6 +2369,8 @@ void main() {
       expect(answer.sources.single.sourceId, 'walk-memory');
       expect(answer.sources.single.title, '运动');
       expect(trace?.contextSummary, contains('sourceFiltered=1'));
+      expect(trace?.rawResponse, contains('hallucinated'));
+      expect(trace?.rawResponsePreview, contains('hallucinated'));
     });
 
     test('question prompt respects hidden and corrected profile preferences',

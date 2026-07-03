@@ -331,6 +331,7 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
       'context=${trace.contextSummary}',
       'systemLength=${trace.systemPromptLength}',
       'userLength=${trace.userPromptLength}',
+      if (trace.rawResponseLength > 0) 'rawLength=${trace.rawResponseLength}',
       if ((trace.systemPrompt ?? '').isNotEmpty)
         'SYSTEM:\n${trace.systemPrompt}'
       else if (trace.systemPromptPreview.isNotEmpty)
@@ -339,6 +340,10 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
         'USER:\n${trace.userPrompt}'
       else if (trace.userPromptPreview.isNotEmpty)
         'USER PREVIEW:\n${trace.userPromptPreview}',
+      if ((trace.rawResponse ?? '').isNotEmpty)
+        'RAW RESPONSE:\n${trace.rawResponse}'
+      else if (trace.rawResponsePreview.isNotEmpty)
+        'RAW RESPONSE PREVIEW:\n${trace.rawResponsePreview}',
     ].join('\n');
     await Clipboard.setData(ClipboardData(text: text));
     if (!context.mounted) return;
@@ -400,6 +405,9 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
                     label: 'prompt.length',
                     value:
                         'system=${trace.systemPromptLength} user=${trace.userPromptLength}'),
+                if (trace.rawResponsePreview.isNotEmpty)
+                  _DebugLine(
+                      label: 'raw.response', value: trace.rawResponsePreview),
                 if (trace.systemPromptPreview.isNotEmpty)
                   _DebugLine(
                       label: 'system.preview',
@@ -983,6 +991,7 @@ class _JobCard extends StatelessWidget {
                         artifacts.promptSummary,
                         artifacts.systemPrompt,
                         artifacts.userPrompt,
+                        artifacts.rawResponse,
                       ],
                     ),
                     _DebugSection(
@@ -1144,6 +1153,7 @@ class _JobArtifacts {
     required this.promptPreview,
     required this.systemPrompt,
     required this.userPrompt,
+    required this.rawResponse,
     required this.claimSummary,
     required this.claimLines,
     required this.updateCandidateSummary,
@@ -1169,6 +1179,7 @@ class _JobArtifacts {
   final String promptPreview;
   final String systemPrompt;
   final String userPrompt;
+  final String rawResponse;
   final String claimSummary;
   final List<String> claimLines;
   final String updateCandidateSummary;
@@ -1249,6 +1260,8 @@ class _JobArtifacts {
           promptTrace?.systemPrompt ?? promptTrace?.systemPromptPreview ?? '',
       userPrompt:
           promptTrace?.userPrompt ?? promptTrace?.userPromptPreview ?? '',
+      rawResponse:
+          promptTrace?.rawResponse ?? promptTrace?.rawResponsePreview ?? '',
       claimSummary: insight == null
           ? ''
           : 'facts=${insight.facts.length} signals=${insight.signals.length} hypotheses=${insight.hypotheses.length} suggestions=${insight.suggestions.length}',
@@ -1325,6 +1338,7 @@ class _JobArtifacts {
         promptSummary,
         if (systemPrompt.isNotEmpty) 'SYSTEM:\n$systemPrompt',
         if (userPrompt.isNotEmpty) 'USER:\n$userPrompt',
+        if (rawResponse.isNotEmpty) 'RAW RESPONSE:\n$rawResponse',
         if (systemPrompt.isEmpty && promptPreview.isNotEmpty) promptPreview,
       ]),
       _section('Claims', [claimSummary, ...claimLines]),

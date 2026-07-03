@@ -1294,8 +1294,11 @@ void main() {
       userPromptPreview: 'user preview',
       systemPromptLength: 13,
       userPromptLength: 11,
+      rawResponsePreview: '{"answer":"preview"}',
+      rawResponseLength: 16,
       systemPrompt: '完整 system prompt',
       userPrompt: '完整 user prompt',
+      rawResponse: '{"answer":"raw"}',
     ));
 
     await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
@@ -1310,6 +1313,8 @@ void main() {
     expect(copiedText, contains('完整 system prompt'));
     expect(copiedText, contains('USER:'));
     expect(copiedText, contains('完整 user prompt'));
+    expect(copiedText, contains('RAW RESPONSE:'));
+    expect(copiedText, contains('{"answer":"raw"}'));
 
     await tester.tap(find.widgetWithText(TextButton, '清除'));
     await tester.pumpAndSettle();
