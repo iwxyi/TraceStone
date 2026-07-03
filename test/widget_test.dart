@@ -1237,6 +1237,10 @@ void main() {
     expect(find.textContaining('entry_summary:search-entry'), findsWidgets);
     expect(find.textContaining('segment:'), findsWidgets);
     await tester.tap(find.widgetWithText(TextButton, '复制').first);
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    expect(copiedText, isNull);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
     await tester.pump(const Duration(milliseconds: 100));
     expect(copiedText, contains('## Recent Retrieval Traces'));
     expect(copiedText, contains('### 搜索'));
@@ -1254,6 +1258,9 @@ void main() {
     expect(find.textContaining('月度总结 2026-07'), findsOneWidget);
     expect(find.textContaining('context=periodSummary'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, '复制总结'));
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
     await tester.pump(const Duration(milliseconds: 100));
     expect(copiedText, contains('## Recent Period Summaries'));
     expect(copiedText, contains('### 月度总结 2026-07'));
@@ -1309,6 +1316,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('最近陪伴问答'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, '复制'));
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    expect(copiedText, isNull);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(copiedText, contains('## Companion Prompt Trace'));

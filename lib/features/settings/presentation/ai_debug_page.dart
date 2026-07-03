@@ -197,6 +197,8 @@ class _RecentRetrievalTraceCardState extends State<_RecentRetrievalTraceCard> {
 
   Future<void> _copy(
       BuildContext context, _RecentRetrievalTraces traces) async {
+    final confirmed = await _confirmDebugContextCopy(context);
+    if (!confirmed) return;
     await Clipboard.setData(ClipboardData(text: traces.toDebugText()));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -259,6 +261,8 @@ class _RecentPeriodSummaryCard extends StatelessWidget {
 
   Future<void> _copy(
       BuildContext context, _RecentPeriodSummaries summaries) async {
+    final confirmed = await _confirmDebugContextCopy(context);
+    if (!confirmed) return;
     await Clipboard.setData(ClipboardData(text: summaries.toDebugText()));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -324,6 +328,8 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
       const AiPromptTraceRepository().getTrace('companion:last');
 
   Future<void> _copyTrace(BuildContext context, AiPromptTrace trace) async {
+    final confirmed = await _confirmDebugContextCopy(context);
+    if (!confirmed) return;
     final text = [
       '## Companion Prompt Trace',
       'scenario=${trace.scenario}',
@@ -422,6 +428,30 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
       },
     );
   }
+}
+
+Future<bool> _confirmDebugContextCopy(BuildContext context) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('复制调试上下文？'),
+      content: const Text(
+        '调试上下文可能包含日记摘要、检索来源、完整 Prompt 和 AI 生成结果。'
+        '这些内容只会复制到本机剪贴板，请确认不会粘贴到不可信的位置。',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('复制'),
+        ),
+      ],
+    ),
+  );
+  return confirmed == true;
 }
 
 class _QueueSummaryCard extends StatelessWidget {
