@@ -278,6 +278,14 @@ class AiSearchService {
   Future<void> _ensureProfileEmbeddings(
     _ProfileSearchSources profileSources,
   ) async {
+    await _deleteObsoleteDerivedEmbeddings(
+      sourceType: AiEmbeddingSourceType.profile,
+      validSourceIds: profileSources.profileFacts.keys,
+    );
+    await _deleteObsoleteDerivedEmbeddings(
+      sourceType: AiEmbeddingSourceType.relationship,
+      validSourceIds: profileSources.relationshipProfiles.keys,
+    );
     for (final fact in profileSources.profileFacts.values) {
       await _saveDerivedEmbedding(
         sourceType: AiEmbeddingSourceType.profile,
@@ -303,12 +311,31 @@ class AiSearchService {
   }
 
   Future<void> _ensureStoneEmbeddings(Map<String, StoneTask> tasks) async {
+    await _deleteObsoleteDerivedEmbeddings(
+      sourceType: AiEmbeddingSourceType.stone,
+      validSourceIds: tasks.keys,
+    );
     for (final task in tasks.values) {
       await _saveDerivedEmbedding(
         sourceType: AiEmbeddingSourceType.stone,
         sourceId: task.id,
         entryId: task.sourceEntryId,
         text: _stoneTaskText(task),
+      );
+    }
+  }
+
+  Future<void> _deleteObsoleteDerivedEmbeddings({
+    required AiEmbeddingSourceType sourceType,
+    required Iterable<String> validSourceIds,
+  }) async {
+    final valid = validSourceIds.toSet();
+    final existing = await _embeddingRepository.listByType(sourceType);
+    for (final embedding in existing) {
+      if (valid.contains(embedding.sourceId)) continue;
+      await _embeddingRepository.deleteBySource(
+        sourceType: sourceType,
+        sourceId: embedding.sourceId,
       );
     }
   }

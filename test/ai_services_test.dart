@@ -3365,6 +3365,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       const insightRepository = InsightRepository();
       const preferenceRepository = AiProfilePreferenceRepository();
+      const embeddingRepository = AiEmbeddingRepository();
       await insightRepository.saveInsight(_insight(
         entryId: 'profile-preference-visible',
         date: DateTime(2026, 7, 1),
@@ -3400,6 +3401,21 @@ void main() {
           .firstWhere((fact) => fact.field == 'self_regulation');
       final hiddenFact = projection.profileFacts
           .firstWhere((fact) => fact.field == 'preference');
+      await const AiSearchService().search('夜间 小林');
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.profile,
+          sourceId: hiddenFact.id,
+        ),
+        isNotNull,
+      );
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.relationship,
+          sourceId: '小林',
+        ),
+        isNotNull,
+      );
       await preferenceRepository.setCorrectedValue(
         targetType: AiProfilePreferenceTargetType.profileFact,
         targetId: visibleFact.id,
@@ -3426,6 +3442,20 @@ void main() {
       expect(matches.map((match) => match.sourceId),
           isNot(contains(hiddenFact.id)));
       expect(matches.map((match) => match.sourceId), isNot(contains('小林')));
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.profile,
+          sourceId: hiddenFact.id,
+        ),
+        isNull,
+      );
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.relationship,
+          sourceId: '小林',
+        ),
+        isNull,
+      );
     });
 
     test('returns stone task matches from vectors and keywords', () async {
@@ -3464,6 +3494,17 @@ void main() {
       expect(stone.reasons.join(' '), contains('关键词重合'));
       expect(embedding?.sourceType, AiEmbeddingSourceType.stone);
       expect(embedding?.entryId, 'stone-source-entry');
+
+      await stoneRepository.deleteTask('stone:walk-search');
+      await const AiSearchService().search('饭后散步 恢复');
+
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.stone,
+          sourceId: 'stone:walk-search',
+        ),
+        isNull,
+      );
     });
 
     test(
