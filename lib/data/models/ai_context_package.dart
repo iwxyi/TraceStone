@@ -90,6 +90,7 @@ class AiCalendarMatch {
     required this.dayOffset,
     this.label,
     this.calendarType = 'solar',
+    this.summary,
   });
 
   final DiaryEntry entry;
@@ -98,6 +99,27 @@ class AiCalendarMatch {
   final int dayOffset;
   final String? label;
   final String calendarType;
+  final EntrySummary? summary;
+
+  String get contextTitle {
+    final summaryTitle = summary?.title.trim() ?? '';
+    if (summaryTitle.isNotEmpty) return summaryTitle;
+    return entry.title ?? entry.excerpt;
+  }
+
+  String get contextSummary {
+    final entrySummary = summary;
+    if (entrySummary == null) return entry.excerpt;
+    final parts = [
+      entrySummary.brief,
+      ...entrySummary.keyPoints.take(3),
+    ]
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    if (parts.isEmpty) return entry.excerpt;
+    return parts.join('；');
+  }
 }
 
 class AiSearchMatch {

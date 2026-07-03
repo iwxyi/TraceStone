@@ -434,6 +434,7 @@ class AiContextBuilder {
         dayOffset: effectiveOffset,
         festival: label,
       );
+      final summary = await _summaryRepository.getSummary(item.id);
       matches.add(AiCalendarMatch(
         entry: item,
         reason: reason,
@@ -449,6 +450,7 @@ class AiContextBuilder {
         dayOffset: effectiveOffset,
         label: label,
         calendarType: calendarType ?? 'solar',
+        summary: summary,
       ));
     }
     matches.sort((a, b) {
@@ -577,11 +579,12 @@ class AiContextBuilder {
             sourceType: 'calendar',
             sourceId: match.entry.id,
             title: match.reason,
-            summary: match.entry.excerpt,
+            summary: match.contextSummary,
             score: match.score,
             reasons: [
               match.reason,
               if (match.label != null) '阳历节日：${match.label}',
+              if (match.summary != null) '使用历史摘要包',
             ],
             matchedTokens: [
               if (match.label != null) match.label!,

@@ -216,7 +216,7 @@ $feedbackBlock
   }
 
   String _calendarLine(AiCalendarMatch match) =>
-      '- calendar:${match.calendarType}:${match.label ?? _dateLabel(match.entry.date)}｜entry:${match.entry.id}｜${_dateLabel(match.entry.date)}｜${match.reason}${match.label == null ? '' : '｜${match.calendarType}:${match.label}'}｜${match.entry.title ?? match.entry.excerpt}｜${match.entry.excerpt}';
+      '- calendar:${match.calendarType}:${match.label ?? _dateLabel(match.entry.date)}｜entry:${match.entry.id}｜${_dateLabel(match.entry.date)}｜${match.reason}${match.label == null ? '' : '｜${match.calendarType}:${match.label}'}｜${match.contextTitle}｜${match.contextSummary}';
 
   String _profileLine(int index, ProfileFact profile) =>
       '- ${_profilePromptId(index)}｜${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜证据来源：${_evidenceRefs(profile.evidence)}｜置信度 ${profile.confidence.toStringAsFixed(2)}';

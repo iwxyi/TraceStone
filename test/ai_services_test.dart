@@ -3684,6 +3684,43 @@ void main() {
       );
     });
 
+    test('uses entry summaries for calendar context when available', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      final current = _entry(
+        id: 'calendar-summary-current',
+        date: DateTime(2026, 7, 3),
+        content: '今天重新考虑运动习惯。',
+      );
+      final past = _entry(
+        id: 'calendar-summary-past',
+        date: DateTime(2025, 7, 3),
+        content: '这是一段很长的历史原文，不应该直接进入多年今日上下文。',
+      );
+      await diaryRepository.saveEntry(current);
+      await diaryRepository.saveEntry(past);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: past,
+        brief: '去年同日记录了运动恢复状态。',
+        importance: 0.8,
+        topics: const ['运动', '恢复'],
+      ));
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(current);
+      final match = package.calendarMatches.single;
+      final traceItem = package.retrievalTrace!.items
+          .singleWhere((item) => item.sourceId == past.id);
+
+      expect(match.summary?.brief, '去年同日记录了运动恢复状态。');
+      expect(match.contextSummary, contains('去年同日记录了运动恢复状态。'));
+      expect(match.contextSummary, isNot(contains('很长的历史原文')));
+      expect(traceItem.summary, contains('去年同日记录了运动恢复状态。'));
+      expect(traceItem.summary, isNot(contains('很长的历史原文')));
+      expect(traceItem.reasons, contains('使用历史摘要包'));
+    });
+
     test('labels fixed solar festival matches', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
