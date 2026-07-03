@@ -479,8 +479,10 @@ void main() {
         'memory-entry-source',
         null,
       ]);
-      expect(insight?.facts.single.evidence.map((item) => item.id),
-          ['feedback-prompt-entry']);
+      expect(insight?.facts.single.evidence.map((item) => item.id), [
+        'feedback-prompt-entry',
+        'entry_summary:recent-source-entry',
+      ]);
       expect(insight?.hypotheses.single.evidence.map((item) => item.id),
           ['memory-walk-source']);
       expect(insight?.suggestions.single.evidence.map((item) => item.id),
@@ -5165,6 +5167,10 @@ class _CapturingAiClientService extends AiClientService {
           'text': '今天记录了散步后状态变轻松。',
           'evidence': [
             {'type': 'current_entry', 'id': 'feedback-prompt-entry'},
+            {
+              'type': 'entry_summary',
+              'id': 'entry_summary:recent-source-entry'
+            },
             {'type': 'entry_summary', 'id': 'hallucinated-entry'}
           ],
         }

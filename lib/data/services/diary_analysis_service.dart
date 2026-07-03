@@ -442,15 +442,33 @@ $feedbackBlock
   Set<String> _allowedSourceIds(AiContextPackage context) {
     final ids = <String>{
       if (context.currentEntry != null) context.currentEntry!.id,
-      if (context.currentSummary != null) context.currentSummary!.entryId,
+      if (context.currentEntry != null)
+        'current_entry:${context.currentEntry!.id}',
+      if (context.currentSummary != null) ...[
+        context.currentSummary!.entryId,
+        'entry_summary:${context.currentSummary!.entryId}',
+      ],
       for (final segment in context.currentSegments) ...[
         segment.id,
+        'segment:${segment.id}',
         segment.entryId,
       ],
-      for (final entry in context.recentEntries) entry.id,
-      for (final match in context.calendarMatches) match.entry.id,
+      for (final entry in context.recentEntries) ...[
+        entry.id,
+        'entry:${entry.id}',
+      ],
+      for (final summary in context.recentSummaries) ...[
+        summary.entryId,
+        'entry_summary:${summary.entryId}',
+      ],
+      for (final match in context.calendarMatches) ...[
+        match.entry.id,
+        'calendar:${match.entry.id}',
+        if (match.summary != null) 'entry_summary:${match.summary!.entryId}',
+      ],
       for (final result in context.relatedMemories) ...[
         result.memory.id,
+        'memory:${result.memory.id}',
         result.memory.sourceEntryId,
         ...result.memory.allSourceEntryIds,
       ],
