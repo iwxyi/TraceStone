@@ -3119,6 +3119,61 @@ void main() {
           ['month:2026-07', 'month:2026-06']);
     });
 
+    test('period summary repository deletes summaries referencing an entry',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = PeriodSummaryRepository();
+      final date = DateTime(2026, 7, 3);
+      await repository.saveSummary(PeriodSummary(
+        id: 'month:2026-07',
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 7),
+        endDate: DateTime(2026, 7, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 1,
+        brief: '七月摘要',
+        themes: const ['散步'],
+        emotions: const [],
+        representativeEntryIds: const ['deleted-entry'],
+        generator: 'test',
+      ));
+      await repository.saveSummary(PeriodSummary(
+        id: 'year:2026',
+        type: PeriodSummaryType.year,
+        startDate: DateTime(2026),
+        endDate: DateTime(2026, 12, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 1,
+        brief: '全年摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: const [],
+        generator: 'test',
+        contextSourceLines: const [
+          'period_entry:deleted-entry | 2026-07-03 | 散步',
+        ],
+      ));
+      await repository.saveSummary(PeriodSummary(
+        id: 'month:2026-08',
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 8),
+        endDate: DateTime(2026, 8, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 1,
+        brief: '八月摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: const ['kept-entry'],
+        generator: 'test',
+      ));
+
+      await repository.deleteForEntry('deleted-entry');
+
+      expect(await repository.getSummary('month:2026-07'), isNull);
+      expect(await repository.getSummary('year:2026'), isNull);
+      expect(await repository.getSummary('month:2026-08'), isNotNull);
+    });
+
     test('builds month summary for scoped entries only', () async {
       SharedPreferences.setMockInitialValues({});
       final entries = [
@@ -4002,6 +4057,54 @@ void main() {
       expect(task?.sourceEntryId, isEmpty);
       expect(task?.checkIns.single.sourceEntryId, isNull);
     });
+
+    test('move to trash invalidates period summaries referencing the entry',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const periodRepository = PeriodSummaryRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'trash-period-source',
+        date: date,
+        content: '这篇日记参与了月度和年度总结。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await periodRepository.saveSummary(PeriodSummary(
+        id: 'month:2026-07',
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 7),
+        endDate: DateTime(2026, 7, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 1,
+        brief: '七月摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: [entry.id],
+        generator: 'test',
+      ));
+      await periodRepository.saveSummary(PeriodSummary(
+        id: 'year:2026',
+        type: PeriodSummaryType.year,
+        startDate: DateTime(2026),
+        endDate: DateTime(2026, 12, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 1,
+        brief: '全年摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: const [],
+        generator: 'test',
+        contextSourceLines: [
+          'period_entry:${entry.id} | 2026-07-03 | 这篇日记参与总结',
+        ],
+      ));
+
+      await diaryRepository.moveToTrash(entry.id);
+
+      expect(await periodRepository.getSummary('month:2026-07'), isNull);
+      expect(await periodRepository.getSummary('year:2026'), isNull);
+    });
   });
 
   group('MemoryRepository lifecycle', () {
@@ -4359,6 +4462,7 @@ void main() {
         () async {
       SharedPreferences.setMockInitialValues({});
       const repository = MemoryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
       final date = DateTime(2026, 7, 3);
       await repository.saveMemory(MemoryEntry(
         id: 'shared-memory',
@@ -4390,11 +4494,22 @@ void main() {
       final memories = await repository.listMemories();
       final shared =
           memories.firstWhere((memory) => memory.id == 'shared-memory');
+      final embedding = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.memory,
+        sourceId: 'shared-memory',
+      );
 
       expect(memories.map((memory) => memory.id), ['shared-memory']);
       expect(shared.sourceEntryId, 'second-entry');
       expect(shared.evidenceEntryIds, ['second-entry']);
       expect(shared.confidence, lessThan(0.72));
+      expect(embedding?.entryId, 'second-entry');
+      expect(await embeddingRepository.listForEntry('first-entry'), isEmpty);
+      expect(
+        (await embeddingRepository.listForEntry('second-entry'))
+            .map((item) => item.id),
+        ['memory:shared-memory'],
+      );
     });
 
     test('reads lifecycle defaults from legacy memory json', () {

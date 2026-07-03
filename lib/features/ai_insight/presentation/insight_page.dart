@@ -79,7 +79,7 @@ class _InsightBody extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text('今日洞察包', style: Theme.of(context).textTheme.headlineSmall),
+        Text('今日洞察', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 6),
         Text(meta, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 16),

@@ -24,6 +24,7 @@ import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
+import 'package:trace_stone/features/ai_insight/presentation/ai_feedback_bar.dart';
 import 'package:trace_stone/features/ai_insight/presentation/insight_page.dart';
 import 'package:trace_stone/features/companion/presentation/companion_page.dart';
 import 'package:trace_stone/features/diary/presentation/diary_edit_page.dart';
@@ -126,7 +127,8 @@ void main() {
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
 
-    expect(find.text('画像候选'), findsOneWidget);
+    expect(find.text('成长画像'), findsOneWidget);
+    expect(find.text('画像候选'), findsNothing);
     expect(find.text('self_regulation'), findsOneWidget);
     expect(find.textContaining('运动可能帮助恢复状态'), findsOneWidget);
   });
@@ -309,6 +311,8 @@ void main() {
     await const InsightRepository().saveInsight(insight);
     await tester.pumpWidget(const MaterialApp(home: InsightPage()));
     await tester.pumpAndSettle();
+    expect(find.text('今日洞察'), findsWidgets);
+    expect(find.text('今日洞察包'), findsNothing);
     expect(find.text('证据来源'), findsOneWidget);
     expect(
       find.textContaining(
@@ -342,6 +346,35 @@ void main() {
     expect(copiedText, contains('## Raw JSON'));
     expect(copiedText, contains('"facts"'));
     expect(copiedText, contains('明天晚饭后散步 10 分钟'));
+  });
+
+  testWidgets('insight feedback dialog keeps debug copy developer-only',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: AiFeedbackBar(entryId: 'feedback-copy-entry')),
+    ));
+    await tester.tap(find.text('不准确'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('哪里不准确？'), findsOneWidget);
+    expect(find.textContaining('帮我重新核对这篇日记'), findsOneWidget);
+    expect(find.textContaining('调试'), findsNothing);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: AiFeedbackBar(entryId: 'feedback-copy-entry')),
+    ));
+    await tester.tap(find.text('不准确'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('帮我重新核对这篇日记'), findsOneWidget);
+    expect(find.textContaining('写入 AI 调试记录'), findsOneWidget);
   });
 
   testWidgets('corrects profile candidate text', (tester) async {
@@ -550,6 +583,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('塑石'), findsOneWidget);
+    expect(find.text('建议'), findsOneWidget);
+    expect(find.text('候选'), findsNothing);
     expect(find.text('晚饭后散步 10 分钟'), findsOneWidget);
     expect(find.text('散步'), findsOneWidget);
   });
@@ -802,6 +837,8 @@ void main() {
 
     expect(find.text('妈妈'), findsOneWidget);
     expect(find.text('小林'), findsOneWidget);
+    expect(find.text('最近互动'), findsWidgets);
+    expect(find.text('候选记录'), findsNothing);
 
     await tester.enterText(find.byType(SearchBar), '妈妈');
     await tester.pumpAndSettle();
@@ -892,7 +929,7 @@ void main() {
       const MaterialApp(home: RelationshipsPage()),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('候选记录'));
+    await tester.tap(find.text('最近互动'));
     await tester.pumpAndSettle();
 
     expect(find.text('证据来源'), findsOneWidget);
@@ -1289,6 +1326,61 @@ void main() {
     expect(await summaryRepository.getSummary(entry.id), isNotNull);
     expect(find.text('最近检索上下文'), findsNothing);
     expect(find.text('最近陪伴问答'), findsNothing);
+  });
+
+  testWidgets('AI debug queue overview separates recoverable job states',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const queueRepository = AiAnalysisQueueRepository();
+    final date = DateTime(2026, 7, 3);
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'debug-pending',
+      entryId: 'debug-pending',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.pending,
+      currentStage: AiAnalysisStage.queued,
+      createdAt: date,
+      updatedAt: date,
+    ));
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'debug-incomplete',
+      entryId: 'debug-incomplete',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.incomplete,
+      currentStage: AiAnalysisStage.embedding,
+      createdAt: date,
+      updatedAt: date,
+    ));
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'debug-retryable-failed',
+      entryId: 'debug-retryable-failed',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.failed,
+      currentStage: AiAnalysisStage.retrieving,
+      createdAt: date,
+      updatedAt: date,
+      retryCount: 2,
+    ));
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'debug-blocked-failed',
+      entryId: 'debug-blocked-failed',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.failed,
+      currentStage: AiAnalysisStage.generatingInsight,
+      createdAt: date,
+      updatedAt: date,
+      retryCount: 3,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('队列概览'), findsOneWidget);
+    expect(find.text('待开始 1'), findsOneWidget);
+    expect(find.text('待恢复 1'), findsOneWidget);
+    expect(find.text('可重试失败 1'), findsOneWidget);
+    expect(find.text('失败 1'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '继续队列'), findsOneWidget);
   });
 
   testWidgets('AI debug page shows inaccurate feedback and requeue trace',

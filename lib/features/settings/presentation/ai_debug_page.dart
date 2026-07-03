@@ -432,12 +432,22 @@ class _QueueSummaryCard extends StatelessWidget {
     final running = queue.jobs
         .where((job) => job.state == AiAnalysisJobState.running)
         .length;
+    final pending = queue.jobs
+        .where((job) => job.state == AiAnalysisJobState.pending)
+        .length;
     final incomplete = queue.jobs
         .where((job) => job.state == AiAnalysisJobState.incomplete)
+        .length;
+    final retryableFailed = queue.jobs
+        .where((job) => job.state == AiAnalysisJobState.failed && job.canRun)
+        .length;
+    final blockedFailed = queue.jobs
+        .where((job) => job.state == AiAnalysisJobState.failed && !job.canRun)
         .length;
     final completed = queue.jobs
         .where((job) => job.state == AiAnalysisJobState.completed)
         .length;
+    final canContinue = queue.runnableCount > 0;
 
     return Card(
       child: Padding(
@@ -453,9 +463,10 @@ class _QueueSummaryCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 _StatusChip(label: '运行中', count: running),
-                _StatusChip(label: '待处理', count: queue.pendingCount),
+                _StatusChip(label: '待开始', count: pending),
                 _StatusChip(label: '待恢复', count: incomplete),
-                _StatusChip(label: '失败', count: queue.failedCount),
+                _StatusChip(label: '可重试失败', count: retryableFailed),
+                _StatusChip(label: '失败', count: blockedFailed),
                 _StatusChip(label: '完成', count: completed),
               ],
             ),
@@ -465,9 +476,7 @@ class _QueueSummaryCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 FilledButton.icon(
-                  onPressed: queue.pendingCount > 0 || queue.failedCount > 0
-                      ? onContinue
-                      : null,
+                  onPressed: canContinue ? onContinue : null,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('继续队列'),
                 ),

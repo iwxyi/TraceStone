@@ -164,7 +164,7 @@ class _ShapingStonePageState extends State<ShapingStonePage> {
                 if (data.candidates.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   _SectionTitle(
-                      title: '候选',
+                      title: '建议',
                       subtitle: '${data.candidates.length} 个 AI 建议'),
                   const SizedBox(height: 8),
                   for (final candidate in data.candidates) ...[
@@ -561,7 +561,7 @@ class _StoneHeader extends StatelessWidget {
           Text('主动雕刻自己',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600)),
           SizedBox(height: 8),
-          Text('这些是 AI 从日记中整理出的微小行动候选，后续会支持编辑、提醒和打卡。'),
+          Text('这些是 AI 从日记中整理出的微小行动建议，后续会支持编辑、提醒和打卡。'),
         ],
       ),
     );

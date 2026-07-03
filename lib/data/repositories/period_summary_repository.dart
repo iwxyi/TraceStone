@@ -58,6 +58,20 @@ class PeriodSummaryRepository {
     await prefs.remove('$_prefix$id');
   }
 
+  Future<void> deleteForEntry(String entryId) async {
+    final value = entryId.trim();
+    if (value.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(_prefix)) continue;
+      final summary = await _getSummary(prefs, key);
+      if (summary == null) continue;
+      if (_summaryReferencesEntry(summary, value)) {
+        await prefs.remove(key);
+      }
+    }
+  }
+
   static String monthId(DateTime month) =>
       'month:${month.year}-${month.month.toString().padLeft(2, '0')}';
 
@@ -66,5 +80,17 @@ class PeriodSummaryRepository {
   String? _safeGetString(SharedPreferences prefs, String key) {
     final value = prefs.get(key);
     return value is String ? value : null;
+  }
+
+  bool _summaryReferencesEntry(PeriodSummary summary, String entryId) {
+    if (summary.representativeEntryIds.contains(entryId)) return true;
+    final markers = [
+      ':$entryId',
+      'entry=$entryId',
+      'sourceEntry=$entryId',
+      'sourceEntry:$entryId',
+    ];
+    return summary.contextSourceLines
+        .any((line) => markers.any((marker) => line.contains(marker)));
   }
 }

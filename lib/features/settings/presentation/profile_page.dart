@@ -51,7 +51,7 @@ class _ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('已隐藏这条画像候选'),
+        content: const Text('已隐藏这条画像'),
         action: SnackBarAction(
           label: '撤销',
           onPressed: () async {
@@ -202,11 +202,11 @@ class _ProfileSummary extends StatelessWidget {
             Row(children: [
               const Icon(Icons.psychology_alt_outlined, size: 22),
               const SizedBox(width: 8),
-              Text('画像候选', style: Theme.of(context).textTheme.titleLarge),
+              Text('成长画像', style: Theme.of(context).textTheme.titleLarge),
             ]),
             const SizedBox(height: 8),
             Text(
-              '多次出现、跨日期的观察会逐渐成为稳定画像，其余先保留为候选。',
+              '多次出现、跨日期的观察会逐渐成为稳定画像，其余先保留为待确认内容。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 14),
@@ -303,7 +303,7 @@ class _ProfileFactTile extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            Chip(label: Text('${fact.evidenceCount} 条证据')),
+            Chip(label: Text('来自 ${fact.evidenceCount} 条记录')),
             Chip(label: Text('${fact.distinctDays} 天')),
             Chip(label: Text('最近 ${_dateLabel(fact.lastSeenAt)}')),
             if (fact.userConfirmed) const Chip(label: Text('已确认')),
@@ -347,7 +347,7 @@ class _ProfileFactTile extends StatelessWidget {
       case ProfileFactStatus.emerging:
         return '形成中';
       case ProfileFactStatus.weak:
-        return '候选';
+        return '待确认';
     }
   }
 
@@ -425,7 +425,7 @@ class _EmptyProfileCandidates extends StatelessWidget {
             Text('个人成长概要',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
             SizedBox(height: 10),
-            Text('完成更多 AI 洞察后，这里会显示长期主题、调节方式、压力源等画像候选。'),
+            Text('完成更多 AI 洞察后，这里会显示长期主题、调节方式、压力源等成长画像。'),
           ],
         ),
       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/models/ai_feedback.dart';
 import '../../../data/repositories/ai_feedback_repository.dart';
+import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/services/ai_feedback_service.dart';
 
 class AiFeedbackBar extends StatefulWidget {
@@ -20,6 +21,7 @@ class AiFeedbackBar extends StatefulWidget {
 
 class _AiFeedbackBarState extends State<AiFeedbackBar> {
   final _repository = const AiFeedbackRepository();
+  final _developerSettings = const DeveloperSettingsRepository();
   final _feedbackService = const AiFeedbackService();
   late Future<AiFeedback?> _feedbackFuture =
       _repository.getFeedback(widget.entryId);
@@ -43,45 +45,16 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
   }
 
   Future<void> _markInaccurate() async {
-    final controller = TextEditingController();
-    try {
-      final note = await showDialog<String?>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('哪里不准确？'),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              minLines: 3,
-              maxLines: 5,
-              decoration: const InputDecoration(
-                hintText: '可选：写下错误点，便于后续调试',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(null),
-                child: const Text('取消'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(''),
-                child: const Text('跳过'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(controller.text),
-                child: const Text('提交'),
-              ),
-            ],
-          );
-        },
-      );
-      if (note == null) return;
-      await _save(AiFeedbackValue.inaccurate, note: note);
-    } finally {
-      controller.dispose();
-    }
+    final developerMode = await _developerSettings.isDeveloperModeEnabled();
+    if (!mounted) return;
+    final note = await showDialog<String?>(
+      context: context,
+      builder: (context) => _InaccurateFeedbackDialog(
+        developerMode: developerMode,
+      ),
+    );
+    if (note == null) return;
+    await _save(AiFeedbackValue.inaccurate, note: note);
   }
 
   @override
@@ -116,6 +89,75 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
           ],
         );
       },
+    );
+  }
+}
+
+class _InaccurateFeedbackDialog extends StatefulWidget {
+  const _InaccurateFeedbackDialog({required this.developerMode});
+
+  final bool developerMode;
+
+  @override
+  State<_InaccurateFeedbackDialog> createState() =>
+      _InaccurateFeedbackDialogState();
+}
+
+class _InaccurateFeedbackDialogState extends State<_InaccurateFeedbackDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('哪里不准确？'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              minLines: 3,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                hintText: '可选：写下哪里不对，帮我重新核对这篇日记',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (widget.developerMode) ...[
+              const SizedBox(height: 10),
+              Text(
+                '开发者模式：这条反馈会写入 AI 调试记录，并作为重新生成洞察的上下文。',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(null),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(''),
+          child: const Text('跳过'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('提交'),
+        ),
+      ],
     );
   }
 }

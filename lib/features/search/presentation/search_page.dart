@@ -577,7 +577,7 @@ class _ProfileResultCard extends StatelessWidget {
       case ProfileFactStatus.emerging:
         return '形成中';
       case ProfileFactStatus.weak:
-        return '候选';
+        return '待确认';
     }
   }
 }

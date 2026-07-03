@@ -395,7 +395,8 @@ class MemoryRepository {
     );
     if (existing?.textHash == result.textHash &&
         existing?.modelId == result.modelId &&
-        existing?.modelVersion == result.modelVersion) {
+        existing?.modelVersion == result.modelVersion &&
+        existing?.entryId == memory.sourceEntryId) {
       return;
     }
     await const AiEmbeddingRepository().saveEmbedding(AiEmbedding(

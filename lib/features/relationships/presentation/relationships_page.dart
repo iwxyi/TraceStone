@@ -55,7 +55,7 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('已隐藏这位人物的关系候选'),
+        content: const Text('已隐藏这位人物的关系记录'),
         action: SnackBarAction(
           label: '撤销',
           onPressed: () async {
@@ -213,7 +213,7 @@ class _RelationshipFilter extends StatelessWidget {
         if (controller.text.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(
-            resultCount == 0 ? '没有匹配的关系候选' : '找到 $resultCount 位相关人物',
+            resultCount == 0 ? '没有匹配的关系记录' : '找到 $resultCount 位相关人物',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -319,7 +319,7 @@ class _RelationshipCard extends StatelessWidget {
               children: [
                 if (profile.relationship?.isNotEmpty ?? false)
                   Chip(label: Text(profile.relationship!)),
-                Chip(label: Text('${profile.distinctDays} 天证据')),
+                Chip(label: Text('来自 ${profile.distinctDays} 天记录')),
                 if (profile.userConfirmed) const Chip(label: Text('已确认')),
                 if (developerMode)
                   Chip(
@@ -355,7 +355,7 @@ class _RelationshipCard extends StatelessWidget {
             const SizedBox(height: 8),
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
-              title: const Text('候选记录'),
+              title: const Text('最近互动'),
               children: [
                 for (final item in profile.recentInteractions)
                   Padding(
@@ -411,7 +411,7 @@ class _RelationshipCard extends StatelessWidget {
       case ProfileFactStatus.emerging:
         return '形成中';
       case ProfileFactStatus.weak:
-        return '候选';
+        return '待确认';
     }
   }
 
@@ -496,7 +496,7 @@ class _EmptyRelationships extends StatelessWidget {
         Icon(Icons.people_alt_outlined, size: 48),
         SizedBox(height: 16),
         Text(
-          '还没有关系候选。完成 AI 洞察后，这里会按人物聚合互动摘要和模式候选。',
+          '还没有关系记录。完成 AI 洞察后，这里会按人物聚合互动摘要和关系变化。',
           textAlign: TextAlign.center,
         ),
       ],

@@ -13,6 +13,15 @@ class AiEmbeddingRepository {
 
   Future<void> saveEmbedding(AiEmbedding embedding) async {
     final prefs = await SharedPreferences.getInstance();
+    final existingRaw = _safeGetString(prefs, '$_prefix${embedding.id}');
+    final existing =
+        existingRaw == null ? null : _embeddingFromRaw(existingRaw);
+    if (existing != null && existing.entryId != embedding.entryId) {
+      final oldEntryKey = '$_entryIndexPrefix${existing.entryId}';
+      final oldEntryIds = _safeGetStringList(prefs, oldEntryKey) ?? [];
+      oldEntryIds.remove(embedding.id);
+      await prefs.setStringList(oldEntryKey, oldEntryIds);
+    }
     await prefs.setString(
         '$_prefix${embedding.id}', jsonEncode(embedding.toJson()));
     await _addToIndex(

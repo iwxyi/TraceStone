@@ -13,6 +13,7 @@ import 'diary_change_bus.dart';
 import 'entry_summary_repository.dart';
 import 'insight_repository.dart';
 import 'memory_repository.dart';
+import 'period_summary_repository.dart';
 import 'stone_task_repository.dart';
 
 class DiaryRepository {
@@ -115,6 +116,7 @@ class DiaryRepository {
     await const AiPromptTraceRepository().deleteTrace(id);
     await const EntrySummaryRepository().deleteForEntry(id);
     await const AiRetrievalTraceRepository().deleteForEntry(id);
+    await const PeriodSummaryRepository().deleteForEntry(id);
     DiaryChangeBus.bump();
   }
 
@@ -175,6 +177,7 @@ class DiaryRepository {
     await const AiPromptTraceRepository().deleteTrace(id);
     await const EntrySummaryRepository().deleteForEntry(id);
     await const AiRetrievalTraceRepository().deleteForEntry(id);
+    await const PeriodSummaryRepository().deleteForEntry(id);
     DiaryChangeBus.bump();
   }
 
@@ -199,6 +202,7 @@ class DiaryRepository {
         await const AiPromptTraceRepository().deleteTrace(id);
         await const EntrySummaryRepository().deleteForEntry(id);
         await const AiRetrievalTraceRepository().deleteForEntry(id);
+        await const PeriodSummaryRepository().deleteForEntry(id);
       }
     }
   }
