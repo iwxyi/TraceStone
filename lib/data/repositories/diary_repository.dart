@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/diary_entry.dart';
+import '../models/diary_analysis_status.dart';
 import 'ai_analysis_queue_repository.dart';
 import 'ai_embedding_repository.dart';
 import 'ai_feedback_repository.dart';
@@ -12,6 +13,7 @@ import 'diary_change_bus.dart';
 import 'entry_summary_repository.dart';
 import 'insight_repository.dart';
 import 'memory_repository.dart';
+import 'stone_task_repository.dart';
 
 class DiaryRepository {
   const DiaryRepository();
@@ -106,6 +108,7 @@ class DiaryRepository {
     await prefs.remove('$_recoveryPrefix$id');
     await const InsightRepository().deleteForEntry(id);
     await const MemoryRepository().deleteForSourceEntry(id);
+    await const StoneTaskRepository().deleteForSourceEntry(id);
     await const AiAnalysisQueueRepository().deleteJob(id);
     await const AiEmbeddingRepository().deleteForEntry(id);
     await const AiFeedbackRepository().deleteFeedback(id);
@@ -150,6 +153,13 @@ class DiaryRepository {
       await prefs.setStringList(_indexKey, index);
     }
     await _removeTrashItem(prefs, id);
+    await const AiAnalysisQueueRepository().enqueueEntry(item.entry);
+    await const InsightRepository().saveStatus(DiaryAnalysisStatus(
+      entryId: item.entry.id,
+      state: DiaryAnalysisState.queued,
+      updatedAt: DateTime.now(),
+      message: '已从回收站恢复，等待重新整理 AI 资料',
+    ));
     DiaryChangeBus.bump();
   }
 
@@ -158,6 +168,7 @@ class DiaryRepository {
     await _removeTrashItem(prefs, id);
     await const InsightRepository().deleteForEntry(id);
     await const MemoryRepository().deleteForSourceEntry(id);
+    await const StoneTaskRepository().deleteForSourceEntry(id);
     await const AiAnalysisQueueRepository().deleteJob(id);
     await const AiEmbeddingRepository().deleteForEntry(id);
     await const AiFeedbackRepository().deleteFeedback(id);
@@ -181,6 +192,7 @@ class DiaryRepository {
         await _removeTrashItem(prefs, id);
         await const InsightRepository().deleteForEntry(id);
         await const MemoryRepository().deleteForSourceEntry(id);
+        await const StoneTaskRepository().deleteForSourceEntry(id);
         await const AiAnalysisQueueRepository().deleteJob(id);
         await const AiEmbeddingRepository().deleteForEntry(id);
         await const AiFeedbackRepository().deleteFeedback(id);

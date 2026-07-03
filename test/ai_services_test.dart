@@ -17,6 +17,7 @@ import 'package:trace_stone/data/models/calendar_memory.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
 import 'package:trace_stone/data/models/ai_context_package.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
+import 'package:trace_stone/data/models/memory_retrieval_result.dart';
 import 'package:trace_stone/data/models/period_summary.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
@@ -36,6 +37,7 @@ import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_analysis_queue_runner.dart';
 import 'package:trace_stone/data/services/ai_client_service.dart';
+import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
 import 'package:trace_stone/data/services/companion_answer_service.dart';
 import 'package:trace_stone/data/services/diary_analysis_service.dart';
@@ -155,6 +157,129 @@ void main() {
       expect(prefs.get('ai.feedback.list'), ['bad']);
       expect(prefs.get('ai.feedback.broken'), isNull);
       expect(prefs.get('ai.feedback.array'), isNull);
+    });
+
+    test('inaccurate insight feedback requeues analysis with a trace log',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final entry = _entry(
+        id: 'feedback-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天的洞察需要重新整理。',
+      );
+      await const DiaryRepository().saveEntry(entry);
+      await const InsightRepository().saveInsight(_insight(
+        entryId: entry.id,
+        date: entry.date,
+      ));
+
+      final feedback = await const AiFeedbackService().submitInsightFeedback(
+        entryId: entry.id,
+        value: AiFeedbackValue.inaccurate,
+        note: '把情绪判断错了',
+      );
+
+      final savedFeedback =
+          await const AiFeedbackRepository().getFeedback(entry.id);
+      final job = await const AiAnalysisQueueRepository().getJob(entry.id);
+      final status = await const InsightRepository().getStatus(entry.id);
+
+      expect(feedback.value, AiFeedbackValue.inaccurate);
+      expect(savedFeedback?.note, '把情绪判断错了');
+      expect(await const InsightRepository().getInsight(entry.id), isNull);
+      expect(await const InsightRepository().getLatestInsight(), isNull);
+      expect(job?.state, AiAnalysisJobState.incomplete);
+      expect(job?.currentStage, AiAnalysisStage.generatingInsight);
+      expect(job?.lastError, contains('用户标记洞察不准确'));
+      expect(
+        job?.stageLogs.map((log) => log.message),
+        contains('用户标记洞察不准确，重新生成今日洞察'),
+      );
+      expect(job?.stageLogs.last.outputSummary, contains('把情绪判断错了'));
+      expect(status?.state, DiaryAnalysisState.incomplete);
+      expect(status?.message, contains('重新整理队列'));
+    });
+
+    test('inaccurate feedback note is included in regenerated insight prompt',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const feedbackRepository = AiFeedbackRepository();
+      const promptRepository = AiPromptTraceRepository();
+      final client = _CapturingAiClientService();
+      final entry = _entry(
+        id: 'feedback-prompt-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天散步以后，状态轻松了一些。',
+      );
+      final recent = _entry(
+        id: 'recent-source-entry',
+        date: DateTime(2026, 7, 2),
+        content: '昨天也写到散步后的恢复。',
+      );
+      await const DiaryRepository().saveEntry(entry);
+      await const DiaryRepository().saveEntry(recent);
+      final segments = const EntrySummaryService().buildSegments(entry);
+      await const EntrySummaryRepository().saveSummary(
+        const EntrySummaryService().buildSummary(entry, segments),
+      );
+      await const EntrySummaryRepository().saveSegments(entry.id, segments);
+      await const MemoryRepository().saveMemory(MemoryEntry(
+        id: 'memory-walk-source',
+        sourceEntryId: 'memory-entry-source',
+        date: DateTime(2026, 6, 30),
+        createdAt: DateTime(2026, 6, 30),
+        summary: '散步后状态更轻松。',
+        keywords: const ['散步'],
+        emotion: '轻松',
+        people: const [],
+        tags: const ['恢复'],
+        evidenceEntryIds: const ['memory-entry-source', 'older-evidence'],
+      ));
+      await const StoneTaskRepository().saveTask(StoneTask(
+        id: 'stone-walk-source',
+        sourceEntryId: 'stone-entry-source',
+        title: '晚饭后散步',
+        description: '每天走一小圈。',
+        createdAt: DateTime(2026, 7, 1),
+        updatedAt: DateTime(2026, 7, 1),
+        tags: const ['散步'],
+      ));
+      await feedbackRepository.saveFeedback(AiFeedback(
+        entryId: entry.id,
+        value: AiFeedbackValue.inaccurate,
+        createdAt: DateTime(2026, 7, 3),
+        note: '不要把轻松判断成焦虑',
+      ));
+
+      await DiaryAnalysisService(client: client).analyzeEntry(entry);
+
+      final trace = await promptRepository.getTrace(entry.id);
+      final insight = await const InsightRepository().getInsight(entry.id);
+      expect(client.lastUserPrompt, contains('用户反馈：'));
+      expect(client.lastUserPrompt, contains('上一版洞察被用户标记为不准确'));
+      expect(client.lastUserPrompt, contains('不要把轻松判断成焦虑'));
+      expect(client.lastUserPrompt, contains('segment:${segments.first.id}'));
+      expect(client.lastUserPrompt, contains('entry:recent-source-entry'));
+      expect(client.lastUserPrompt, contains('memory:memory-walk-source'));
+      expect(
+          client.lastUserPrompt, contains('sourceEntry:memory-entry-source'));
+      expect(client.lastUserPrompt,
+          contains('evidenceEntries:memory-entry-source,older-evidence'));
+      expect(client.lastUserPrompt, contains('stone:stone-walk-source'));
+      expect(client.lastUserPrompt, contains('sourceEntry:stone-entry-source'));
+      expect(trace?.userPrompt, contains('不要把轻松判断成焦虑'));
+      expect(trace?.contextSummary, contains('evidenceFiltered=3'));
+      expect(trace?.contextSummary, contains('relatedSourceFiltered=1'));
+      expect(insight?.relatedMemories.map((item) => item.entryId), [
+        'memory-entry-source',
+        null,
+      ]);
+      expect(insight?.facts.single.evidence.map((item) => item.id),
+          ['feedback-prompt-entry']);
+      expect(insight?.hypotheses.single.evidence.map((item) => item.id),
+          ['memory-walk-source']);
+      expect(insight?.suggestions.single.evidence.map((item) => item.id),
+          ['stone-walk-source']);
     });
 
     test('developer mode ignores invalid boolean values', () async {
@@ -278,6 +403,33 @@ void main() {
       expect(insight.profileUpdateCandidates.single.field, 'stress_pattern');
       expect(insight.relationshipUpdates.single.personName, '妈妈');
       expect(insight.contradictions.single.oldMemoryId, 'memory_social');
+    });
+
+    test('reads related memory source ids from AI json variants', () {
+      final insight = DiaryInsight.fromJson({
+        'entryId': 'entry',
+        'relatedMemories': [
+          {
+            'title': '去年散步',
+            'reason': '同样提到散步',
+            'entry_id': 'entry-2025-walk',
+          },
+          {
+            'title': '长期记忆',
+            'reason': '稳定模式',
+            'source_id': 'memory-walk',
+          },
+        ],
+      });
+
+      expect(insight.relatedMemories.map((item) => item.entryId), [
+        'entry-2025-walk',
+        'memory-walk',
+      ]);
+      expect(
+        insight.relatedMemories.first.toJson()['entryId'],
+        'entry-2025-walk',
+      );
     });
 
     test('reads legacy insight json without structured claims', () {
@@ -594,6 +746,43 @@ void main() {
       expect((await repository.listJobs()).single.id, 'queued-entry');
       await repository.deleteJob('queued-entry');
       expect(prefs.getStringList('ai.analysis.jobs.index'), isEmpty);
+    });
+
+    test('marks stale running jobs incomplete with a stage log', () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = AiAnalysisQueueRepository();
+      final old = DateTime.now().subtract(const Duration(minutes: 11));
+      final job = AiAnalysisJob(
+        id: 'stale-running',
+        entryId: 'stale-running',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.running,
+        currentStage: AiAnalysisStage.embedding,
+        createdAt: old,
+        updatedAt: old,
+        retryCount: 1,
+        stageLogs: [
+          AiAnalysisStageLog(
+            stage: AiAnalysisStage.embedding,
+            startedAt: old,
+            message: '生成多级向量',
+            retryCount: 1,
+          ),
+        ],
+      );
+      await repository.saveJob(job);
+
+      final runnable = await repository.nextRunnableJob();
+      final repaired = await repository.getJob(job.id);
+
+      expect(runnable?.id, job.id);
+      expect(repaired?.state, AiAnalysisJobState.incomplete);
+      expect(repaired?.currentStage, AiAnalysisStage.embedding);
+      expect(repaired?.retryCount, 1);
+      expect(repaired?.lastError, '上次整理被中断，已等待继续');
+      expect(repaired?.stageLogs.last.message, '上次整理被系统中断');
+      expect(repaired?.stageLogs.last.stage, AiAnalysisStage.embedding);
+      expect(repaired?.stageLogs.last.error, contains('超过 10 分钟未更新'));
     });
 
     test('runner resumes incomplete jobs without rewriting existing embeddings',
@@ -1077,6 +1266,46 @@ void main() {
       expect(prefs.getStringList('stone.tasks.index'), ['stone:saved']);
       expect((await repository.listTasks()).single.id, 'stone:saved');
     });
+
+    test('removes deleted diary source ids without deleting tasks', () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = StoneTaskRepository();
+      final date = DateTime(2026, 7, 3);
+      await repository.saveTask(StoneTask(
+        id: 'stone:source-cleanup',
+        sourceEntryId: 'deleted-entry',
+        title: '晚饭后散步',
+        description: '走一小圈。',
+        createdAt: date,
+        updatedAt: date,
+        checkIns: [
+          StoneTaskCheckIn(
+            id: 'checkin:deleted',
+            createdAt: date,
+            note: '从被删日记来的进展',
+            sourceEntryId: 'deleted-entry',
+          ),
+          StoneTaskCheckIn(
+            id: 'checkin:kept',
+            createdAt: date,
+            note: '另一天的进展',
+            sourceEntryId: 'kept-entry',
+          ),
+        ],
+      ));
+
+      await repository.deleteForSourceEntry('deleted-entry');
+      final task = await repository.getTask('stone:source-cleanup');
+
+      expect(task, isNotNull);
+      expect(task?.sourceEntryId, isEmpty);
+      expect(task?.checkIns.map((item) => item.id), [
+        'checkin:deleted',
+        'checkin:kept',
+      ]);
+      expect(task?.checkIns.first.sourceEntryId, isNull);
+      expect(task?.checkIns.last.sourceEntryId, 'kept-entry');
+    });
   });
 
   group('CalendarMemoryRepository', () {
@@ -1450,6 +1679,79 @@ void main() {
       expect(answer.sources.map((source) => source.title), contains('妈妈'));
       expect(answer.sources.firstWhere((source) => source.title == '妈妈').score,
           greaterThan(0));
+    });
+
+    test('filters companion answer sources to retrieved context ids', () async {
+      SharedPreferences.setMockInitialValues({});
+      final date = DateTime(2026, 7, 3);
+      final client = _CompanionAiClientService(jsonEncode({
+        'answer': '运动记录里反复出现恢复感。',
+        'follow_up': '最近哪次运动最接近这种感觉？',
+        'sources': [
+          {
+            'source_id': 'memory:walk-memory',
+            'title': '运动',
+            'reason': '同样提到运动后的恢复',
+            'score': 8,
+          },
+          {
+            'source_id': 'entry_summary:hallucinated',
+            'title': '不存在的日记',
+            'reason': '模型编造的来源',
+            'score': 9,
+          },
+        ],
+      }));
+      final context = AiContextPackage(
+        scenario: AiContextScenario.question,
+        query: '我最近运动后怎么样',
+        relatedMemories: [
+          MemoryRetrievalResult(
+            memory: MemoryEntry(
+              id: 'walk-memory',
+              sourceEntryId: 'walk-entry',
+              date: date,
+              createdAt: date,
+              summary: '运动后状态更轻松。',
+              keywords: const ['运动'],
+              emotion: '轻松',
+              people: const [],
+              tags: const ['运动'],
+            ),
+            score: 8,
+            reasons: const ['主题匹配：运动'],
+            matchedTokens: const ['运动'],
+          ),
+        ],
+        searchMatches: const [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'walk-entry',
+            entryId: 'walk-entry',
+            title: '晚间运动',
+            summary: '跑步后轻松了一些。',
+            score: 6,
+            reasons: ['关键词重合：运动'],
+            matchedTokens: ['运动'],
+          ),
+        ],
+      );
+
+      final answer = await CompanionAnswerService(
+        client: client,
+        contextBuilder: _FakeQuestionContextBuilder(context),
+      ).answer('我最近运动后怎么样');
+      final trace =
+          await const AiPromptTraceRepository().getTrace('companion:last');
+
+      expect(client.lastUserPrompt, contains('source_id=memory:walk-memory'));
+      expect(client.lastUserPrompt,
+          contains('source_id=entry_summary:walk-entry'));
+      expect(answer.sources, hasLength(1));
+      expect(answer.sources.single.sourceType, 'memory');
+      expect(answer.sources.single.sourceId, 'walk-memory');
+      expect(answer.sources.single.title, '运动');
+      expect(trace?.contextSummary, contains('sourceFiltered=1'));
     });
   });
 
@@ -2000,10 +2302,51 @@ void main() {
       final summary = await const PeriodSummaryService()
           .buildMonthSummary(DateTime(2026, 7), [entry]);
 
+      expect(summary.contextSourceLines.join('\n'), contains('period_entry'));
       expect(summary.contextSourceLines.join('\n'), contains('entry_summary'));
       expect(summary.contextSourceLines.join('\n'), contains(entry.id));
+      expect(summary.contextSourceLines.join('\n'), contains('2026-07-03'));
       expect(
           summary.contextSourceLines.join('\n'), contains('importance=0.82'));
+    });
+
+    test('period summary traces raw entries even before summaries exist',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      final entry = _entry(
+        id: 'period-raw-entry',
+        date: DateTime(2026, 7, 4),
+        content: '今天只保存了原始日记，还没有摘要。',
+      );
+      await diaryRepository.saveEntry(entry);
+
+      final summary = await const PeriodSummaryService()
+          .buildMonthSummary(DateTime(2026, 7), [entry]);
+      final sourceText = summary.contextSourceLines.join('\n');
+
+      expect(sourceText, contains('period_entry:period-raw-entry'));
+      expect(sourceText, isNot(contains('entry_summary:period-raw-entry')));
+    });
+
+    test('period summary derives themes from raw entries before insights exist',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      final entry = _entry(
+        id: 'period-local-theme',
+        date: DateTime(2026, 7, 5),
+        content: '晚上散步以后焦虑下降，整个人轻松了一些。',
+      );
+      await diaryRepository.saveEntry(entry);
+
+      final summary = await const PeriodSummaryService()
+          .buildMonthSummary(DateTime(2026, 7), [entry]);
+
+      expect(summary.themes.join(' '), contains('散步'));
+      expect(summary.emotions.join(' '), contains('焦虑'));
+      expect(summary.brief, contains('主要主题'));
+      expect(summary.brief, contains('常见情绪'));
     });
 
     test('includes relationship and stone progress highlights', () async {
@@ -2518,6 +2861,70 @@ void main() {
       expect(items, isEmpty);
       expect(prefs.getStringList('diary.trash.index'), isEmpty);
     });
+
+    test('restore from trash requeues AI artifact rebuild', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const insightRepository = InsightRepository();
+      final entry = _entry(
+        id: 'trash-restore-ai',
+        date: DateTime(2026, 7, 3),
+        content: '恢复后需要重新整理 AI 资料。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueEntry(entry);
+      await diaryRepository.moveToTrash(entry.id);
+
+      expect(await queueRepository.getJob(entry.id), isNull);
+      expect(await diaryRepository.getEntryById(entry.id), isNull);
+
+      await diaryRepository.restoreFromTrash(entry.id);
+      final restored = await diaryRepository.getEntryById(entry.id);
+      final job = await queueRepository.getJob(entry.id);
+      final status = await insightRepository.getStatus(entry.id);
+
+      expect(restored?.content, entry.content);
+      expect(job?.state, AiAnalysisJobState.pending);
+      expect(job?.pipelineVersion, entry.updatedAt.microsecondsSinceEpoch);
+      expect(status?.state, DiaryAnalysisState.queued);
+      expect(status?.message, contains('回收站恢复'));
+    });
+
+    test('move to trash removes stone source references', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const stoneRepository = StoneTaskRepository();
+      final entry = _entry(
+        id: 'trash-stone-source',
+        date: DateTime(2026, 7, 3),
+        content: '这篇日记生成了一个塑石行动。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await stoneRepository.saveTask(StoneTask(
+        id: 'stone:trash-source',
+        sourceEntryId: entry.id,
+        title: '散步',
+        description: '晚饭后散步。',
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        checkIns: [
+          StoneTaskCheckIn(
+            id: 'checkin:trash-source',
+            createdAt: entry.createdAt,
+            note: '完成了一次',
+            sourceEntryId: entry.id,
+          ),
+        ],
+      ));
+
+      await diaryRepository.moveToTrash(entry.id);
+      final task = await stoneRepository.getTask('stone:trash-source');
+
+      expect(task, isNotNull);
+      expect(task?.sourceEntryId, isEmpty);
+      expect(task?.checkIns.single.sourceEntryId, isNull);
+    });
   });
 
   group('MemoryRepository lifecycle', () {
@@ -2971,4 +3378,103 @@ class _FakeDiaryAnalysisService extends DiaryAnalysisService {
       ],
     );
   }
+}
+
+class _CapturingAiClientService extends AiClientService {
+  String? lastSystemPrompt;
+  String? lastUserPrompt;
+
+  @override
+  Future<String> completeJson({
+    required String systemPrompt,
+    required String userPrompt,
+    required int maxTokens,
+  }) async {
+    lastSystemPrompt = systemPrompt;
+    lastUserPrompt = userPrompt;
+    return jsonEncode({
+      'reflection': '散步后状态更轻松。',
+      'related_memories': [
+        {
+          'title': '散步记忆',
+          'reason': '同样提到散步后放松',
+          'entry_id': 'memory-entry-source',
+        },
+        {
+          'title': '不存在的历史',
+          'reason': '模型误填来源',
+          'entry_id': 'hallucinated-entry',
+        }
+      ],
+      'facts': [
+        {
+          'text': '今天记录了散步后状态变轻松。',
+          'evidence': [
+            {'type': 'current_entry', 'id': 'feedback-prompt-entry'},
+            {'type': 'entry_summary', 'id': 'hallucinated-entry'}
+          ],
+        }
+      ],
+      'signals': [],
+      'hypotheses': [
+        {
+          'text': '散步可能帮助恢复状态。',
+          'confidence': 0.62,
+          'evidence': [
+            {'type': 'memory', 'id': 'memory-walk-source'},
+            {'type': 'memory', 'id': 'hallucinated-memory'}
+          ],
+        }
+      ],
+      'suggestions': [
+        {
+          'text': '明天晚饭后散步 10 分钟。',
+          'evidence': [
+            {'type': 'stone', 'id': 'stone-walk-source'},
+            {'type': 'stone', 'id': 'hallucinated-stone'}
+          ],
+        }
+      ],
+      'emotion': '轻松',
+      'keywords': ['散步'],
+      'people': [],
+      'stone_suggestion': {
+        'title': '散步 10 分钟',
+        'description': '晚饭后出门走一小圈。',
+      },
+      'memory_update': {
+        'summary': '散步后状态更轻松。',
+        'tags': ['散步'],
+      },
+      'profile_update_candidates': [],
+      'relationship_updates': [],
+      'contradictions': [],
+    });
+  }
+}
+
+class _CompanionAiClientService extends AiClientService {
+  _CompanionAiClientService(this.response);
+
+  final String response;
+  String? lastUserPrompt;
+
+  @override
+  Future<String> completeJson({
+    required String systemPrompt,
+    required String userPrompt,
+    required int maxTokens,
+  }) async {
+    lastUserPrompt = userPrompt;
+    return response;
+  }
+}
+
+class _FakeQuestionContextBuilder extends AiContextBuilder {
+  const _FakeQuestionContextBuilder(this.package);
+
+  final AiContextPackage package;
+
+  @override
+  Future<AiContextPackage> buildForQuestion(String question) async => package;
 }

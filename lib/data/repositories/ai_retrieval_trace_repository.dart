@@ -38,6 +38,18 @@ class AiRetrievalTraceRepository {
     await prefs.remove('$_prefix$entryId');
   }
 
+  Future<int> deleteAllTraces() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs
+        .getKeys()
+        .where((key) => key.startsWith(_prefix))
+        .toList(growable: false);
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
+    return keys.length;
+  }
+
   String? _safeGetString(SharedPreferences prefs, String key) {
     final value = prefs.get(key);
     return value is String ? value : null;

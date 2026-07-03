@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../data/models/ai_context_package.dart';
 import '../../../data/models/ai_profile.dart';
+import '../../../data/models/diary_insight.dart';
 import '../../../data/models/memory_retrieval_result.dart';
 import '../../../data/models/stone_task.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
@@ -244,22 +245,37 @@ class _SearchDebugContextText {
               '${result.memory.summary} | ${result.reasons.join('；')}',
       ]),
       _section('Profile', [
-        for (final fact in package.profileFacts)
+        for (final fact in package.profileFacts) ...[
           '${fact.id} ${fact.field}=${fact.value} '
               'confidence=${fact.confidence.toStringAsFixed(2)} '
               'evidence=${fact.evidenceCount}',
+          for (final evidence in fact.evidence.take(6))
+            '  evidence=${_evidenceLine(evidence)}',
+        ],
       ]),
       _section('Relationships', [
-        for (final profile in package.relationshipProfiles)
+        for (final profile in package.relationshipProfiles) ...[
           '${profile.personName} relationship=${profile.relationship ?? ''} '
               'confidence=${profile.confidence.toStringAsFixed(2)} '
               'interactions=${profile.interactionCount} '
               '${profile.patterns.take(2).join('；')}',
+          for (final evidence in profile.evidence.take(6))
+            '  evidence=${_evidenceLine(evidence)}',
+          for (final interaction in profile.recentInteractions.take(3))
+            '  interaction=${interaction.entryId} '
+                '${interaction.date.toIso8601String().split('T').first} '
+                '${interaction.summary}',
+        ],
       ]),
       _section('Stone', [
         for (final task in package.stoneTasks)
           '${task.id} ${task.title} | ${task.description} | '
-              'status=${task.status.name}',
+              'status=${task.status.name} sourceEntry=${task.sourceEntryId}'
+              '${task.checkIns.isEmpty ? '' : ' checkIns=${task.checkIns.length}'}',
+        for (final task in package.stoneTasks)
+          for (final checkIn in task.checkIns.take(3))
+            '  checkIn=${checkIn.id} sourceEntry=${checkIn.sourceEntryId ?? ''} '
+                '${checkIn.createdAt.toIso8601String()} ${checkIn.note}',
       ]),
       if (package.retrievalTrace != null)
         _section('Retrieval Trace', [
@@ -278,6 +294,18 @@ class _SearchDebugContextText {
         lines.map((line) => line.trim()).where((line) => line.isNotEmpty);
     if (visible.isEmpty) return '';
     return ['## $title', ...visible].join('\n');
+  }
+
+  String _evidenceLine(InsightEvidence evidence) {
+    return [
+      '${evidence.type}:${evidence.id}',
+      if (evidence.date != null)
+        evidence.date!.toIso8601String().split('T').first,
+      if (evidence.summary?.isNotEmpty ?? false) evidence.summary!,
+      if (evidence.quote?.isNotEmpty ?? false) 'quote=${evidence.quote}',
+      if (evidence.relevance?.isNotEmpty ?? false)
+        'relevance=${evidence.relevance}',
+    ].join(' | ');
   }
 }
 

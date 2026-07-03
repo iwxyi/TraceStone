@@ -51,6 +51,30 @@ class StoneTaskRepository {
     await prefs.setStringList(_indexKey, index);
   }
 
+  Future<void> deleteForSourceEntry(String entryId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    final now = DateTime.now();
+    for (final id in index) {
+      final task = await _getTask(prefs, id);
+      if (task == null) continue;
+      final sourceMatches = task.sourceEntryId == entryId;
+      final checkInMatches =
+          task.checkIns.any((checkIn) => checkIn.sourceEntryId == entryId);
+      final checkIns = task.checkIns
+          .map((checkIn) => checkIn.sourceEntryId == entryId
+              ? checkIn.copyWith(clearSourceEntryId: true)
+              : checkIn)
+          .toList(growable: false);
+      if (!sourceMatches && !checkInMatches) continue;
+      await saveTask(task.copyWith(
+        sourceEntryId: sourceMatches ? '' : task.sourceEntryId,
+        checkIns: checkIns,
+        updatedAt: now,
+      ));
+    }
+  }
+
   Future<void> setCompleted(String id, bool completed) async {
     final task = await getTask(id);
     if (task == null) return;

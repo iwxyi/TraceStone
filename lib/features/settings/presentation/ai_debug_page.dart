@@ -36,6 +36,7 @@ class _AiDebugPageState extends State<AiDebugPage> {
   final _queueRunner = const AiAnalysisQueueRunner();
   late Future<AiAnalysisQueueSnapshot> _snapshotFuture =
       _queueRepository.snapshot();
+  int _debugRecordsVersion = 0;
 
   @override
   void initState() {
@@ -70,12 +71,57 @@ class _AiDebugPageState extends State<AiDebugPage> {
     );
   }
 
+  Future<void> _clearDebugRecords() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清除 AI 调试记录？'),
+        content: const Text(
+          '这只会清除 Prompt、检索 Trace 和 AI 反馈记录，不会删除日记、摘要、向量、洞察或队列任务。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final promptCount = await const AiPromptTraceRepository().deleteAllTraces();
+    final retrievalCount =
+        await const AiRetrievalTraceRepository().deleteAllTraces();
+    final feedbackCount =
+        await const AiFeedbackRepository().deleteAllFeedback();
+    if (!mounted) return;
+    setState(() {
+      _debugRecordsVersion++;
+      _snapshotFuture = _queueRepository.snapshot();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '已清除 ${promptCount + retrievalCount + feedbackCount} 条 AI 调试记录',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('AI 调试'),
         actions: [
+          IconButton(
+            tooltip: '清除调试记录',
+            onPressed: _clearDebugRecords,
+            icon: const Icon(Icons.cleaning_services_outlined),
+          ),
           IconButton(
             tooltip: '刷新',
             onPressed: _refresh,
@@ -99,11 +145,15 @@ class _AiDebugPageState extends State<AiDebugPage> {
                 onBackfill: _enqueueBackfill,
               ),
               const SizedBox(height: 16),
-              const _RecentRetrievalTraceCard(),
+              _RecentRetrievalTraceCard(
+                key: ValueKey('retrieval-$_debugRecordsVersion'),
+              ),
               const SizedBox(height: 16),
               const _RecentPeriodSummaryCard(),
               const SizedBox(height: 16),
-              const _CompanionTraceCard(),
+              _CompanionTraceCard(
+                key: ValueKey('companion-$_debugRecordsVersion'),
+              ),
               const SizedBox(height: 16),
               if (queue.jobs.isEmpty)
                 const Center(child: Text('暂无 AI 队列任务'))
@@ -121,7 +171,7 @@ class _AiDebugPageState extends State<AiDebugPage> {
 }
 
 class _RecentRetrievalTraceCard extends StatefulWidget {
-  const _RecentRetrievalTraceCard();
+  const _RecentRetrievalTraceCard({super.key});
 
   @override
   State<_RecentRetrievalTraceCard> createState() =>
@@ -263,7 +313,7 @@ class _RecentPeriodSummaryCard extends StatelessWidget {
 }
 
 class _CompanionTraceCard extends StatefulWidget {
-  const _CompanionTraceCard();
+  const _CompanionTraceCard({super.key});
 
   @override
   State<_CompanionTraceCard> createState() => _CompanionTraceCardState();
@@ -1189,9 +1239,10 @@ class _JobArtifacts {
       feedback: feedback == null
           ? ''
           : [
-              feedback.value.name,
-              feedback.createdAt.toIso8601String(),
-              if (feedback.note?.isNotEmpty ?? false) feedback.note!,
+              'value=${feedback.value.name}',
+              'createdAt=${feedback.createdAt.toIso8601String()}',
+              if (feedback.note?.isNotEmpty ?? false)
+                'note=${_compactDebugValue(feedback.note!)}',
             ].join(' '),
       memoryLifecycle: sourceMemory == null
           ? ''
@@ -1258,6 +1309,12 @@ class _JobArtifacts {
         lines.map((line) => line.trim()).where((line) => line.isNotEmpty);
     if (visible.isEmpty) return '';
     return ['## $title', ...visible].join('\n');
+  }
+
+  static String _compactDebugValue(String value) {
+    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= 240) return normalized;
+    return '${normalized.substring(0, 240)}...';
   }
 }
 

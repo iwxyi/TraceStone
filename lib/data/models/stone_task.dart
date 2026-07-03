@@ -30,6 +30,7 @@ class StoneTask {
   bool get isCompleted => status == StoneTaskStatus.completed;
 
   StoneTask copyWith({
+    String? sourceEntryId,
     String? title,
     String? description,
     DateTime? updatedAt,
@@ -43,7 +44,7 @@ class StoneTask {
   }) {
     return StoneTask(
       id: id,
-      sourceEntryId: sourceEntryId,
+      sourceEntryId: sourceEntryId ?? this.sourceEntryId,
       title: title ?? this.title,
       description: description ?? this.description,
       createdAt: createdAt,
@@ -119,6 +120,19 @@ class StoneTaskCheckIn {
   final DateTime createdAt;
   final String note;
   final String? sourceEntryId;
+
+  StoneTaskCheckIn copyWith({
+    String? sourceEntryId,
+    bool clearSourceEntryId = false,
+  }) {
+    return StoneTaskCheckIn(
+      id: id,
+      createdAt: createdAt,
+      note: note,
+      sourceEntryId:
+          clearSourceEntryId ? null : sourceEntryId ?? this.sourceEntryId,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,

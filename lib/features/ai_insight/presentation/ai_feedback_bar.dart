@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/models/ai_feedback.dart';
 import '../../../data/repositories/ai_feedback_repository.dart';
-import '../../../data/repositories/memory_repository.dart';
+import '../../../data/services/ai_feedback_service.dart';
 
 class AiFeedbackBar extends StatefulWidget {
   const AiFeedbackBar({
@@ -20,22 +20,15 @@ class AiFeedbackBar extends StatefulWidget {
 
 class _AiFeedbackBarState extends State<AiFeedbackBar> {
   final _repository = const AiFeedbackRepository();
-  final _memoryRepository = const MemoryRepository();
+  final _feedbackService = const AiFeedbackService();
   late Future<AiFeedback?> _feedbackFuture =
       _repository.getFeedback(widget.entryId);
 
   Future<void> _save(AiFeedbackValue value, {String? note}) async {
-    final createdAt = DateTime.now();
-    final feedback = AiFeedback(
+    final feedback = await _feedbackService.submitInsightFeedback(
       entryId: widget.entryId,
       value: value,
-      createdAt: createdAt,
-      note: note?.trim().isEmpty ?? true ? null : note!.trim(),
-    );
-    await _repository.saveFeedback(feedback);
-    await _memoryRepository.applyFeedback(
-      sourceEntryId: widget.entryId,
-      value: value,
+      note: note,
     );
     if (!mounted) return;
     setState(() {
@@ -43,8 +36,9 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content:
-              Text(value == AiFeedbackValue.helpful ? '已记录反馈' : '已标记为不准确')),
+        content: Text(
+            value == AiFeedbackValue.helpful ? '已记录反馈' : '已标记为不准确，将重新整理这篇洞察'),
+      ),
     );
   }
 

@@ -4,19 +4,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/app/trace_stone_app.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
+import 'package:trace_stone/data/models/ai_feedback.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
+import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
+import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
 import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
+import 'package:trace_stone/data/repositories/ai_retrieval_trace_repository.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
 import 'package:trace_stone/data/repositories/memory_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
+import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/features/ai_insight/presentation/insight_page.dart';
@@ -24,6 +29,7 @@ import 'package:trace_stone/features/companion/presentation/companion_page.dart'
 import 'package:trace_stone/features/diary/presentation/diary_edit_page.dart';
 import 'package:trace_stone/features/diary/presentation/today_page.dart';
 import 'package:trace_stone/features/relationships/presentation/relationships_page.dart';
+import 'package:trace_stone/features/review/presentation/review_page.dart';
 import 'package:trace_stone/features/settings/presentation/calendar_memory_page.dart';
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
 import 'package:trace_stone/features/settings/presentation/ai_debug_page.dart';
@@ -50,6 +56,45 @@ void main() {
     await tester.pumpWidget(const TraceStoneApp());
 
     expect(find.text('回顾'), findsOneWidget);
+  });
+
+  testWidgets('review period summary shows developer source lines',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'review.selectedIndex': 1,
+      'settings.developerMode': true,
+    });
+    final date = DateTime(2026, 7, 4);
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'review-period-source',
+      date: date,
+      createdAt: date,
+      content: '今天只保存了原始日记，还没有摘要。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: ReviewPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('月度总结'), findsOneWidget);
+    expect(find.text('开发者来源'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('开发者来源'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('开发者来源'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('context: periodSummary'), findsOneWidget);
+    expect(
+      find.textContaining('source: period_entry:review-period-source'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('shows profile candidates on profile tab', (tester) async {
@@ -204,7 +249,17 @@ void main() {
       entryDate: date,
       generatedAt: date,
       reflection: '散步以后状态变轻松。',
-      relatedMemories: const [],
+      relatedMemories: const [
+        RelatedMemoryInsight(
+          title: '去年夏天的散步',
+          reason: '同样提到散步后状态恢复',
+          entryId: 'entry-2025-walk',
+        ),
+        RelatedMemoryInsight(
+          title: '未验证的旧记忆',
+          reason: 'AI 没有返回有效来源',
+        ),
+      ],
       emotion: '放松',
       keywords: const ['散步'],
       people: const [],
@@ -212,13 +267,21 @@ void main() {
       stoneDescription: '',
       memorySummary: '',
       memoryTags: const [],
-      facts: const [
+      facts: [
         InsightClaim(
           text: '今天记录了散步。',
           evidence: [
-            InsightEvidence(type: 'current_entry', id: 'insight-export-entry'),
+            InsightEvidence(
+              type: 'current_entry',
+              id: 'insight-export-entry',
+              date: date,
+              summary: '晚饭后散步，状态变轻松。',
+              quote: '走完以后轻松一点',
+              relevance: '当前日记事实来源',
+            ),
           ],
         ),
+        InsightClaim(text: '这条结论没有有效来源。'),
       ],
       suggestions: const [
         InsightClaim(text: '明天晚饭后散步 10 分钟。'),
@@ -246,6 +309,21 @@ void main() {
     await const InsightRepository().saveInsight(insight);
     await tester.pumpWidget(const MaterialApp(home: InsightPage()));
     await tester.pumpAndSettle();
+    expect(find.text('证据来源'), findsOneWidget);
+    expect(
+      find.textContaining(
+          'current_entry:insight-export-entry｜2026-07-03｜晚饭后散步，状态变轻松。'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('证据缺失：结论没有有效来源'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('去年夏天的散步'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('来源 entry=entry-2025-walk'), findsOneWidget);
+    expect(find.textContaining('来源未验证'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('复制洞察包'),
       260,
@@ -788,7 +866,7 @@ void main() {
     await _seedSearchEntry();
 
     await tester.pumpWidget(const MaterialApp(home: SearchPage()));
-    await tester.enterText(find.byType(SearchBar), '散步 焦虑');
+    await tester.enterText(find.byType(SearchBar), '妈妈 散步');
     await tester.tap(find.byIcon(Icons.arrow_forward));
     await tester.pumpAndSettle();
 
@@ -863,7 +941,7 @@ void main() {
     await _seedSearchEntry();
 
     await tester.pumpWidget(const MaterialApp(home: SearchPage()));
-    await tester.enterText(find.byType(SearchBar), '散步 焦虑');
+    await tester.enterText(find.byType(SearchBar), '妈妈 散步');
     await tester.tap(find.byIcon(Icons.arrow_forward));
     await tester.pumpAndSettle();
 
@@ -903,6 +981,12 @@ void main() {
     expect(copiedText, contains('## Summary'));
     expect(copiedText, contains('query=散步 焦虑'));
     expect(copiedText, contains('entry_summary:search-entry'));
+    expect(copiedText, contains('evidence=current_entry:search-context'));
+    expect(copiedText, contains('晚饭后散步后状态恢复'));
+    expect(copiedText, contains('interaction=search-context'));
+    expect(copiedText, contains('stone:search-debug'));
+    expect(copiedText, contains('sourceEntry=search-context'));
+    expect(copiedText, contains('checkIn=checkin:search-debug'));
     expect(copiedText, contains('## Retrieval Trace'));
   });
 
@@ -957,7 +1041,11 @@ void main() {
     expect(copiedText, contains('### 周期总结'));
     expect(copiedText, contains('entry_summary:search-entry'));
 
-    await tester.drag(find.byType(ListView), const Offset(0, -520));
+    await tester.scrollUntilVisible(
+      find.text('最近周期总结'),
+      520,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     expect(find.text('最近周期总结'), findsOneWidget);
     expect(find.textContaining('月度总结 2026-07'), findsOneWidget);
@@ -969,7 +1057,11 @@ void main() {
     expect(copiedText, contains('context=periodSummary'));
     expect(copiedText, contains('source=entry_summary:search-entry'));
 
-    await tester.drag(find.byType(ListView), const Offset(0, 520));
+    await tester.scrollUntilVisible(
+      find.text('最近检索上下文'),
+      -520,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, '清除').first);
     await tester.pumpAndSettle();
@@ -1024,6 +1116,147 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('最近陪伴问答'), findsNothing);
+  });
+
+  testWidgets('AI debug page clears debug records without deleting artifacts',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const promptRepository = AiPromptTraceRepository();
+    const retrievalRepository = AiRetrievalTraceRepository();
+    const feedbackRepository = AiFeedbackRepository();
+    const summaryRepository = EntrySummaryRepository();
+    final date = DateTime(2026, 7, 3);
+    final entry = DiaryEntry(
+      id: 'debug-clear-entry',
+      date: date,
+      createdAt: date,
+      content: '今天散步后状态放松了一些。',
+      location: '',
+      weather: '',
+      temperature: null,
+      updatedAt: date,
+    );
+    await const DiaryRepository().saveEntry(entry);
+    final segments = const EntrySummaryService().buildSegments(entry);
+    await summaryRepository.saveSummary(
+      const EntrySummaryService().buildSummary(entry, segments),
+    );
+    await promptRepository.saveTrace(AiPromptTrace(
+      id: 'companion:last',
+      scenario: 'question',
+      createdAt: date,
+      contextSummary: 'question sources=1 sourceFiltered=1',
+      systemPromptPreview: 'system',
+      userPromptPreview: 'user',
+      systemPromptLength: 6,
+      userPromptLength: 4,
+    ));
+    await retrievalRepository.saveTrace(AiRetrievalTrace(
+      entryId: 'search:last',
+      generatedAt: date,
+      scenario: 'search',
+      contextSummary: 'search sources=1',
+      sourceCount: 1,
+      items: const [],
+    ));
+    await feedbackRepository.saveFeedback(AiFeedback(
+      entryId: entry.id,
+      value: AiFeedbackValue.inaccurate,
+      createdAt: date,
+      note: '来源不对',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+    expect(find.text('最近检索上下文'), findsOneWidget);
+    expect(find.text('最近陪伴问答'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('清除调试记录'));
+    await tester.pumpAndSettle();
+    expect(find.text('清除 AI 调试记录？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '清除'));
+    await tester.pumpAndSettle();
+
+    expect(await promptRepository.getTrace('companion:last'), isNull);
+    expect(await retrievalRepository.getTrace('search:last'), isNull);
+    expect(await feedbackRepository.getFeedback(entry.id), isNull);
+    expect(await summaryRepository.getSummary(entry.id), isNotNull);
+    expect(find.text('最近检索上下文'), findsNothing);
+    expect(find.text('最近陪伴问答'), findsNothing);
+  });
+
+  testWidgets('AI debug page shows inaccurate feedback and requeue trace',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    final date = DateTime(2026, 7, 3);
+    final entry = DiaryEntry(
+      id: 'debug-feedback-entry',
+      date: date,
+      createdAt: date,
+      content: '今天的洞察判断不太准确。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    );
+    await const DiaryRepository().saveEntry(entry);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: entry.id,
+      entryDate: date,
+      generatedAt: date,
+      reflection: '旧洞察',
+      relatedMemories: const [],
+      emotion: '平静',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+    ));
+    await const AiFeedbackService().submitInsightFeedback(
+      entryId: entry.id,
+      value: AiFeedbackValue.inaccurate,
+      note: '把情绪判断错了',
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('用户标记洞察不准确'), findsWidgets);
+    expect(find.textContaining('value=inaccurate'), findsOneWidget);
+    expect(find.textContaining('note=把情绪判断错了'), findsWidgets);
+
+    await tester.scrollUntilVisible(
+      find.widgetWithText(TextButton, '复制上下文').first,
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '复制上下文').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('## AI Pipeline Job'));
+    expect(copiedText, contains('用户标记洞察不准确，重新生成今日洞察'));
+    expect(copiedText, contains('value=inaccurate'));
+    expect(copiedText, contains('note=把情绪判断错了'));
   });
 
   testWidgets('corrects entry summary from AI debug page', (tester) async {
@@ -1162,4 +1395,64 @@ Future<void> _seedSearchEntry() async {
   await summaryRepository.saveSummary(
     const EntrySummaryService().buildSummary(entry, segments),
   );
+  await const InsightRepository().saveInsight(DiaryInsight(
+    entryId: 'search-context',
+    entryDate: date,
+    generatedAt: date,
+    reflection: '搜索调试上下文',
+    relatedMemories: const [],
+    emotion: '放松',
+    keywords: const ['散步', '焦虑'],
+    people: const ['妈妈'],
+    stoneTitle: '',
+    stoneDescription: '',
+    memorySummary: '',
+    memoryTags: const [],
+    profileUpdateCandidates: const [
+      ProfileUpdateCandidate(
+        field: 'self_regulation',
+        value: '散步可能帮助恢复状态',
+        confidence: 0.64,
+        evidence: [
+          InsightEvidence(
+            type: 'current_entry',
+            id: 'search-context',
+            summary: '晚饭后散步后状态恢复',
+          ),
+        ],
+      ),
+    ],
+    relationshipUpdates: const [
+      RelationshipUpdateCandidate(
+        personName: '妈妈',
+        relationship: 'family',
+        summary: '晚饭后沟通更平和',
+        confidence: 0.64,
+        evidence: [
+          InsightEvidence(
+            type: 'current_entry',
+            id: 'search-context',
+            summary: '和妈妈晚饭后沟通更平和',
+          ),
+        ],
+      ),
+    ],
+  ));
+  await const StoneTaskRepository().saveTask(StoneTask(
+    id: 'stone:search-debug',
+    sourceEntryId: 'search-context',
+    title: '晚饭后散步 10 分钟',
+    description: '走一小圈即可。',
+    createdAt: date,
+    updatedAt: date,
+    tags: const ['散步'],
+    checkIns: [
+      StoneTaskCheckIn(
+        id: 'checkin:search-debug',
+        createdAt: date,
+        note: '完成了一次散步',
+        sourceEntryId: 'search-context',
+      ),
+    ],
+  ));
 }

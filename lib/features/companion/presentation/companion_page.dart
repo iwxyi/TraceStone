@@ -227,11 +227,7 @@ class _MessageBubble extends StatelessWidget {
                         Tooltip(
                           message: source.reason,
                           child: Chip(
-                            label: Text(source.score > 0
-                                ? developerMode
-                                    ? '${source.title} ${source.score}'
-                                    : source.title
-                                : source.title),
+                            label: Text(_sourceLabel(source, developerMode)),
                           ),
                         ),
                     ],
@@ -243,5 +239,15 @@ class _MessageBubble extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _sourceLabel(CompanionAnswerSource source, bool developerMode) {
+    if (!developerMode) return source.title;
+    final id = (source.sourceType?.isNotEmpty ?? false) &&
+            (source.sourceId?.isNotEmpty ?? false)
+        ? ' ${source.sourceType}:${source.sourceId}'
+        : '';
+    final score = source.score > 0 ? ' ${source.score}' : '';
+    return '${source.title}$id$score';
   }
 }

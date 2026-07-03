@@ -17,9 +17,13 @@ class CompanionAnswerSource {
     required this.title,
     required this.reason,
     required this.score,
+    this.sourceType,
+    this.sourceId,
   });
 
   final String title;
   final String reason;
   final int score;
+  final String? sourceType;
+  final String? sourceId;
 }

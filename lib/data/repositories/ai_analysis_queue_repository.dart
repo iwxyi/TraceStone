@@ -137,8 +137,29 @@ class AiAnalysisQueueRepository {
         state: AiAnalysisJobState.incomplete,
         updatedAt: now,
         lastError: '上次整理被中断，已等待继续',
+        stageLogs: _appendStageLog(
+          job.stageLogs,
+          AiAnalysisStageLog(
+            stage: job.currentStage,
+            startedAt: now,
+            message: '上次整理被系统中断',
+            inputSummary: 'entryId=${job.entryId}',
+            outputSummary: 'state=running -> incomplete',
+            error: '超过 ${_staleRunningAge.inMinutes} 分钟未更新',
+            retryCount: job.retryCount,
+          ),
+        ),
       ));
     }
+  }
+
+  List<AiAnalysisStageLog> _appendStageLog(
+    List<AiAnalysisStageLog> logs,
+    AiAnalysisStageLog log,
+  ) {
+    final next = [...logs, log];
+    if (next.length <= 80) return next;
+    return next.sublist(next.length - 80);
   }
 
   int _statePriority(AiAnalysisJobState state) {

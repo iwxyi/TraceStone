@@ -12,6 +12,7 @@ import '../../../data/models/diary_insight.dart';
 import '../../../data/models/period_summary.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
+import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/period_summary_service.dart';
 import '../../ai_insight/presentation/ai_feedback_bar.dart';
@@ -1665,9 +1666,14 @@ class _MonthDayCell extends StatelessWidget {
 }
 
 class _PeriodSummaryCard extends StatelessWidget {
-  const _PeriodSummaryCard({required this.future});
+  const _PeriodSummaryCard({
+    required this.future,
+    DeveloperSettingsRepository? developerSettings,
+  }) : _developerSettings =
+            developerSettings ?? const DeveloperSettingsRepository();
 
   final Future<PeriodSummary> future;
+  final DeveloperSettingsRepository _developerSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -1695,67 +1701,115 @@ class _PeriodSummaryCard extends StatelessWidget {
           );
         }
         final title = summary.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
-        return Card(
-          elevation: 0,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        return FutureBuilder<bool>(
+          future: _developerSettings.isDeveloperModeEnabled(),
+          builder: (context, developerSnapshot) {
+            final developerMode = developerSnapshot.data ?? false;
+            return Card(
+              elevation: 0,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.insights_outlined, size: 20),
-                    const SizedBox(width: 8),
-                    Text(title, style: Theme.of(context).textTheme.titleMedium),
-                    const Spacer(),
-                    Text('${summary.entryCount}篇',
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(summary.brief),
-                if (summary.themes.isNotEmpty ||
-                    summary.emotions.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final theme in summary.themes.take(6))
-                        Chip(label: Text(theme)),
-                      for (final emotion in summary.emotions.take(3))
-                        Chip(
-                          avatar: const Icon(Icons.mood_outlined, size: 16),
-                          label: Text(emotion),
+                    Row(
+                      children: [
+                        const Icon(Icons.insights_outlined, size: 20),
+                        const SizedBox(width: 8),
+                        Text(title,
+                            style: Theme.of(context).textTheme.titleMedium),
+                        const Spacer(),
+                        Text('${summary.entryCount}篇',
+                            style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(summary.brief),
+                    if (summary.themes.isNotEmpty ||
+                        summary.emotions.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final theme in summary.themes.take(6))
+                            Chip(label: Text(theme)),
+                          for (final emotion in summary.emotions.take(3))
+                            Chip(
+                              avatar: const Icon(Icons.mood_outlined, size: 16),
+                              label: Text(emotion),
+                            ),
+                        ],
+                      ),
+                    ],
+                    if (summary.relationshipHighlights.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text('关系变化',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 6),
+                      for (final line in summary.relationshipHighlights.take(3))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(line),
                         ),
                     ],
-                  ),
-                ],
-                if (summary.relationshipHighlights.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text('关系变化', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  for (final line in summary.relationshipHighlights.take(3))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(line),
-                    ),
-                ],
-                if (summary.stoneHighlights.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text('塑石进展', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  for (final line in summary.stoneHighlights.take(4))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(line),
-                    ),
-                ],
-              ],
-            ),
-          ),
+                    if (summary.stoneHighlights.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text('塑石进展',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 6),
+                      for (final line in summary.stoneHighlights.take(4))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(line),
+                        ),
+                    ],
+                    if (developerMode &&
+                        (summary.contextDebugSummary.isNotEmpty ||
+                            summary.contextSourceLines.isNotEmpty)) ...[
+                      const SizedBox(height: 12),
+                      _PeriodSummaryDebugSources(summary: summary),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
         );
       },
+    );
+  }
+}
+
+class _PeriodSummaryDebugSources extends StatelessWidget {
+  const _PeriodSummaryDebugSources({required this.summary});
+
+  final PeriodSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: 4),
+      title: Text('开发者来源', style: Theme.of(context).textTheme.titleSmall),
+      children: [
+        if (summary.contextDebugSummary.isNotEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: SelectableText('context: ${summary.contextDebugSummary}'),
+            ),
+          ),
+        for (final line in summary.contextSourceLines.take(8))
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: SelectableText('source: $line'),
+            ),
+          ),
+      ],
     );
   }
 }

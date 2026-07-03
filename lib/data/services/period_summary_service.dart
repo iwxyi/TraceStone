@@ -6,6 +6,7 @@ import '../repositories/insight_repository.dart';
 import '../repositories/period_summary_repository.dart';
 import '../repositories/stone_task_repository.dart';
 import 'ai_context_builder.dart';
+import 'entry_summary_service.dart';
 
 class PeriodSummaryService {
   const PeriodSummaryService({
@@ -13,17 +14,21 @@ class PeriodSummaryService {
     InsightRepository? insightRepository,
     PeriodSummaryRepository? periodSummaryRepository,
     StoneTaskRepository? stoneTaskRepository,
+    EntrySummaryService? entrySummaryService,
   })  : _contextBuilder = contextBuilder ?? const AiContextBuilder(),
         _insightRepository = insightRepository ?? const InsightRepository(),
         _periodSummaryRepository =
             periodSummaryRepository ?? const PeriodSummaryRepository(),
         _stoneTaskRepository =
-            stoneTaskRepository ?? const StoneTaskRepository();
+            stoneTaskRepository ?? const StoneTaskRepository(),
+        _entrySummaryService =
+            entrySummaryService ?? const EntrySummaryService();
 
   final AiContextBuilder _contextBuilder;
   final InsightRepository _insightRepository;
   final PeriodSummaryRepository _periodSummaryRepository;
   final StoneTaskRepository _stoneTaskRepository;
+  final EntrySummaryService _entrySummaryService;
 
   Future<PeriodSummary> buildMonthSummary(
     DateTime month,
@@ -117,7 +122,17 @@ class PeriodSummaryService {
 
     for (final entry in entries) {
       final insight = await _insightRepository.getInsight(entry.id);
+      final fallbackSegments = _entrySummaryService.buildSegments(entry);
+      final fallbackSummary =
+          _entrySummaryService.buildSummary(entry, fallbackSegments);
       briefs.add(entry.excerpt);
+      for (final topic in fallbackSummary.topics) {
+        themes[topic] = (themes[topic] ?? 0) + 2;
+      }
+      if (fallbackSummary.emotion.isNotEmpty) {
+        emotions[fallbackSummary.emotion] =
+            (emotions[fallbackSummary.emotion] ?? 0) + 1;
+      }
       if (insight != null) {
         if (insight.emotion.isNotEmpty) {
           emotions[insight.emotion] = (emotions[insight.emotion] ?? 0) + 1;
@@ -188,6 +203,12 @@ class PeriodSummaryService {
 
   List<String> _periodContextSourceLines(AiContextPackage context) {
     final lines = <String>[
+      for (final entry in context.periodEntries.take(12))
+        [
+          'period_entry:${entry.id}',
+          entry.date.toIso8601String().split('T').first,
+          entry.title ?? entry.excerpt,
+        ].join(' | '),
       for (final summary in context.periodSummaries.take(12))
         [
           'entry_summary:${summary.entryId}',

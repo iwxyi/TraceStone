@@ -156,6 +156,23 @@ class _InsightBody extends StatelessWidget {
                   Text(memory.title,
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                   if (memory.reason.isNotEmpty) Text(memory.reason),
+                  if (developerMode && (memory.entryId?.isNotEmpty ?? false))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '来源 entry=${memory.entryId}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                    ),
+                  if (developerMode && !(memory.entryId?.isNotEmpty ?? false))
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: _DeveloperWarningText('来源未验证：AI 未返回有效 entryId'),
+                    ),
                   const SizedBox(height: 10),
                 ],
               ],
@@ -294,36 +311,46 @@ class _UpdateCandidateList extends StatelessWidget {
       children: [
         _CandidateGroup(
           title: '画像候选',
-          lines: [
+          items: [
             for (final candidate in insight.profileUpdateCandidates)
-              '${candidate.field}：${candidate.value}${_confidence(candidate.confidence)}',
+              _CandidateDebugItem(
+                line:
+                    '${candidate.field}：${candidate.value}${_confidence(candidate.confidence)}',
+                evidence: candidate.evidence,
+              ),
           ],
         ),
         _CandidateGroup(
           title: '关系候选',
-          lines: [
+          items: [
             for (final update in insight.relationshipUpdates)
-              [
-                if (update.personName.isNotEmpty) update.personName,
-                if (update.summary.isNotEmpty) update.summary,
-                if (update.pattern?.isNotEmpty ?? false) update.pattern!,
-                _confidence(update.confidence),
-              ].where((item) => item.isNotEmpty).join('｜'),
+              _CandidateDebugItem(
+                line: [
+                  if (update.personName.isNotEmpty) update.personName,
+                  if (update.summary.isNotEmpty) update.summary,
+                  if (update.pattern?.isNotEmpty ?? false) update.pattern!,
+                  _confidence(update.confidence),
+                ].where((item) => item.isNotEmpty).join('｜'),
+                evidence: update.evidence,
+              ),
           ],
         ),
         _CandidateGroup(
           title: '反证候选',
-          lines: [
+          items: [
             for (final contradiction in insight.contradictions)
-              [
-                if (contradiction.oldMemoryId.isNotEmpty)
-                  '旧记忆 ${contradiction.oldMemoryId}',
-                if (contradiction.newEvidence.isNotEmpty)
-                  contradiction.newEvidence,
-                if (contradiction.interpretation.isNotEmpty)
-                  contradiction.interpretation,
-                _confidence(contradiction.confidence),
-              ].where((item) => item.isNotEmpty).join('｜'),
+              _CandidateDebugItem(
+                line: [
+                  if (contradiction.oldMemoryId.isNotEmpty)
+                    '旧记忆 ${contradiction.oldMemoryId}',
+                  if (contradiction.newEvidence.isNotEmpty)
+                    contradiction.newEvidence,
+                  if (contradiction.interpretation.isNotEmpty)
+                    contradiction.interpretation,
+                  _confidence(contradiction.confidence),
+                ].where((item) => item.isNotEmpty).join('｜'),
+                evidence: contradiction.evidence,
+              ),
           ],
         ),
       ],
@@ -334,27 +361,49 @@ class _UpdateCandidateList extends StatelessWidget {
       value == null ? '' : '｜置信度 ${value.toStringAsFixed(2)}';
 }
 
+class _CandidateDebugItem {
+  const _CandidateDebugItem({
+    required this.line,
+    required this.evidence,
+  });
+
+  final String line;
+  final List<InsightEvidence> evidence;
+}
+
 class _CandidateGroup extends StatelessWidget {
-  const _CandidateGroup({required this.title, required this.lines});
+  const _CandidateGroup({required this.title, required this.items});
 
   final String title;
-  final List<String> lines;
+  final List<_CandidateDebugItem> items;
 
   @override
   Widget build(BuildContext context) {
-    if (lines.isEmpty) return const SizedBox.shrink();
+    if (items.isEmpty) return const SizedBox.shrink();
     final theme = Theme.of(context);
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       childrenPadding: const EdgeInsets.only(bottom: 8),
       title: Text(title, style: theme.textTheme.titleSmall),
       children: [
-        for (final line in lines)
+        for (final item in items)
           Align(
             alignment: Alignment.centerLeft,
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(line),
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.line),
+                  if (item.evidence.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    _EvidenceList(evidence: item.evidence),
+                  ] else ...[
+                    const SizedBox(height: 4),
+                    const _DeveloperWarningText('证据缺失：候选没有有效来源'),
+                  ],
+                ],
+              ),
             ),
           ),
       ],
@@ -400,17 +449,10 @@ class _ClaimGroup extends StatelessWidget {
                 ],
                 if (developerMode && claim.evidence.isNotEmpty) ...[
                   const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final evidence in claim.evidence.take(3))
-                        Chip(
-                          visualDensity: VisualDensity.compact,
-                          label: Text(_evidenceLabel(evidence)),
-                        ),
-                    ],
-                  ),
+                  _EvidenceList(evidence: claim.evidence),
+                ] else if (developerMode) ...[
+                  const SizedBox(height: 4),
+                  const _DeveloperWarningText('证据缺失：结论没有有效来源'),
                 ],
               ],
             ),
@@ -418,11 +460,69 @@ class _ClaimGroup extends StatelessWidget {
       ],
     );
   }
+}
 
-  String _evidenceLabel(InsightEvidence evidence) {
-    final id = evidence.id.isEmpty ? '' : ' ${evidence.id}';
-    return '${evidence.type}$id'.trim();
+class _DeveloperWarningText extends StatelessWidget {
+  const _DeveloperWarningText(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      text,
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.error,
+      ),
+    );
   }
+}
+
+class _EvidenceList extends StatelessWidget {
+  const _EvidenceList({required this.evidence});
+
+  final List<InsightEvidence> evidence;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '证据来源',
+          style: theme.textTheme.labelMedium?.copyWith(color: color),
+        ),
+        const SizedBox(height: 4),
+        for (final item in evidence.take(4))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              _evidenceLine(item),
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _evidenceLine(InsightEvidence evidence) {
+    final parts = [
+      [evidence.type, evidence.id].where((item) => item.isNotEmpty).join(':'),
+      if (evidence.date != null) _dateLabel(evidence.date!),
+      if (evidence.summary?.isNotEmpty ?? false) evidence.summary!,
+      if (evidence.quote?.isNotEmpty ?? false) '“${evidence.quote}”',
+      if (evidence.relevance?.isNotEmpty ?? false) evidence.relevance!,
+    ].where((item) => item.isNotEmpty).toList();
+    return parts.join('｜');
+  }
+
+  String _dateLabel(DateTime date) =>
+      '${date.year}-${_two(date.month)}-${_two(date.day)}';
+
+  String _two(int value) => value.toString().padLeft(2, '0');
 }
 
 class _SectionCard extends StatelessWidget {

@@ -38,6 +38,18 @@ class AiFeedbackRepository {
     await prefs.remove('$_prefix$entryId');
   }
 
+  Future<int> deleteAllFeedback() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs
+        .getKeys()
+        .where((key) => key.startsWith(_prefix))
+        .toList(growable: false);
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
+    return keys.length;
+  }
+
   String? _safeGetString(SharedPreferences prefs, String key) {
     try {
       final value = prefs.get(key);

@@ -158,7 +158,10 @@ class RelatedMemoryInsight {
     return RelatedMemoryInsight(
       title: json['title'] as String? ?? '',
       reason: json['reason'] as String? ?? '',
-      entryId: json['entryId'] as String?,
+      entryId: json['entryId'] as String? ??
+          json['entry_id'] as String? ??
+          json['sourceId'] as String? ??
+          json['source_id'] as String?,
     );
   }
 }

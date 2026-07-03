@@ -4,6 +4,7 @@ import '../models/diary_analysis_status.dart';
 import '../models/diary_entry.dart';
 import '../models/diary_insight.dart';
 import '../models/diary_segment.dart';
+import '../models/ai_feedback.dart';
 import '../models/memory_entry.dart';
 import '../models/ai_context_package.dart';
 import '../models/ai_profile.dart';
@@ -11,6 +12,7 @@ import '../models/memory_retrieval_result.dart';
 import '../models/ai_prompt_trace.dart';
 import '../models/stone_task.dart';
 import '../repositories/ai_prompt_trace_repository.dart';
+import '../repositories/ai_feedback_repository.dart';
 import '../repositories/insight_repository.dart';
 import '../repositories/memory_repository.dart';
 import 'ai_client_service.dart';
@@ -20,18 +22,22 @@ class DiaryAnalysisService {
   const DiaryAnalysisService({
     AiClientService? client,
     AiPromptTraceRepository? promptTraceRepository,
+    AiFeedbackRepository? feedbackRepository,
     AiContextBuilder? contextBuilder,
     MemoryRepository? memoryRepository,
     InsightRepository? insightRepository,
   })  : _client = client ?? const AiClientService(),
         _promptTraceRepository =
             promptTraceRepository ?? const AiPromptTraceRepository(),
+        _feedbackRepository =
+            feedbackRepository ?? const AiFeedbackRepository(),
         _contextBuilder = contextBuilder ?? const AiContextBuilder(),
         _memoryRepository = memoryRepository ?? const MemoryRepository(),
         _insightRepository = insightRepository ?? const InsightRepository();
 
   final AiClientService _client;
   final AiPromptTraceRepository _promptTraceRepository;
+  final AiFeedbackRepository _feedbackRepository;
   final AiContextBuilder _contextBuilder;
   final MemoryRepository _memoryRepository;
   final InsightRepository _insightRepository;
@@ -43,9 +49,10 @@ class DiaryAnalysisService {
       updatedAt: DateTime.now(),
     ));
     final context = await _contextBuilder.buildForTodayInsight(entry);
+    final feedback = await _feedbackRepository.getFeedback(entry.id);
     const systemPrompt =
         '你是溯石的日记洞察助手。你必须结合今天的日记、最近日记和历史记忆分析，不做空洞说教，不虚构事实。输出必须是 JSON。';
-    final userPrompt = _buildPrompt(context);
+    final userPrompt = _buildPrompt(context, feedback: feedback);
     await _savePromptTrace(
       id: entry.id,
       scenario: context.scenario.name,
@@ -59,21 +66,32 @@ class DiaryAnalysisService {
       maxTokens: 1600,
     );
     final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
-    final insight = _parseInsight(entry, parsed);
+    final evidenceStats = _EvidenceFilterStats();
+    final insight = _parseInsight(entry, parsed, context, evidenceStats);
+    if (evidenceStats.hasFilteredSources) {
+      await _savePromptTrace(
+        id: entry.id,
+        scenario: context.scenario.name,
+        contextSummary: '${context.debugSummary} ${evidenceStats.debugSummary}',
+        systemPrompt: systemPrompt,
+        userPrompt: userPrompt,
+      );
+    }
     await _insightRepository.saveInsight(insight);
     final memory = _memoryFromInsight(insight);
     await _memoryRepository.saveMemory(memory);
     return insight;
   }
 
-  String _buildPrompt(AiContextPackage context) {
+  String _buildPrompt(AiContextPackage context, {AiFeedback? feedback}) {
     final entry = context.currentEntry!;
+    final feedbackBlock = _feedbackBlock(feedback);
     return '''请分析用户刚写完的日记。分析必须优先尊重原文，只能引用已给出的历史材料。
 
 输出 JSON 格式：
 {
   "reflection": "200字以内，温和、具体、能呼应过往经历的读后感",
-  "related_memories": [{"title": "过往经历标题", "reason": "为什么和今天有关"}],
+  "related_memories": [{"title": "过往经历标题", "reason": "为什么和今天有关", "entry_id": "必须来自上方 entry/sourceEntry/evidenceEntries 中的一个 ID"}],
   "facts": [{"text": "明确发生的事实", "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
   "signals": [{"text": "较稳妥的情绪或主题信号", "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
   "hypotheses": [{"text": "谨慎表达的模式推测", "confidence": 0.6, "evidence": [{"type": "memory", "id": "memoryId"}]}],
@@ -118,6 +136,9 @@ ${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.ma
 进行中的塑石行动：
 ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('\n')}
 
+用户反馈：
+$feedbackBlock
+
 要求：
 1. related_memories 只能来自“最近日记摘要”或“相关历史记忆”；
 2. 如果历史材料不足，就诚实少引用，不要编造；
@@ -134,7 +155,23 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
 13. contradictions 只在新材料明显不同于历史记忆时输出；
 14. 稳定画像、关系档案和塑石行动只能作为辅助背景，不能替代今天日记；
 15. 如果今天提到正在推进的塑石行动，可以温和指出进展，不要批评未完成；
-16. memory_update.summary 不超过 80 字。''';
+16. memory_update.summary 不超过 80 字；
+17. 如果“用户反馈”指出了上次洞察不准确，本次必须避开该错误，并优先重新核对当前日记原文和证据。''';
+  }
+
+  String _feedbackBlock(AiFeedback? feedback) {
+    if (feedback == null || feedback.value != AiFeedbackValue.inaccurate) {
+      return '无';
+    }
+    final note = feedback.note?.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (note == null || note.isEmpty) {
+      return '用户曾标记上一版洞察不准确，但没有填写具体原因。请重新核对原文和证据。';
+    }
+    return [
+      '上一版洞察被用户标记为不准确。',
+      '用户指出：${note.length <= 240 ? note : '${note.substring(0, 240)}...'}',
+      '请不要机械重复上一版判断，尤其要核对用户指出的问题。',
+    ].join('\n');
   }
 
   String _summaryBlock(AiContextPackage context) {
@@ -149,14 +186,14 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
   }
 
   String _segmentLine(DiarySegment segment) =>
-      '- s${segment.index + 1}｜${segment.summary}｜${segment.topics.join('、')}';
+      '- segment:${segment.id}｜entry:${segment.entryId}｜s${segment.index + 1}｜${segment.summary}｜${segment.topics.join('、')}';
 
   String _entryLine(DiaryEntry entry) =>
-      '- ${_dateLabel(entry.date)}｜${entry.title ?? entry.excerpt}｜${entry.excerpt}';
+      '- entry:${entry.id}｜${_dateLabel(entry.date)}｜${entry.title ?? entry.excerpt}｜${entry.excerpt}';
 
   String _memoryLine(MemoryRetrievalResult result) {
     final memory = result.memory;
-    return '- ${_dateLabel(memory.date)}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${memory.emotion}｜${[
+    return '- memory:${memory.id}｜sourceEntry:${memory.sourceEntryId}｜evidenceEntries:${memory.allSourceEntryIds.join(',')}｜${_dateLabel(memory.date)}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${memory.emotion}｜${[
       ...memory.keywords,
       ...memory.people,
       ...memory.tags
@@ -164,27 +201,45 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
   }
 
   String _calendarLine(AiCalendarMatch match) =>
-      '- ${_dateLabel(match.entry.date)}｜${match.reason}${match.label == null ? '' : '｜${match.calendarType}:${match.label}'}｜${match.entry.title ?? match.entry.excerpt}｜${match.entry.excerpt}';
+      '- calendar:${match.calendarType}:${match.label ?? _dateLabel(match.entry.date)}｜entry:${match.entry.id}｜${_dateLabel(match.entry.date)}｜${match.reason}${match.label == null ? '' : '｜${match.calendarType}:${match.label}'}｜${match.entry.title ?? match.entry.excerpt}｜${match.entry.excerpt}';
 
   String _profileLine(ProfileFact profile) =>
-      '- ${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜置信度 ${profile.confidence.toStringAsFixed(2)}';
+      '- profile:${profile.id}｜${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜证据来源：${_evidenceRefs(profile.evidence)}｜置信度 ${profile.confidence.toStringAsFixed(2)}';
 
   String _relationshipLine(RelationshipProfile profile) =>
-      '- ${profile.personName}｜${profile.relationship ?? '未知关系'}｜${profile.interactionCount} 次互动｜${[
+      '- relationship:${profile.personName}｜${profile.personName}｜${profile.relationship ?? '未知关系'}｜${profile.interactionCount} 次互动｜证据来源：${_evidenceRefs(profile.evidence)}｜${[
         ...profile.emotions.take(2),
         ...profile.patterns.take(2),
       ].join('、')}';
 
   String _stoneLine(StoneTask task) =>
-      '- ${task.title}｜${task.description}｜${task.tags.join('、')}';
+      '- stone:${task.id}｜sourceEntry:${task.sourceEntryId}｜${task.title}｜${task.description}｜${task.tags.join('、')}';
+
+  String _evidenceRefs(List<InsightEvidence> evidence) {
+    if (evidence.isEmpty) return '无';
+    return evidence
+        .take(4)
+        .map((item) =>
+            [item.type, item.id].where((value) => value.isNotEmpty).join(':'))
+        .where((value) => value.isNotEmpty)
+        .join('、');
+  }
 
   String _dateLabel(DateTime date) =>
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
-  DiaryInsight _parseInsight(DiaryEntry entry, Map<String, dynamic> parsed) {
+  DiaryInsight _parseInsight(
+    DiaryEntry entry,
+    Map<String, dynamic> parsed,
+    AiContextPackage context,
+    _EvidenceFilterStats evidenceStats,
+  ) {
     final stone =
         parsed['stone_suggestion'] as Map<String, dynamic>? ?? const {};
     final memory = parsed['memory_update'] as Map<String, dynamic>? ?? const {};
+    final allowedSourceIds = _allowedSourceIds(context);
+    final suggestions =
+        _claimList(parsed['suggestions'], allowedSourceIds, evidenceStats);
     return DiaryInsight(
       entryId: entry.id,
       entryDate: entry.date,
@@ -193,6 +248,11 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
       relatedMemories: (parsed['related_memories'] as List<dynamic>? ?? [])
           .map((item) => RelatedMemoryInsight.fromJson(
               item as Map<String, dynamic>? ?? const {}))
+          .map((item) => _sanitizeRelatedMemory(
+                item,
+                allowedSourceIds,
+                evidenceStats,
+              ))
           .where((item) => item.title.isNotEmpty || item.reason.isNotEmpty)
           .toList(),
       emotion: (parsed['emotion'] as String? ?? '').trim(),
@@ -202,52 +262,189 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
       stoneDescription: (stone['description'] as String? ?? '').trim(),
       memorySummary: (memory['summary'] as String? ?? '').trim(),
       memoryTags: _stringList(memory['tags']),
-      facts: _claimList(parsed['facts']),
-      signals: _claimList(parsed['signals']),
-      hypotheses: _claimList(parsed['hypotheses']),
-      suggestions: _claimList(parsed['suggestions']).isNotEmpty
-          ? _claimList(parsed['suggestions'])
+      facts: _claimList(parsed['facts'], allowedSourceIds, evidenceStats),
+      signals: _claimList(parsed['signals'], allowedSourceIds, evidenceStats),
+      hypotheses:
+          _claimList(parsed['hypotheses'], allowedSourceIds, evidenceStats),
+      suggestions: suggestions.isNotEmpty
+          ? suggestions
           : _fallbackSuggestion(stone, entry),
-      profileUpdateCandidates:
-          _profileUpdateList(parsed['profile_update_candidates']),
+      profileUpdateCandidates: _profileUpdateList(
+        parsed['profile_update_candidates'],
+        allowedSourceIds,
+        evidenceStats,
+      ),
       relationshipUpdates: _relationshipUpdateList(
         parsed['relationship_updates'],
+        allowedSourceIds,
+        evidenceStats,
       ),
-      contradictions: _contradictionList(parsed['contradictions']),
+      contradictions: _contradictionList(
+        parsed['contradictions'],
+        allowedSourceIds,
+        evidenceStats,
+      ),
     );
   }
 
-  List<InsightClaim> _claimList(Object? value) {
+  List<InsightClaim> _claimList(
+    Object? value,
+    Set<String> allowedSourceIds,
+    _EvidenceFilterStats evidenceStats,
+  ) {
     return (value as List<dynamic>? ?? [])
         .map((item) =>
             InsightClaim.fromJson(item as Map<String, dynamic>? ?? const {}))
+        .map((item) => InsightClaim(
+              text: item.text,
+              confidence: item.confidence,
+              evidence: _validEvidence(
+                item.evidence,
+                allowedSourceIds,
+                evidenceStats,
+              ),
+            ))
         .where((item) => item.text.isNotEmpty)
         .toList();
   }
 
-  List<ProfileUpdateCandidate> _profileUpdateList(Object? value) {
+  List<ProfileUpdateCandidate> _profileUpdateList(
+    Object? value,
+    Set<String> allowedSourceIds,
+    _EvidenceFilterStats evidenceStats,
+  ) {
     return (value as List<dynamic>? ?? [])
         .map((item) => ProfileUpdateCandidate.fromJson(
             item as Map<String, dynamic>? ?? const {}))
+        .map((item) => ProfileUpdateCandidate(
+              field: item.field,
+              value: item.value,
+              action: item.action,
+              confidence: item.confidence,
+              evidence: _validEvidence(
+                item.evidence,
+                allowedSourceIds,
+                evidenceStats,
+              ),
+            ))
         .where((item) => item.field.isNotEmpty && item.value.isNotEmpty)
         .toList();
   }
 
-  List<RelationshipUpdateCandidate> _relationshipUpdateList(Object? value) {
+  List<RelationshipUpdateCandidate> _relationshipUpdateList(
+    Object? value,
+    Set<String> allowedSourceIds,
+    _EvidenceFilterStats evidenceStats,
+  ) {
     return (value as List<dynamic>? ?? [])
         .map((item) => RelationshipUpdateCandidate.fromJson(
             item as Map<String, dynamic>? ?? const {}))
+        .map((item) => RelationshipUpdateCandidate(
+              personName: item.personName,
+              summary: item.summary,
+              relationship: item.relationship,
+              emotion: item.emotion,
+              pattern: item.pattern,
+              confidence: item.confidence,
+              evidence: _validEvidence(
+                item.evidence,
+                allowedSourceIds,
+                evidenceStats,
+              ),
+            ))
         .where((item) => item.personName.isNotEmpty || item.summary.isNotEmpty)
         .toList();
   }
 
-  List<InsightContradiction> _contradictionList(Object? value) {
+  List<InsightContradiction> _contradictionList(
+    Object? value,
+    Set<String> allowedSourceIds,
+    _EvidenceFilterStats evidenceStats,
+  ) {
     return (value as List<dynamic>? ?? [])
         .map((item) => InsightContradiction.fromJson(
             item as Map<String, dynamic>? ?? const {}))
+        .map((item) => InsightContradiction(
+              oldMemoryId: item.oldMemoryId,
+              newEvidence: item.newEvidence,
+              interpretation: item.interpretation,
+              confidence: item.confidence,
+              evidence: _validEvidence(
+                item.evidence,
+                allowedSourceIds,
+                evidenceStats,
+              ),
+            ))
         .where((item) =>
             item.oldMemoryId.isNotEmpty || item.newEvidence.isNotEmpty)
         .toList();
+  }
+
+  RelatedMemoryInsight _sanitizeRelatedMemory(
+    RelatedMemoryInsight item,
+    Set<String> allowedSourceIds,
+    _EvidenceFilterStats evidenceStats,
+  ) {
+    final entryId = item.entryId;
+    final hasInvalidEntryId =
+        entryId != null && !allowedSourceIds.contains(entryId);
+    if (hasInvalidEntryId) {
+      evidenceStats.filteredRelatedMemorySources += 1;
+    }
+    return RelatedMemoryInsight(
+      title: item.title,
+      reason: item.reason,
+      entryId: entryId == null || !hasInvalidEntryId ? entryId : null,
+    );
+  }
+
+  List<InsightEvidence> _validEvidence(
+    List<InsightEvidence> evidence,
+    Set<String> allowedSourceIds,
+    _EvidenceFilterStats evidenceStats,
+  ) {
+    final valid = evidence.where((item) {
+      if (item.id.isEmpty) return false;
+      return allowedSourceIds.contains(item.id);
+    }).toList(growable: false);
+    evidenceStats.filteredEvidenceSources += evidence.length - valid.length;
+    return valid;
+  }
+
+  Set<String> _allowedSourceIds(AiContextPackage context) {
+    final ids = <String>{
+      if (context.currentEntry != null) context.currentEntry!.id,
+      if (context.currentSummary != null) context.currentSummary!.entryId,
+      for (final segment in context.currentSegments) ...[
+        segment.id,
+        segment.entryId,
+      ],
+      for (final entry in context.recentEntries) entry.id,
+      for (final match in context.calendarMatches) match.entry.id,
+      for (final result in context.relatedMemories) ...[
+        result.memory.id,
+        result.memory.sourceEntryId,
+        ...result.memory.allSourceEntryIds,
+      ],
+      for (final fact in context.profileFacts) ...[
+        fact.id,
+        for (final evidence in fact.evidence) evidence.id,
+      ],
+      for (final profile in context.relationshipProfiles) ...[
+        profile.personName,
+        for (final evidence in profile.evidence) evidence.id,
+        for (final interaction in profile.recentInteractions)
+          interaction.entryId,
+      ],
+      for (final task in context.stoneTasks) ...[
+        task.id,
+        task.sourceEntryId,
+        for (final checkIn in task.checkIns)
+          if (checkIn.sourceEntryId != null) checkIn.sourceEntryId!,
+      ],
+    };
+    ids.removeWhere((id) => id.trim().isEmpty);
+    return ids;
   }
 
   List<InsightClaim> _fallbackSuggestion(
@@ -320,4 +517,21 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
       .map((item) => item.toString().trim())
       .where((item) => item.isNotEmpty)
       .toList();
+}
+
+class _EvidenceFilterStats {
+  int filteredEvidenceSources = 0;
+  int filteredRelatedMemorySources = 0;
+
+  bool get hasFilteredSources =>
+      filteredEvidenceSources > 0 || filteredRelatedMemorySources > 0;
+
+  String get debugSummary {
+    return [
+      if (filteredEvidenceSources > 0)
+        'evidenceFiltered=$filteredEvidenceSources',
+      if (filteredRelatedMemorySources > 0)
+        'relatedSourceFiltered=$filteredRelatedMemorySources',
+    ].join(' ');
+  }
 }
