@@ -29,14 +29,14 @@ class MemoryRepository {
 
   Future<List<MemoryEntry>> listMemories() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     final memories = <MemoryEntry>[];
     for (final id in index) {
-      final raw = prefs.getString('$_prefix$id');
-      if (raw == null) continue;
-      memories
-          .add(MemoryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+      final memory = await _getMemory(prefs, id);
+      if (memory != null) memories.add(memory);
     }
+    await prefs.setStringList(
+        _indexKey, memories.map((memory) => memory.id).toList());
     memories.sort((a, b) => b.date.compareTo(a.date));
     return memories;
   }
@@ -46,14 +46,13 @@ class MemoryRepository {
   }
 
   Future<int> countMemories() async {
-    final prefs = await SharedPreferences.getInstance();
-    return (prefs.getStringList(_indexKey) ?? []).length;
+    return (await listMemories()).length;
   }
 
   Future<void> deleteMemory(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$id');
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     index.remove(id);
     await prefs.setStringList(_indexKey, index);
     await const AiEmbeddingRepository().deleteBySource(
@@ -64,13 +63,11 @@ class MemoryRepository {
 
   Future<void> deleteForSourceEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     final nextIndex = <String>[];
     for (final id in index) {
-      final raw = prefs.getString('$_prefix$id');
-      if (raw == null) continue;
-      final memory =
-          MemoryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      final memory = await _getMemory(prefs, id);
+      if (memory == null) continue;
       if (memory.allSourceEntryIds.contains(entryId)) {
         final remainingSources = memory.allSourceEntryIds
             .where((sourceId) => sourceId != entryId)
@@ -214,10 +211,8 @@ class MemoryRepository {
 
   Future<void> archiveMemory(String id, {required bool archived}) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$id');
-    if (raw == null) return;
-    final memory =
-        MemoryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    final memory = await _getMemory(prefs, id);
+    if (memory == null) return;
     await saveMemory(memory.copyWith(
       archived: archived,
       updatedAt: DateTime.now(),
@@ -229,10 +224,8 @@ class MemoryRepository {
     required String summary,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$id');
-    if (raw == null) return;
-    final memory =
-        MemoryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    final memory = await _getMemory(prefs, id);
+    if (memory == null) return;
     final value = summary.trim();
     if (value.isEmpty) return;
     await saveMemory(memory.copyWith(
@@ -334,6 +327,44 @@ class MemoryRepository {
       generatedAt: DateTime.now(),
       textHash: result.textHash,
     ));
+  }
+
+  Future<MemoryEntry?> _getMemory(SharedPreferences prefs, String id) async {
+    final key = '$_prefix$id';
+    final raw = _safeGetString(prefs, key);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      final memory = MemoryEntry.fromJson(decoded);
+      return memory.id.isEmpty ? null : memory;
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
+    }
   }
 
   Set<String> _tokens(String text) {

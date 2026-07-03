@@ -24,9 +24,20 @@ class EntrySummaryRepository {
 
   Future<EntrySummary?> getSummary(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_summaryPrefix$entryId');
+    final key = '$_summaryPrefix$entryId';
+    final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
-    return EntrySummary.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      return EntrySummary.fromJson(decoded);
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
   }
 
   Future<EntrySummary?> correctBrief({
@@ -66,7 +77,8 @@ class EntrySummaryRepository {
 
   Future<void> saveSegments(String entryId, List<DiarySegment> segments) async {
     final prefs = await SharedPreferences.getInstance();
-    final oldIds = prefs.getStringList('$_segmentIndexPrefix$entryId') ?? [];
+    final oldIds =
+        _safeGetStringList(prefs, '$_segmentIndexPrefix$entryId') ?? [];
     for (final id in oldIds) {
       await prefs.remove('$_segmentPrefix$id');
     }
@@ -81,22 +93,34 @@ class EntrySummaryRepository {
 
   Future<List<DiarySegment>> listSegments(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final ids = prefs.getStringList('$_segmentIndexPrefix$entryId') ?? [];
+    final indexKey = '$_segmentIndexPrefix$entryId';
+    final ids = _safeGetStringList(prefs, indexKey) ?? [];
     final segments = <DiarySegment>[];
     for (final id in ids) {
-      final raw = prefs.getString('$_segmentPrefix$id');
+      final key = '$_segmentPrefix$id';
+      final raw = _safeGetString(prefs, key);
       if (raw == null) continue;
-      segments
-          .add(DiarySegment.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          await prefs.remove(key);
+          continue;
+        }
+        segments.add(DiarySegment.fromJson(decoded));
+      } on Object {
+        await prefs.remove(key);
+      }
     }
     segments.sort((a, b) => a.index.compareTo(b.index));
+    await prefs.setStringList(
+        indexKey, segments.map((item) => item.id).toList());
     return segments;
   }
 
   Future<void> deleteForEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_summaryPrefix$entryId');
-    final ids = prefs.getStringList('$_segmentIndexPrefix$entryId') ?? [];
+    final ids = _safeGetStringList(prefs, '$_segmentIndexPrefix$entryId') ?? [];
     for (final id in ids) {
       await prefs.remove('$_segmentPrefix$id');
     }
@@ -121,5 +145,25 @@ class EntrySummaryRepository {
       generatedAt: DateTime.now(),
       textHash: result.textHash,
     ));
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
+    }
   }
 }

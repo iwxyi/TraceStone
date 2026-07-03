@@ -49,9 +49,20 @@ class AiAnalysisQueueRepository {
 
   Future<AiAnalysisJob?> getJob(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$id');
+    final key = '$_prefix$id';
+    final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
-    return AiAnalysisJob.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      return AiAnalysisJob.fromJson(decoded);
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
   }
 
   Future<void> deleteJob(String id) async {
@@ -65,13 +76,24 @@ class AiAnalysisQueueRepository {
 
   Future<List<AiAnalysisJob>> listJobs() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     final jobs = <AiAnalysisJob>[];
     for (final id in index) {
-      final raw = prefs.getString('$_prefix$id');
+      final key = '$_prefix$id';
+      final raw = _safeGetString(prefs, key);
       if (raw == null) continue;
-      jobs.add(AiAnalysisJob.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          await prefs.remove(key);
+          continue;
+        }
+        jobs.add(AiAnalysisJob.fromJson(decoded));
+      } on Object {
+        await prefs.remove(key);
+      }
     }
+    await prefs.setStringList(_indexKey, jobs.map((job) => job.id).toList());
     jobs.sort((a, b) {
       final byState =
           _statePriority(a.state).compareTo(_statePriority(b.state));
@@ -121,6 +143,26 @@ class AiAnalysisQueueRepository {
         return 3;
       case AiAnalysisJobState.completed:
         return 4;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
     }
   }
 }

@@ -17,13 +17,33 @@ class AiFeedbackRepository {
 
   Future<AiFeedback?> getFeedback(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$entryId');
+    final key = '$_prefix$entryId';
+    final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
-    return AiFeedback.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      return AiFeedback.fromJson(decoded);
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
   }
 
   Future<void> deleteFeedback(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$entryId');
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
   }
 }

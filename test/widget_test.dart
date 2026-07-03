@@ -18,7 +18,9 @@ import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
+import 'package:trace_stone/features/ai_insight/presentation/insight_page.dart';
 import 'package:trace_stone/features/companion/presentation/companion_page.dart';
+import 'package:trace_stone/features/diary/presentation/today_page.dart';
 import 'package:trace_stone/features/relationships/presentation/relationships_page.dart';
 import 'package:trace_stone/features/settings/presentation/calendar_memory_page.dart';
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
@@ -70,6 +72,158 @@ void main() {
     expect(find.text('画像候选'), findsOneWidget);
     expect(find.text('self_regulation'), findsOneWidget);
     expect(find.textContaining('运动可能帮助恢复状态'), findsOneWidget);
+  });
+
+  testWidgets('today insight developer structure respects developer mode',
+      (tester) async {
+    final now = DateTime.now();
+    final entry = DiaryEntry(
+      id: 'today-dev-entry',
+      date: now,
+      createdAt: now,
+      content: '今天散步以后，焦虑下降了一些。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: now,
+    );
+    final insight = DiaryInsight(
+      entryId: entry.id,
+      entryDate: now,
+      generatedAt: now,
+      reflection: '散步后状态有所恢复。',
+      relatedMemories: const [],
+      emotion: '放松',
+      keywords: const ['散步'],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      facts: const [
+        InsightClaim(
+          text: '今天记录了散步。',
+          evidence: [
+            InsightEvidence(type: 'current_entry', id: 'today-dev-entry#s1'),
+          ],
+        ),
+      ],
+      hypotheses: const [
+        InsightClaim(
+          text: '散步可能帮助恢复状态。',
+          confidence: 0.62,
+          evidence: [
+            InsightEvidence(type: 'memory', id: 'memory-walk'),
+          ],
+        ),
+      ],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.58,
+        ),
+      ],
+      suggestions: const [
+        InsightClaim(text: '明天晚饭后散步 10 分钟。'),
+      ],
+    );
+
+    SharedPreferences.setMockInitialValues({});
+    await const DiaryRepository().saveEntry(entry);
+    await const InsightRepository().saveInsight(insight);
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pumpAndSettle();
+    expect(find.text('给我的建议'), findsOneWidget);
+    expect(find.textContaining('明天晚饭后散步 10 分钟'), findsOneWidget);
+    expect(find.text('开发者洞察结构'), findsNothing);
+
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    await const DiaryRepository().saveEntry(entry);
+    await const InsightRepository().saveInsight(insight);
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pumpAndSettle();
+    expect(find.text('开发者洞察结构'), findsOneWidget);
+    expect(find.textContaining('facts=1'), findsOneWidget);
+    await tester.tap(find.text('开发者洞察结构'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('evidence=current_entry:today-dev-entry#s1'),
+        findsOneWidget);
+    expect(find.textContaining('confidence=0.62'), findsOneWidget);
+    expect(find.textContaining('profile self_regulation=散步可能帮助恢复状态'),
+        findsOneWidget);
+  });
+
+  testWidgets('insight page exports insight package in developer mode',
+      (tester) async {
+    final date = DateTime(2026, 7, 3);
+    final insight = DiaryInsight(
+      entryId: 'insight-export-entry',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '散步以后状态变轻松。',
+      relatedMemories: const [],
+      emotion: '放松',
+      keywords: const ['散步'],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      facts: const [
+        InsightClaim(
+          text: '今天记录了散步。',
+          evidence: [
+            InsightEvidence(type: 'current_entry', id: 'insight-export-entry'),
+          ],
+        ),
+      ],
+      suggestions: const [
+        InsightClaim(text: '明天晚饭后散步 10 分钟。'),
+      ],
+    );
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    await const InsightRepository().saveInsight(insight);
+    await tester.pumpWidget(const MaterialApp(home: InsightPage()));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('复制洞察包'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('复制洞察包'), findsOneWidget);
+    await tester.tap(find.text('复制洞察包'));
+    await tester.pumpAndSettle();
+    expect(find.text('复制洞察包？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('## Diary Insight'));
+    expect(copiedText, contains('entryId=insight-export-entry'));
+    expect(copiedText, contains('## Raw JSON'));
+    expect(copiedText, contains('"facts"'));
+    expect(copiedText, contains('明天晚饭后散步 10 分钟'));
   });
 
   testWidgets('corrects profile candidate text', (tester) async {
@@ -671,6 +825,21 @@ void main() {
 
   testWidgets('corrects entry summary from AI debug page', (tester) async {
     SharedPreferences.setMockInitialValues({});
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
     const diaryRepository = DiaryRepository();
     const summaryRepository = EntrySummaryRepository();
     const queueRepository = AiAnalysisQueueRepository();
@@ -751,6 +920,22 @@ void main() {
     expect(find.textContaining('summary:debug-summary-entry'), findsWidgets);
     expect(find.textContaining('entry:debug-summary-entry'), findsWidgets);
     expect(find.textContaining('hash='), findsWidgets);
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, '复制上下文').first);
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('## AI Pipeline Job'));
+    expect(copiedText, contains('entryId=debug-summary-entry'));
+    expect(copiedText, contains('## Stage Logs'));
+    expect(copiedText, contains('用户修正摘要包'));
+    expect(copiedText, contains('## Context'));
+    expect(copiedText, contains('summary:debug-summary-entry'));
+    expect(copiedText, contains('entry:debug-summary-entry'));
   });
 }
 

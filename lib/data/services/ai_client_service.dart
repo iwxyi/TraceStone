@@ -14,11 +14,11 @@ class AiClientService {
 
   Future<AiClientConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
-    final useOfficial = prefs.getBool(_useOfficialKey) ?? true;
-    final platform = prefs.getString(_platformKey) ?? 'OpenAI';
-    final baseUrl = (prefs.getString(_baseUrlKey) ?? '').trim();
-    final apiKey = (prefs.getString(_apiKeyKey) ?? '').trim();
-    final model = (prefs.getString(_modelKey) ?? '').trim();
+    final useOfficial = _safeGetBool(prefs, _useOfficialKey) ?? true;
+    final platform = _safeGetString(prefs, _platformKey) ?? 'OpenAI';
+    final baseUrl = (_safeGetString(prefs, _baseUrlKey) ?? '').trim();
+    final apiKey = (_safeGetString(prefs, _apiKeyKey) ?? '').trim();
+    final model = (_safeGetString(prefs, _modelKey) ?? '').trim();
 
     if (useOfficial) {
       throw const AiClientException('当前未开启自定义 AI');
@@ -87,6 +87,24 @@ class AiClientService {
         : _extractOpenAiContent(data);
     final jsonText = _extractJson(content);
     return jsonText;
+  }
+
+  bool? _safeGetBool(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is bool ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
   }
 
   String _extractOpenAiContent(Map<String, dynamic> data) {

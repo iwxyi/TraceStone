@@ -32,14 +32,12 @@ class InsightRepository {
 
   Future<DiaryInsight?> getInsight(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$entryId');
-    if (raw == null) return null;
-    return DiaryInsight.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    return _getInsight(prefs, entryId);
   }
 
   Future<List<DiaryInsight>> listInsights() async {
     final prefs = await SharedPreferences.getInstance();
-    final indexed = prefs.getStringList(_indexKey) ?? [];
+    final indexed = _safeGetStringList(prefs, _indexKey) ?? [];
     final scanned = prefs
         .getKeys()
         .where((key) =>
@@ -56,20 +54,24 @@ class InsightRepository {
 
     final insights = <DiaryInsight>[];
     for (final id in ids) {
-      final raw = prefs.getString('$_prefix$id');
-      if (raw == null) continue;
-      insights
-          .add(DiaryInsight.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+      final insight = await _getInsight(prefs, id);
+      if (insight != null) insights.add(insight);
     }
+    await prefs.setStringList(
+        _indexKey, insights.map((insight) => insight.entryId).toList());
     insights.sort((a, b) => b.entryDate.compareTo(a.entryDate));
     return insights;
   }
 
   Future<DiaryInsight?> getLatestInsight() async {
     final prefs = await SharedPreferences.getInstance();
-    final entryId = prefs.getString(_latestKey);
+    final entryId = _safeGetString(prefs, _latestKey);
     if (entryId == null) return null;
-    return getInsight(entryId);
+    final insight = await _getInsight(prefs, entryId);
+    if (insight == null) {
+      await prefs.remove(_latestKey);
+    }
+    return insight;
   }
 
   Future<void> saveStatus(DiaryAnalysisStatus status) async {
@@ -80,21 +82,71 @@ class InsightRepository {
 
   Future<DiaryAnalysisStatus?> getStatus(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_statusPrefix$entryId');
+    final key = '$_statusPrefix$entryId';
+    final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
-    return DiaryAnalysisStatus.fromJson(
-        jsonDecode(raw) as Map<String, dynamic>);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      return DiaryAnalysisStatus.fromJson(decoded);
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
   }
 
   Future<void> deleteForEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$entryId');
     await prefs.remove('$_statusPrefix$entryId');
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     index.remove(entryId);
     await prefs.setStringList(_indexKey, index);
-    if (prefs.getString(_latestKey) == entryId) {
+    if (_safeGetString(prefs, _latestKey) == entryId) {
       await prefs.remove(_latestKey);
+    }
+  }
+
+  Future<DiaryInsight?> _getInsight(
+    SharedPreferences prefs,
+    String entryId,
+  ) async {
+    final key = '$_prefix$entryId';
+    final raw = _safeGetString(prefs, key);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      return DiaryInsight.fromJson(decoded);
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
     }
   }
 }

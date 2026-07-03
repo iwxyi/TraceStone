@@ -13,15 +13,14 @@ class AiProfilePreferenceRepository {
 
   Future<List<AiProfilePreference>> listPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    final ids = prefs.getStringList(_indexKey) ?? [];
+    final ids = _safeGetStringList(prefs, _indexKey) ?? [];
     final items = <AiProfilePreference>[];
     for (final id in ids) {
-      final raw = prefs.getString('$_prefix$id');
-      if (raw == null) continue;
-      final parsed = jsonDecode(raw) as Map<String, dynamic>;
-      final item = AiProfilePreference.fromJson(parsed);
+      final item = await _getPreferenceById(prefs, id);
+      if (item == null) continue;
       if (item.targetId.isNotEmpty) items.add(item);
     }
+    await prefs.setStringList(_indexKey, items.map((item) => item.id).toList());
     return items;
   }
 
@@ -34,11 +33,7 @@ class AiProfilePreferenceRepository {
       targetType: targetType,
       targetId: targetId,
     );
-    final raw = prefs.getString('$_prefix$id');
-    if (raw == null) return null;
-    return AiProfilePreference.fromJson(
-      jsonDecode(raw) as Map<String, dynamic>,
-    );
+    return _getPreferenceById(prefs, id);
   }
 
   Future<void> setConfirmed({
@@ -177,10 +172,51 @@ class AiProfilePreferenceRepository {
     final prefs = await SharedPreferences.getInstance();
     final id = item.id;
     await prefs.setString('$_prefix$id', jsonEncode(item.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(id)) {
       index.add(id);
       await prefs.setStringList(_indexKey, index);
+    }
+  }
+
+  Future<AiProfilePreference?> _getPreferenceById(
+    SharedPreferences prefs,
+    String id,
+  ) async {
+    final key = '$_prefix$id';
+    final raw = _safeGetString(prefs, key);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      final item = AiProfilePreference.fromJson(decoded);
+      return item.targetId.isEmpty ? null : item;
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
     }
   }
 }

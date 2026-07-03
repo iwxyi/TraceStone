@@ -513,6 +513,12 @@ class _JobCard extends StatelessWidget {
                         label: const Text('详情'),
                       ),
                       TextButton.icon(
+                        onPressed: () =>
+                            _copyPipelineContext(context, artifacts),
+                        icon: const Icon(Icons.copy_all_outlined),
+                        label: const Text('复制上下文'),
+                      ),
+                      TextButton.icon(
                         onPressed: artifacts.hasSummary
                             ? () => _correctSummary(context, artifacts)
                             : null,
@@ -749,6 +755,40 @@ class _JobCard extends StatelessWidget {
     );
   }
 
+  Future<void> _copyPipelineContext(
+    BuildContext context,
+    _JobArtifacts artifacts,
+  ) async {
+    final allowed = await _confirmCopyDebugContext(context);
+    if (allowed != true) return;
+    final text = [
+      '## AI Pipeline Job',
+      'id=${job.id}',
+      'entryId=${job.entryId}',
+      'state=${job.state.name}',
+      'stage=${job.currentStage.name}',
+      'pipelineVersion=${job.pipelineVersion}',
+      'createdAt=${job.createdAt.toIso8601String()}',
+      'updatedAt=${job.updatedAt.toIso8601String()}',
+      'retryCount=${job.retryCount}',
+      if (job.lastError?.isNotEmpty ?? false) 'lastError=${job.lastError}',
+      if (job.completedStages.isNotEmpty)
+        'completedStages=${job.completedStages.map((item) => item.name).join(',')}',
+      if (job.stageLogs.isNotEmpty) ...[
+        '',
+        '## Stage Logs',
+        for (final log in job.stageLogs) _stageLogExportLine(log),
+      ],
+      '',
+      artifacts.toDebugText(),
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制 Pipeline 调试上下文')),
+    );
+  }
+
   Future<void> _appendSummaryCorrectionLog(EntrySummary summary) async {
     const repository = AiAnalysisQueueRepository();
     final latest = await repository.getJob(job.id) ?? job;
@@ -902,7 +942,18 @@ class _JobCard extends StatelessWidget {
     BuildContext context,
     _JobArtifacts artifacts,
   ) async {
-    final allowed = await showDialog<bool>(
+    final allowed = await _confirmCopyDebugContext(context);
+    if (allowed != true) return;
+    final text = artifacts.toDebugText();
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制调试上下文')),
+    );
+  }
+
+  Future<bool?> _confirmCopyDebugContext(BuildContext context) {
+    return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('复制调试上下文？'),
@@ -921,13 +972,6 @@ class _JobCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-    if (allowed != true) return;
-    final text = artifacts.toDebugText();
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已复制调试上下文')),
     );
   }
 
@@ -951,6 +995,18 @@ class _JobCard extends StatelessWidget {
       log.stage.name,
       log.message,
       if (log.outputSummary.isNotEmpty) log.outputSummary,
+      if (log.error?.isNotEmpty ?? false) 'error=${log.error}',
+      'retry=${log.retryCount}',
+    ];
+    return parts.join(' | ');
+  }
+
+  String _stageLogExportLine(AiAnalysisStageLog log) {
+    final parts = [
+      '- ${log.startedAt.toIso8601String()} ${log.stage.name}',
+      log.message,
+      if (log.inputSummary.isNotEmpty) 'input=${log.inputSummary}',
+      if (log.outputSummary.isNotEmpty) 'output=${log.outputSummary}',
       if (log.error?.isNotEmpty ?? false) 'error=${log.error}',
       'retry=${log.retryCount}',
     ];

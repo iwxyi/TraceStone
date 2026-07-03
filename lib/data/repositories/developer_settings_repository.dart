@@ -7,7 +7,12 @@ class DeveloperSettingsRepository {
 
   Future<bool> isDeveloperModeEnabled() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_developerModeKey) ?? false;
+    try {
+      final value = prefs.get(_developerModeKey);
+      return value is bool ? value : false;
+    } on Object {
+      return false;
+    }
   }
 
   Future<void> setDeveloperModeEnabled(bool enabled) async {

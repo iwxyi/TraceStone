@@ -128,7 +128,11 @@ class DiaryRepository {
     final items = <DiaryTrashItem>[];
     for (final id in ids) {
       final item = await _trashItem(prefs, id);
-      if (item != null) items.add(item);
+      if (item != null) {
+        items.add(item);
+      } else {
+        await _removeTrashItem(prefs, id);
+      }
     }
     items.sort((a, b) => b.deletedAt.compareTo(a.deletedAt));
     return items;
@@ -169,7 +173,10 @@ class DiaryRepository {
     final now = DateTime.now();
     for (final id in ids) {
       final item = await _trashItem(prefs, id);
-      if (item == null) continue;
+      if (item == null) {
+        await _removeTrashItem(prefs, id);
+        continue;
+      }
       if (now.isAfter(item.expiresAt)) {
         await _removeTrashItem(prefs, id);
         await const InsightRepository().deleteForEntry(id);

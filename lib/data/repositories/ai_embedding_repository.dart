@@ -23,14 +23,16 @@ class AiEmbeddingRepository {
 
   Future<List<AiEmbedding>> listForEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final ids = prefs.getStringList('$_entryIndexPrefix$entryId') ?? [];
-    return _loadMany(prefs, ids);
+    final key = '$_entryIndexPrefix$entryId';
+    final ids = _safeGetStringList(prefs, key) ?? [];
+    return _loadMany(prefs, ids, indexKey: key);
   }
 
   Future<List<AiEmbedding>> listByType(AiEmbeddingSourceType type) async {
     final prefs = await SharedPreferences.getInstance();
-    final ids = prefs.getStringList('$_typeIndexPrefix${type.name}') ?? [];
-    return _loadMany(prefs, ids);
+    final key = '$_typeIndexPrefix${type.name}';
+    final ids = _safeGetStringList(prefs, key) ?? [];
+    return _loadMany(prefs, ids, indexKey: key);
   }
 
   Future<AiEmbedding?> getBySource({
@@ -38,9 +40,20 @@ class AiEmbeddingRepository {
     required String sourceId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix${sourceType.name}:$sourceId');
+    final key = '$_prefix${sourceType.name}:$sourceId';
+    final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
-    return AiEmbedding.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      return AiEmbedding.fromJson(decoded);
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
   }
 
   Future<void> deleteBySource({
@@ -49,17 +62,18 @@ class AiEmbeddingRepository {
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final id = '${sourceType.name}:$sourceId';
-    final raw = prefs.getString('$_prefix$id');
+    final raw = _safeGetString(prefs, '$_prefix$id');
     if (raw != null) {
-      final embedding =
-          AiEmbedding.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-      final entryKey = '$_entryIndexPrefix${embedding.entryId}';
-      final entryIds = prefs.getStringList(entryKey) ?? [];
-      entryIds.remove(id);
-      await prefs.setStringList(entryKey, entryIds);
+      final embedding = _embeddingFromRaw(raw);
+      if (embedding != null) {
+        final entryKey = '$_entryIndexPrefix${embedding.entryId}';
+        final entryIds = _safeGetStringList(prefs, entryKey) ?? [];
+        entryIds.remove(id);
+        await prefs.setStringList(entryKey, entryIds);
+      }
     }
     final typeKey = '$_typeIndexPrefix${sourceType.name}';
-    final typeIds = prefs.getStringList(typeKey) ?? [];
+    final typeIds = _safeGetStringList(prefs, typeKey) ?? [];
     typeIds.remove(id);
     await prefs.setStringList(typeKey, typeIds);
     await prefs.remove('$_prefix$id');
@@ -67,34 +81,41 @@ class AiEmbeddingRepository {
 
   Future<void> deleteForEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final ids = prefs.getStringList('$_entryIndexPrefix$entryId') ?? [];
+    final ids = _safeGetStringList(prefs, '$_entryIndexPrefix$entryId') ?? [];
     for (final id in ids) {
-      final raw = prefs.getString('$_prefix$id');
+      final raw = _safeGetString(prefs, '$_prefix$id');
       if (raw != null) {
-        final embedding =
-            AiEmbedding.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-        final typeKey = '$_typeIndexPrefix${embedding.sourceType.name}';
-        final typeIds = prefs.getStringList(typeKey) ?? [];
-        typeIds.remove(id);
-        await prefs.setStringList(typeKey, typeIds);
+        final embedding = _embeddingFromRaw(raw);
+        if (embedding != null) {
+          final typeKey = '$_typeIndexPrefix${embedding.sourceType.name}';
+          final typeIds = _safeGetStringList(prefs, typeKey) ?? [];
+          typeIds.remove(id);
+          await prefs.setStringList(typeKey, typeIds);
+        }
       }
       await prefs.remove('$_prefix$id');
     }
     await prefs.remove('$_entryIndexPrefix$entryId');
   }
 
-  Future<List<AiEmbedding>> _loadMany(
-    SharedPreferences prefs,
-    List<String> ids,
-  ) async {
+  Future<List<AiEmbedding>> _loadMany(SharedPreferences prefs, List<String> ids,
+      {String? indexKey}) async {
     final embeddings = <AiEmbedding>[];
     for (final id in ids) {
-      final raw = prefs.getString('$_prefix$id');
+      final key = '$_prefix$id';
+      final raw = _safeGetString(prefs, key);
       if (raw == null) continue;
-      embeddings
-          .add(AiEmbedding.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+      final embedding = _embeddingFromRaw(raw);
+      if (embedding == null) {
+        await prefs.remove(key);
+        continue;
+      }
+      embeddings.add(embedding);
     }
     embeddings.sort((a, b) => a.sourceId.compareTo(b.sourceId));
+    if (indexKey != null) {
+      await prefs.setStringList(indexKey, embeddings.map((e) => e.id).toList());
+    }
     return embeddings;
   }
 
@@ -103,10 +124,40 @@ class AiEmbeddingRepository {
     String key,
     String id,
   ) async {
-    final ids = prefs.getStringList(key) ?? [];
+    final ids = _safeGetStringList(prefs, key) ?? [];
     if (!ids.contains(id)) {
       ids.add(id);
       await prefs.setStringList(key, ids);
+    }
+  }
+
+  AiEmbedding? _embeddingFromRaw(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      return AiEmbedding.fromJson(decoded);
+    } on Object {
+      return null;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
     }
   }
 }

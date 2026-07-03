@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_insight.dart';
@@ -133,6 +136,14 @@ class _InsightBody extends StatelessWidget {
             child: _UpdateCandidateList(insight: insight),
           ),
         ],
+        if (developerMode) ...[
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: '开发者导出',
+            icon: Icons.ios_share_outlined,
+            child: _InsightExportButton(insight: insight),
+          ),
+        ],
         if (insight.relatedMemories.isNotEmpty) ...[
           const SizedBox(height: 12),
           _SectionCard(
@@ -197,6 +208,79 @@ class _InsightBody extends StatelessWidget {
   }
 
   String _dateLabel(DateTime date) => '${date.year}年${date.month}月${date.day}日';
+}
+
+class _InsightExportButton extends StatelessWidget {
+  const _InsightExportButton({required this.insight});
+
+  final DiaryInsight insight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: OutlinedButton.icon(
+        onPressed: () => _copyInsight(context),
+        icon: const Icon(Icons.copy),
+        label: const Text('复制洞察包'),
+      ),
+    );
+  }
+
+  Future<void> _copyInsight(BuildContext context) async {
+    final allowed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('复制洞察包？'),
+        content: const Text(
+          '洞察包可能包含日记摘要、证据来源、画像候选和关系候选。'
+          '这些内容只会复制到本机剪贴板，请确认不会粘贴到不可信的位置。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('复制'),
+          ),
+        ],
+      ),
+    );
+    if (allowed != true) return;
+    await Clipboard.setData(ClipboardData(text: _debugText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制洞察包')),
+    );
+  }
+
+  String _debugText() {
+    const encoder = JsonEncoder.withIndent('  ');
+    return [
+      '## Diary Insight',
+      'entryId=${insight.entryId}',
+      'entryDate=${insight.entryDate.toIso8601String()}',
+      'generatedAt=${insight.generatedAt.toIso8601String()}',
+      'emotion=${insight.emotion}',
+      'keywords=${insight.keywords.join(',')}',
+      'people=${insight.people.join(',')}',
+      'facts=${insight.facts.length}',
+      'signals=${insight.signals.length}',
+      'hypotheses=${insight.hypotheses.length}',
+      'suggestions=${insight.suggestions.length}',
+      'profileCandidates=${insight.profileUpdateCandidates.length}',
+      'relationshipUpdates=${insight.relationshipUpdates.length}',
+      'contradictions=${insight.contradictions.length}',
+      '',
+      '## Reflection',
+      insight.reflection,
+      '',
+      '## Raw JSON',
+      encoder.convert(insight.toJson()),
+    ].join('\n');
+  }
 }
 
 class _UpdateCandidateList extends StatelessWidget {

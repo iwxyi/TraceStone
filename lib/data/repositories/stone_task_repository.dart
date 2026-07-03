@@ -22,20 +22,18 @@ class StoneTaskRepository {
 
   Future<StoneTask?> getTask(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$id');
-    if (raw == null) return null;
-    return StoneTask.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    return _getTask(prefs, id);
   }
 
   Future<List<StoneTask>> listTasks() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     final tasks = <StoneTask>[];
     for (final id in index) {
-      final raw = prefs.getString('$_prefix$id');
-      if (raw == null) continue;
-      tasks.add(StoneTask.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+      final task = await _getTask(prefs, id);
+      if (task != null) tasks.add(task);
     }
+    await prefs.setStringList(_indexKey, tasks.map((task) => task.id).toList());
     tasks.sort((a, b) {
       final byStatus =
           _statusPriority(a.status).compareTo(_statusPriority(b.status));
@@ -48,7 +46,7 @@ class StoneTaskRepository {
   Future<void> deleteTask(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$id');
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     index.remove(id);
     await prefs.setStringList(_indexKey, index);
   }
@@ -93,6 +91,44 @@ class StoneTaskRepository {
         return 1;
       case StoneTaskStatus.archived:
         return 2;
+    }
+  }
+
+  Future<StoneTask?> _getTask(SharedPreferences prefs, String id) async {
+    final key = '$_prefix$id';
+    final raw = _safeGetString(prefs, key);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      final task = StoneTask.fromJson(decoded);
+      return task.id.isEmpty ? null : task;
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
     }
   }
 }

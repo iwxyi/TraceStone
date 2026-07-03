@@ -11,6 +11,7 @@ import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_analysis_queue_repository.dart';
+import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
@@ -517,7 +518,8 @@ class _AnalysisResultCard extends StatelessWidget {
               ),
           ],
           if (insight.stoneTitle.isNotEmpty ||
-              insight.stoneDescription.isNotEmpty) ...[
+              insight.stoneDescription.isNotEmpty ||
+              insight.suggestions.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text('给我的建议', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 6),
@@ -526,13 +528,142 @@ class _AnalysisResultCard extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w600)),
             if (insight.stoneDescription.isNotEmpty)
               SimpleMarkdownText(text: insight.stoneDescription),
+            for (final suggestion in insight.suggestions.take(3))
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('· ${suggestion.text}'),
+              ),
           ],
+          FutureBuilder<bool>(
+            future:
+                const DeveloperSettingsRepository().isDeveloperModeEnabled(),
+            builder: (context, snapshot) {
+              if (snapshot.data != true) return const SizedBox.shrink();
+              return _DeveloperInsightPanel(insight: insight);
+            },
+          ),
           const SizedBox(height: 12),
           AiFeedbackBar(entryId: insight.entryId),
         ],
       ),
     );
   }
+}
+
+class _DeveloperInsightPanel extends StatelessWidget {
+  const _DeveloperInsightPanel({required this.insight});
+
+  final DiaryInsight insight;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = [
+      _countLine('facts', insight.facts.length),
+      _countLine('signals', insight.signals.length),
+      _countLine('hypotheses', insight.hypotheses.length),
+      _countLine('suggestions', insight.suggestions.length),
+      _countLine('profileCandidates', insight.profileUpdateCandidates.length),
+      _countLine('relationshipUpdates', insight.relationshipUpdates.length),
+      _countLine('contradictions', insight.contradictions.length),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(bottom: 8),
+        title: const Text('开发者洞察结构'),
+        subtitle: Text(lines.join(' · '),
+            style: Theme.of(context).textTheme.bodySmall),
+        children: [
+          _ClaimDebugGroup(title: 'Facts', claims: insight.facts),
+          _ClaimDebugGroup(title: 'Signals', claims: insight.signals),
+          _ClaimDebugGroup(title: 'Hypotheses', claims: insight.hypotheses),
+          _ClaimDebugGroup(title: 'Suggestions', claims: insight.suggestions),
+          _UpdateDebugGroup(insight: insight),
+        ],
+      ),
+    );
+  }
+
+  String _countLine(String label, int count) => '$label=$count';
+}
+
+class _ClaimDebugGroup extends StatelessWidget {
+  const _ClaimDebugGroup({required this.title, required this.claims});
+
+  final String title;
+  final List<InsightClaim> claims;
+
+  @override
+  Widget build(BuildContext context) {
+    if (claims.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          for (final claim in claims)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(_claimLine(claim)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _claimLine(InsightClaim claim) {
+    final evidence = claim.evidence.map((item) {
+      final id = item.id.isEmpty ? '' : ':${item.id}';
+      return '${item.type}$id';
+    }).join(',');
+    return [
+      claim.text,
+      if (claim.confidence != null)
+        'confidence=${claim.confidence!.toStringAsFixed(2)}',
+      if (evidence.isNotEmpty) 'evidence=$evidence',
+    ].join(' | ');
+  }
+}
+
+class _UpdateDebugGroup extends StatelessWidget {
+  const _UpdateDebugGroup({required this.insight});
+
+  final DiaryInsight insight;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = [
+      for (final item in insight.profileUpdateCandidates)
+        'profile ${item.field}=${item.value} confidence=${_confidence(item.confidence)}',
+      for (final item in insight.relationshipUpdates)
+        'relationship ${item.personName} ${item.summary} confidence=${_confidence(item.confidence)}',
+      for (final item in insight.contradictions)
+        'contradiction ${item.oldMemoryId} ${item.newEvidence} confidence=${_confidence(item.confidence)}',
+    ];
+    if (lines.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Update Candidates',
+              style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          for (final line in lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(line),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _confidence(double? value) =>
+      value == null ? '' : value.toStringAsFixed(2);
 }
 
 class _HomeCard extends StatelessWidget {

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
@@ -20,10 +22,12 @@ import 'package:trace_stone/data/models/stone_task.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
 import 'package:trace_stone/data/repositories/ai_embedding_repository.dart';
+import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
 import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_retrieval_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_profile_preference_repository.dart';
 import 'package:trace_stone/data/repositories/calendar_memory_repository.dart';
+import 'package:trace_stone/data/repositories/developer_settings_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
 import 'package:trace_stone/data/repositories/memory_repository.dart';
@@ -31,6 +35,7 @@ import 'package:trace_stone/data/repositories/period_summary_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_analysis_queue_runner.dart';
+import 'package:trace_stone/data/services/ai_client_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
 import 'package:trace_stone/data/services/companion_answer_service.dart';
 import 'package:trace_stone/data/services/diary_analysis_service.dart';
@@ -130,6 +135,52 @@ void main() {
       expect(prefs.get('ai.retrievalTraces.broken'), isNull);
       expect(prefs.get('ai.promptTraces.array'), isNull);
       expect(prefs.get('ai.retrievalTraces.array'), isNull);
+    });
+  });
+
+  group('AI settings and feedback', () {
+    test('feedback repository ignores invalid stored values', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.feedback.list': <String>['bad'],
+        'ai.feedback.broken': '{broken',
+        'ai.feedback.array': '[]',
+      });
+      const repository = AiFeedbackRepository();
+
+      expect(await repository.getFeedback('list'), isNull);
+      expect(await repository.getFeedback('broken'), isNull);
+      expect(await repository.getFeedback('array'), isNull);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.get('ai.feedback.list'), ['bad']);
+      expect(prefs.get('ai.feedback.broken'), isNull);
+      expect(prefs.get('ai.feedback.array'), isNull);
+    });
+
+    test('developer mode ignores invalid boolean values', () async {
+      SharedPreferences.setMockInitialValues({
+        'settings.developerMode': 'true',
+      });
+
+      expect(
+        await const DeveloperSettingsRepository().isDeveloperModeEnabled(),
+        isFalse,
+      );
+    });
+
+    test('ai client config ignores invalid preference types', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.useOfficial': 'false',
+        'ai.platform': <String>['OpenAI'],
+        'ai.baseUrl': <String>['https://example.com'],
+        'ai.apiKey': <String>['key'],
+        'ai.model': <String>['model'],
+      });
+
+      expect(
+        () => const AiClientService().loadConfig(),
+        throwsA(isA<AiClientException>()),
+      );
     });
   });
 
@@ -272,6 +323,55 @@ void main() {
       expect(insights.map((item) => item.entryId), ['second']);
       expect(insights.single.relationshipUpdates.single.personName, '妈妈');
     });
+
+    test('ignores invalid insight and status storage values', () async {
+      final date = DateTime(2026, 7, 3);
+      final valid = _insight(entryId: 'valid', date: date);
+      SharedPreferences.setMockInitialValues({
+        'diary.insights.index': <Object?>[
+          'valid',
+          'broken',
+          12,
+          'array',
+          'list',
+        ],
+        'diary.insights.latest': 'broken',
+        'diary.insights.valid': jsonEncode(valid.toJson()),
+        'diary.insights.broken': '{broken',
+        'diary.insights.array': '[]',
+        'diary.insights.list': <String>['bad'],
+        'diary.insights.status.valid': jsonEncode(DiaryAnalysisStatus(
+          entryId: 'valid',
+          state: DiaryAnalysisState.completed,
+          updatedAt: date,
+        ).toJson()),
+        'diary.insights.status.broken': '{broken',
+        'diary.insights.status.array': '[]',
+        'diary.insights.status.list': <String>['bad'],
+      });
+      const repository = InsightRepository();
+
+      expect(await repository.getLatestInsight(), isNull);
+      expect(await repository.getInsight('broken'), isNull);
+      expect(await repository.getInsight('array'), isNull);
+      expect(await repository.getInsight('list'), isNull);
+      expect(await repository.getStatus('valid'), isNotNull);
+      expect(await repository.getStatus('broken'), isNull);
+      expect(await repository.getStatus('array'), isNull);
+      expect(await repository.getStatus('list'), isNull);
+      final insights = await repository.listInsights();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(insights.map((item) => item.entryId), ['valid']);
+      expect(prefs.getStringList('diary.insights.index'), ['valid']);
+      expect(prefs.get('diary.insights.latest'), isNull);
+      expect(prefs.get('diary.insights.broken'), isNull);
+      expect(prefs.get('diary.insights.array'), isNull);
+      expect(prefs.get('diary.insights.list'), ['bad']);
+      expect(prefs.get('diary.insights.status.broken'), isNull);
+      expect(prefs.get('diary.insights.status.array'), isNull);
+      expect(prefs.get('diary.insights.status.list'), ['bad']);
+    });
   });
 
   group('AiAnalysisQueueRepository', () {
@@ -394,6 +494,43 @@ void main() {
       expect((await repository.listJobs()).single.id, entry.id);
     });
 
+    test('ignores invalid stored jobs and repairs the queue index', () async {
+      final date = DateTime(2026, 7, 3);
+      final valid = AiAnalysisJob(
+        id: 'valid',
+        entryId: 'valid',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date,
+        updatedAt: date,
+      );
+      SharedPreferences.setMockInitialValues({
+        'ai.analysis.jobs.index': <Object?>[
+          'valid',
+          'broken',
+          12,
+          'array',
+          'list',
+        ],
+        'ai.analysis.jobs.valid': jsonEncode(valid.toJson()),
+        'ai.analysis.jobs.broken': '{broken',
+        'ai.analysis.jobs.array': '[]',
+        'ai.analysis.jobs.list': <String>['bad'],
+      });
+      const repository = AiAnalysisQueueRepository();
+
+      final jobs = await repository.listJobs();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(jobs.map((job) => job.id), ['valid']);
+      expect(await repository.getJob('broken'), isNull);
+      expect(prefs.getStringList('ai.analysis.jobs.index'), ['valid']);
+      expect(prefs.get('ai.analysis.jobs.broken'), isNull);
+      expect(prefs.get('ai.analysis.jobs.array'), isNull);
+      expect(prefs.get('ai.analysis.jobs.list'), ['bad']);
+    });
+
     test('runner resumes incomplete jobs without rewriting existing embeddings',
         () async {
       SharedPreferences.setMockInitialValues({});
@@ -474,6 +611,14 @@ void main() {
       expect(job?.stageLogs.map((log) => log.stage),
           contains(AiAnalysisStage.embedding));
       expect(job?.stageLogs.map((log) => log.message), contains('整理完成'));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('segments=2'));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('embeddings=4'));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('facts=1'));
+      expect(job?.stageLogs.map((log) => log.inputSummary).join('\n'),
+          contains('summary='));
       expect(entryEmbedding?.generatedAt, oldGeneratedAt);
     });
 
@@ -515,6 +660,8 @@ void main() {
       expect(rebuiltSegments.single.text, contains('晚上散步'));
       expect(job?.stageLogs.map((log) => log.message),
           containsAll(['日记已更新，重建日记片段', '日记已更新，重建摘要包']));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('importance='));
     });
 
     test('runner rebuilds embeddings when stored hashes are stale', () async {
@@ -584,6 +731,8 @@ void main() {
       expect(summaryEmbedding?.textHash, isNot(oldSummaryEmbedding?.textHash));
       expect(summaryEmbedding?.generatedAt, isNot(oldGeneratedAt));
       expect(job?.stageLogs.map((log) => log.message), contains('生成多级向量'));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('model=local-hashing-embedding/v1/128d'));
     });
 
     test('backfill enqueues entries with missing AI artifacts only', () async {
@@ -804,6 +953,44 @@ void main() {
           isNull);
       expect((await repository.listTasks()).single.title, '散步 10 分钟');
     });
+
+    test('ignores invalid task storage values and repairs index', () async {
+      final date = DateTime(2026, 7, 3);
+      final valid = StoneTask(
+        id: 'stone:valid',
+        sourceEntryId: 'entry',
+        title: '散步 10 分钟',
+        description: '晚饭后即可。',
+        createdAt: date,
+        updatedAt: date,
+      );
+      SharedPreferences.setMockInitialValues({
+        'stone.tasks.index': <Object?>[
+          'stone:valid',
+          'broken',
+          12,
+          'array',
+          'list',
+        ],
+        'stone.tasks.stone:valid': jsonEncode(valid.toJson()),
+        'stone.tasks.broken': '{broken',
+        'stone.tasks.array': '[]',
+        'stone.tasks.list': <String>['bad'],
+      });
+      const repository = StoneTaskRepository();
+
+      final tasks = await repository.listTasks();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(tasks.map((item) => item.id), ['stone:valid']);
+      expect(await repository.getTask('broken'), isNull);
+      expect(await repository.getTask('array'), isNull);
+      expect(await repository.getTask('list'), isNull);
+      expect(prefs.getStringList('stone.tasks.index'), ['stone:valid']);
+      expect(prefs.get('stone.tasks.broken'), isNull);
+      expect(prefs.get('stone.tasks.array'), isNull);
+      expect(prefs.get('stone.tasks.list'), ['bad']);
+    });
   });
 
   group('CalendarMemoryRepository', () {
@@ -828,6 +1015,41 @@ void main() {
       expect(memories.single.month, 7);
       expect(memories.single.day, 3);
       expect(memories.single.enabled, isTrue);
+    });
+
+    test('ignores invalid calendar memories and repairs index', () async {
+      final date = DateTime(2026, 7, 3);
+      final valid = CalendarMemory(
+        id: 'anniversary',
+        title: '外婆生日',
+        month: 7,
+        day: 3,
+        createdAt: date,
+        updatedAt: date,
+      );
+      SharedPreferences.setMockInitialValues({
+        'calendar.memories.index': <Object?>[
+          'anniversary',
+          'broken',
+          null,
+          'array',
+          'list',
+        ],
+        'calendar.memories.anniversary': jsonEncode(valid.toJson()),
+        'calendar.memories.broken': '{broken',
+        'calendar.memories.array': '[]',
+        'calendar.memories.list': <String>['bad'],
+      });
+      const repository = CalendarMemoryRepository();
+
+      final memories = await repository.listMemories();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(memories.map((item) => item.id), ['anniversary']);
+      expect(prefs.getStringList('calendar.memories.index'), ['anniversary']);
+      expect(prefs.get('calendar.memories.broken'), isNull);
+      expect(prefs.get('calendar.memories.array'), isNull);
+      expect(prefs.get('calendar.memories.list'), ['bad']);
     });
   });
 
@@ -992,6 +1214,46 @@ void main() {
         isTrue,
       );
       expect(visibleRelationships, isEmpty);
+    });
+
+    test('ignores invalid profile preferences and repairs index', () async {
+      final date = DateTime(2026, 7, 3);
+      const repository = AiProfilePreferenceRepository();
+      final valid = AiProfilePreference(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: 'stress_pattern',
+        confirmed: true,
+        updatedAt: date,
+      );
+      SharedPreferences.setMockInitialValues({
+        'ai.profilePreferences.index': <Object?>[
+          valid.id,
+          'broken',
+          12,
+          'array',
+          'list',
+        ],
+        'ai.profilePreferences.${valid.id}': jsonEncode(valid.toJson()),
+        'ai.profilePreferences.broken': '{broken',
+        'ai.profilePreferences.array': '[]',
+        'ai.profilePreferences.list': <String>['bad'],
+      });
+
+      final preferences = await repository.listPreferences();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(preferences.map((item) => item.id), [valid.id]);
+      expect(
+        await repository.getPreference(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: 'broken',
+        ),
+        isNull,
+      );
+      expect(prefs.getStringList('ai.profilePreferences.index'), [valid.id]);
+      expect(prefs.get('ai.profilePreferences.broken'), isNull);
+      expect(prefs.get('ai.profilePreferences.array'), isNull);
+      expect(prefs.get('ai.profilePreferences.list'), ['bad']);
     });
 
     test('applies user corrected profile fact value', () async {
@@ -1238,6 +1500,107 @@ void main() {
       expect(updated?.importantQuotes, ['走完以后轻松一点']);
       expect(updated?.generator, 'user-corrected');
       expect(secondEmbedding?.textHash, isNot(firstEmbedding?.textHash));
+    });
+
+    test('repositories ignore invalid summaries, segments, and embeddings',
+        () async {
+      final entry = _entry(
+        id: 'entry',
+        content: '早上开会很累。\n\n---\n\n晚上散步以后放松。',
+      );
+      final summary = _summaryForTest(
+        entry: entry,
+        brief: '今天有工作疲惫和散步恢复。',
+        importance: 0.72,
+      );
+      final segment = DiarySegment(
+        id: '${entry.id}#s1',
+        entryId: entry.id,
+        index: 0,
+        text: '晚上散步以后放松。',
+        summary: '散步后状态放松。',
+        topics: const ['散步'],
+        people: const [],
+        boundary: DiarySegmentBoundary.divider,
+        createdAt: entry.updatedAt,
+      );
+      final embedding = AiEmbedding(
+        id: 'summary:${entry.id}',
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        entryId: entry.id,
+        modelId: 'test',
+        modelVersion: '1',
+        dimensions: 2,
+        vector: const [0.1, 0.2],
+        generatedAt: entry.updatedAt,
+        textHash: 'hash',
+      );
+      SharedPreferences.setMockInitialValues({
+        'ai.entrySummaries.${entry.id}': jsonEncode(summary.toJson()),
+        'ai.entrySummaries.broken': '{broken',
+        'ai.entrySegments.index.${entry.id}': <Object?>[
+          segment.id,
+          'broken-segment',
+          12,
+          'array-segment',
+          'list-segment',
+        ],
+        'ai.entrySegments.${segment.id}': jsonEncode(segment.toJson()),
+        'ai.entrySegments.broken-segment': '{broken',
+        'ai.entrySegments.array-segment': '[]',
+        'ai.entrySegments.list-segment': <String>['bad'],
+        'ai.embeddings.entryIndex.${entry.id}': <Object?>[
+          embedding.id,
+          'broken',
+          null,
+          'array',
+          'list',
+        ],
+        'ai.embeddings.typeIndex.summary': <Object?>[embedding.id, 'broken'],
+        'ai.embeddings.${embedding.id}': jsonEncode(embedding.toJson()),
+        'ai.embeddings.broken': '{broken',
+        'ai.embeddings.array': '[]',
+        'ai.embeddings.list': <String>['bad'],
+      });
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+
+      expect(await summaryRepository.getSummary(entry.id), isNotNull);
+      expect(await summaryRepository.getSummary('broken'), isNull);
+      expect((await summaryRepository.listSegments(entry.id)).single.id,
+          segment.id);
+      expect((await embeddingRepository.listForEntry(entry.id)).single.id,
+          embedding.id);
+      expect(
+          (await embeddingRepository.listByType(
+            AiEmbeddingSourceType.summary,
+          ))
+              .single
+              .id,
+          embedding.id);
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.summary,
+          sourceId: 'broken',
+        ),
+        isNull,
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.get('ai.entrySummaries.broken'), isNull);
+      expect(prefs.getStringList('ai.entrySegments.index.${entry.id}'),
+          [segment.id]);
+      expect(prefs.get('ai.entrySegments.broken-segment'), isNull);
+      expect(prefs.get('ai.entrySegments.array-segment'), isNull);
+      expect(prefs.get('ai.entrySegments.list-segment'), ['bad']);
+      expect(prefs.getStringList('ai.embeddings.entryIndex.${entry.id}'),
+          [embedding.id]);
+      expect(prefs.getStringList('ai.embeddings.typeIndex.summary'),
+          [embedding.id]);
+      expect(prefs.get('ai.embeddings.broken'), isNull);
+      expect(prefs.get('ai.embeddings.array'), isNull);
+      expect(prefs.get('ai.embeddings.list'), ['bad']);
     });
   });
 
@@ -1822,8 +2185,11 @@ void main() {
       });
 
       final items = await const DiaryRepository().listTrashEntries();
+      final prefs = await SharedPreferences.getInstance();
 
       expect(items, isEmpty);
+      expect(prefs.containsKey('diary.trash.entry-1'), isFalse);
+      expect(prefs.getStringList('diary.trash.index'), isEmpty);
     });
 
     test('ignores corrupted trash json without failing the list', () async {
@@ -1847,11 +2213,50 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
 
       expect(items, isEmpty);
-      expect(prefs.getStringList('diary.trash.index'), ['entry-1']);
+      expect(prefs.getStringList('diary.trash.index'), isEmpty);
     });
   });
 
   group('MemoryRepository lifecycle', () {
+    test('ignores invalid memory storage values and repairs index', () async {
+      final date = DateTime(2026, 7, 3);
+      final valid = MemoryEntry(
+        id: 'valid-memory',
+        sourceEntryId: 'entry',
+        date: date,
+        createdAt: date,
+        summary: '散步后状态恢复。',
+        keywords: const ['散步'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['运动'],
+      );
+      SharedPreferences.setMockInitialValues({
+        'memory.entries.index': <Object?>[
+          'valid-memory',
+          'broken',
+          12,
+          'array',
+          'list',
+        ],
+        'memory.entries.valid-memory': jsonEncode(valid.toJson()),
+        'memory.entries.broken': '{broken',
+        'memory.entries.array': '[]',
+        'memory.entries.list': <String>['bad'],
+      });
+      const repository = MemoryRepository();
+
+      final memories = await repository.listMemories();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(memories.map((item) => item.id), ['valid-memory']);
+      expect(await repository.countMemories(), 1);
+      expect(prefs.getStringList('memory.entries.index'), ['valid-memory']);
+      expect(prefs.get('memory.entries.broken'), isNull);
+      expect(prefs.get('memory.entries.array'), isNull);
+      expect(prefs.get('memory.entries.list'), ['bad']);
+    });
+
     test('saves memory embeddings and keeps them stable on reference updates',
         () async {
       SharedPreferences.setMockInitialValues({});
@@ -2215,6 +2620,25 @@ class _FakeDiaryAnalysisService extends DiaryAnalysisService {
       stoneDescription: '',
       memorySummary: '',
       memoryTags: const [],
+      facts: const [
+        InsightClaim(text: '今天记录了一个测试事实。'),
+      ],
+      signals: const [
+        InsightClaim(text: '测试信号。'),
+      ],
+      hypotheses: const [
+        InsightClaim(text: '测试推测。', confidence: 0.6),
+      ],
+      suggestions: const [
+        InsightClaim(text: '测试建议。'),
+      ],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'test_field',
+          value: '测试画像候选',
+          confidence: 0.5,
+        ),
+      ],
     );
   }
 }

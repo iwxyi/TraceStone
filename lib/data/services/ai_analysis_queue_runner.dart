@@ -2,10 +2,12 @@ import '../models/ai_embedding.dart';
 import '../models/ai_analysis_job.dart';
 import '../models/diary_analysis_status.dart';
 import '../models/diary_entry.dart';
+import '../models/diary_insight.dart';
 import '../models/diary_segment.dart';
 import '../models/entry_summary.dart';
 import '../repositories/ai_analysis_queue_repository.dart';
 import '../repositories/ai_embedding_repository.dart';
+import '../repositories/ai_retrieval_trace_repository.dart';
 import '../repositories/diary_repository.dart';
 import '../repositories/entry_summary_repository.dart';
 import '../repositories/insight_repository.dart';
@@ -22,6 +24,7 @@ class AiAnalysisQueueRunner {
     DiaryRepository? diaryRepository,
     EntrySummaryRepository? summaryRepository,
     InsightRepository? insightRepository,
+    AiRetrievalTraceRepository? retrievalTraceRepository,
     DiaryAnalysisService? analysisService,
     EmbeddingService? embeddingService,
     EntrySummaryService? summaryService,
@@ -33,6 +36,8 @@ class AiAnalysisQueueRunner {
         _summaryRepository =
             summaryRepository ?? const EntrySummaryRepository(),
         _insightRepository = insightRepository ?? const InsightRepository(),
+        _retrievalTraceRepository =
+            retrievalTraceRepository ?? const AiRetrievalTraceRepository(),
         _analysisService = analysisService ?? const DiaryAnalysisService(),
         _embeddingService = embeddingService ?? const EmbeddingService(),
         _summaryService = summaryService ?? const EntrySummaryService(),
@@ -46,6 +51,7 @@ class AiAnalysisQueueRunner {
   final DiaryRepository _diaryRepository;
   final EntrySummaryRepository _summaryRepository;
   final InsightRepository _insightRepository;
+  final AiRetrievalTraceRepository _retrievalTraceRepository;
   final DiaryAnalysisService _analysisService;
   final EmbeddingService _embeddingService;
   final EntrySummaryService _summaryService;
@@ -145,6 +151,10 @@ class AiAnalysisQueueRunner {
       analysisState: DiaryAnalysisState.analyzing,
       message: '准备日记内容',
       retryCount: job.retryCount,
+      inputSummary: 'entryId=${job.entryId}',
+      outputSummary:
+          'date=${_dateLabel(entry.date)} chars=${entry.content.length} '
+          'location=${entry.location}',
       clearLastError: true,
     );
     try {
@@ -168,6 +178,7 @@ class AiAnalysisQueueRunner {
           message: staleArtifacts ? '日记已更新，重建日记片段' : '拆分日记片段',
           retryCount: job.retryCount,
           completedStages: completedStages,
+          outputSummary: _segmentOutputSummary(segments),
           clearLastError: true,
         );
         await _summaryRepository.saveSegments(entry.id, segments);
@@ -180,6 +191,7 @@ class AiAnalysisQueueRunner {
           message: '复用已有日记片段',
           retryCount: job.retryCount,
           completedStages: completedStages,
+          outputSummary: _segmentOutputSummary(segments),
           clearLastError: true,
         );
       }
@@ -198,6 +210,7 @@ class AiAnalysisQueueRunner {
           message: staleArtifacts ? '日记已更新，重建摘要包' : '生成摘要包',
           retryCount: job.retryCount,
           completedStages: completedStages,
+          outputSummary: _summaryOutputSummary(summary),
           clearLastError: true,
         );
         await _summaryRepository.saveSummary(summary);
@@ -210,6 +223,7 @@ class AiAnalysisQueueRunner {
           message: '复用已有摘要包',
           retryCount: job.retryCount,
           completedStages: completedStages,
+          outputSummary: _summaryOutputSummary(summary),
           clearLastError: true,
         );
       }
@@ -228,6 +242,7 @@ class AiAnalysisQueueRunner {
           message: '生成多级向量',
           retryCount: job.retryCount,
           completedStages: completedStages,
+          outputSummary: _embeddingOutputSummary(segments),
           clearLastError: true,
         );
         await _saveEmbeddings(entry, summary, segments);
@@ -240,6 +255,7 @@ class AiAnalysisQueueRunner {
           message: '复用已有多级向量',
           retryCount: job.retryCount,
           completedStages: completedStages,
+          outputSummary: _embeddingOutputSummary(segments),
           clearLastError: true,
         );
       }
@@ -256,6 +272,7 @@ class AiAnalysisQueueRunner {
         message: '关联历史记录',
         retryCount: job.retryCount,
         completedStages: completedStages,
+        outputSummary: '由今日洞察上下文构建器执行，生成后写入 retrieval trace',
         clearLastError: true,
       );
       completedStages = _markCompleted(
@@ -270,9 +287,26 @@ class AiAnalysisQueueRunner {
         message: '生成今日洞察',
         retryCount: job.retryCount,
         completedStages: completedStages,
+        inputSummary: 'entryId=${entry.id} summary=${summary.brief}',
         clearLastError: true,
       );
-      await _analysisService.analyzeEntry(entry);
+      final insight = await _analysisService.analyzeEntry(entry);
+      final trace = await _retrievalTraceRepository.getTrace(entry.id);
+      await _saveStage(
+        job,
+        state: AiAnalysisJobState.running,
+        stage: AiAnalysisStage.generatingInsight,
+        analysisState: DiaryAnalysisState.analyzing,
+        message: '今日洞察已生成',
+        retryCount: job.retryCount,
+        completedStages: completedStages,
+        outputSummary: [
+          _insightOutputSummary(insight),
+          if (trace != null)
+            'retrievalSources=${trace.sourceCount} items=${trace.items.length}',
+        ].join(' '),
+        clearLastError: true,
+      );
       completedStages = _markCompleted(
         completedStages,
         AiAnalysisStage.generatingInsight,
@@ -290,6 +324,8 @@ class AiAnalysisQueueRunner {
         message: '整理完成',
         retryCount: job.retryCount,
         completedStages: completedStages,
+        outputSummary:
+            'completed=${completedStages.map((item) => item.name).join(',')}',
         clearLastError: true,
       );
     } on AiClientException catch (error) {
@@ -362,6 +398,8 @@ class AiAnalysisQueueRunner {
     required int retryCount,
     List<AiAnalysisStage>? completedStages,
     bool clearLastError = false,
+    String? inputSummary,
+    String? outputSummary,
   }) async {
     final latest = await _queueRepository.getJob(job.id) ?? job;
     final logs = _appendStageLog(
@@ -370,12 +408,13 @@ class AiAnalysisQueueRunner {
         stage: stage,
         startedAt: DateTime.now(),
         message: message,
-        inputSummary: 'entryId=${job.entryId}',
-        outputSummary: [
-          if (completedStages != null)
-            'completed=${completedStages.map((item) => item.name).join(',')}',
-          'state=${state.name}',
-        ].join(' '),
+        inputSummary: inputSummary ?? 'entryId=${job.entryId}',
+        outputSummary: outputSummary ??
+            [
+              if (completedStages != null)
+                'completed=${completedStages.map((item) => item.name).join(',')}',
+              'state=${state.name}',
+            ].join(' '),
         retryCount: retryCount,
       ),
     );
@@ -502,6 +541,59 @@ class AiAnalysisQueueRunner {
       generatedAt: DateTime.now(),
       textHash: result.textHash,
     ));
+  }
+
+  String _dateLabel(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  String _segmentOutputSummary(List<DiarySegment> segments) {
+    final boundaryCounts = <String, int>{};
+    for (final segment in segments) {
+      boundaryCounts[segment.boundary.name] =
+          (boundaryCounts[segment.boundary.name] ?? 0) + 1;
+    }
+    final boundaries = boundaryCounts.entries
+        .map((entry) => '${entry.key}:${entry.value}')
+        .join(',');
+    return [
+      'segments=${segments.length}',
+      if (boundaries.isNotEmpty) 'boundaries=$boundaries',
+      if (segments.isNotEmpty) 'first=${segments.first.summary}',
+    ].join(' ');
+  }
+
+  String _summaryOutputSummary(EntrySummary summary) {
+    return [
+      'brief=${summary.brief}',
+      'keyPoints=${summary.keyPoints.length}',
+      'topics=${summary.topics.join(',')}',
+      'importance=${summary.importance.toStringAsFixed(2)}',
+      'generator=${summary.generator}',
+    ].where((item) => !item.endsWith('=')).join(' ');
+  }
+
+  String _embeddingOutputSummary(List<DiarySegment> segments) {
+    final count = 2 + segments.length;
+    return [
+      'embeddings=$count',
+      'entry=1',
+      'summary=1',
+      'segments=${segments.length}',
+      'model=${EmbeddingService.modelId}/${EmbeddingService.modelVersion}/${EmbeddingService.dimensions}d',
+    ].join(' ');
+  }
+
+  String _insightOutputSummary(DiaryInsight insight) {
+    return [
+      'reflection=${insight.reflection.length}',
+      'facts=${insight.facts.length}',
+      'signals=${insight.signals.length}',
+      'hypotheses=${insight.hypotheses.length}',
+      'suggestions=${insight.suggestions.length}',
+      'profileCandidates=${insight.profileUpdateCandidates.length}',
+      'relationshipUpdates=${insight.relationshipUpdates.length}',
+      'contradictions=${insight.contradictions.length}',
+    ].join(' ');
   }
 
   Future<void> _failJob(AiAnalysisJob job, String message) async {
