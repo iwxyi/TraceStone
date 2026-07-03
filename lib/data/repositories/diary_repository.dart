@@ -252,17 +252,25 @@ class DiaryRepository {
   }
 
   String? _safeGetString(SharedPreferences prefs, String key) {
-    final value = prefs.get(key);
-    return value is String ? value : null;
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
   }
 
   List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
-    final value = prefs.get(key);
-    if (value is List<String>) return List<String>.from(value);
-    if (value is List) {
-      return value.whereType<String>().toList();
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) {
+        return value.whereType<String>().toList();
+      }
+      return null;
+    } on Object {
+      return null;
     }
-    return null;
   }
 
   Future<void> _removeTrashItem(SharedPreferences prefs, String id) async {

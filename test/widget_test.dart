@@ -1,18 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/app/trace_stone_app.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
+import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
+import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
 import 'package:trace_stone/data/repositories/memory_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
+import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
+import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/features/companion/presentation/companion_page.dart';
 import 'package:trace_stone/features/relationships/presentation/relationships_page.dart';
 import 'package:trace_stone/features/settings/presentation/calendar_memory_page.dart';
@@ -510,6 +515,160 @@ void main() {
     expect(find.textContaining('score'), findsWidgets);
   });
 
+  testWidgets('search developer mode copies debug context', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    await _seedSearchEntry();
+
+    await tester.pumpWidget(const MaterialApp(home: SearchPage()));
+    await tester.enterText(find.byType(SearchBar), '散步 焦虑');
+    await tester.tap(find.byIcon(Icons.arrow_forward));
+    await tester.pumpAndSettle();
+    expect(find.text('复制上下文'), findsOneWidget);
+    await tester.tap(find.text('复制上下文'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('## Summary'));
+    expect(copiedText, contains('query=散步 焦虑'));
+    expect(copiedText, contains('entry_summary:search-entry'));
+    expect(copiedText, contains('## Retrieval Trace'));
+  });
+
+  testWidgets('AI debug page shows recent search and question retrieval traces',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    await _seedSearchEntry();
+    const builder = AiContextBuilder();
+    await builder.buildForSearch('散步 焦虑');
+    await builder.buildForQuestion('为什么散步后焦虑会下降');
+    await builder.buildForPeriodSummary(
+      start: DateTime(2026, 7, 1),
+      end: DateTime(2026, 7, 31, 23, 59, 59),
+    );
+    final entries = await const DiaryRepository().listEntriesForMonth(
+      DateTime(2026, 7),
+    );
+    await const PeriodSummaryService().buildMonthSummary(
+      DateTime(2026, 7),
+      entries,
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('最近检索上下文'), findsOneWidget);
+    expect(find.textContaining('搜索:'), findsOneWidget);
+    expect(find.textContaining('问答:'), findsOneWidget);
+    expect(find.textContaining('周期总结:'), findsOneWidget);
+    expect(find.textContaining('entry_summary:search-entry'), findsWidgets);
+    expect(find.textContaining('segment:'), findsWidgets);
+    await tester.tap(find.widgetWithText(TextButton, '复制').first);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(copiedText, contains('## Recent Retrieval Traces'));
+    expect(copiedText, contains('### 搜索'));
+    expect(copiedText, contains('### 问答'));
+    expect(copiedText, contains('### 周期总结'));
+    expect(copiedText, contains('entry_summary:search-entry'));
+
+    await tester.drag(find.byType(ListView), const Offset(0, -520));
+    await tester.pumpAndSettle();
+    expect(find.text('最近周期总结'), findsOneWidget);
+    expect(find.textContaining('月度总结 2026-07'), findsOneWidget);
+    expect(find.textContaining('context=periodSummary'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '复制总结'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(copiedText, contains('## Recent Period Summaries'));
+    expect(copiedText, contains('### 月度总结 2026-07'));
+    expect(copiedText, contains('context=periodSummary'));
+
+    await tester.drag(find.byType(ListView), const Offset(0, 520));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '清除').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('最近检索上下文'), findsNothing);
+  });
+
+  testWidgets('AI debug page copies companion prompt trace', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    await const AiPromptTraceRepository().saveTrace(AiPromptTrace(
+      id: 'companion:last',
+      scenario: 'question',
+      createdAt: DateTime(2026, 7, 3),
+      contextSummary: 'question sources=3',
+      systemPromptPreview: 'system preview',
+      userPromptPreview: 'user preview',
+      systemPromptLength: 13,
+      userPromptLength: 11,
+      systemPrompt: '完整 system prompt',
+      userPrompt: '完整 user prompt',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+    expect(find.text('最近陪伴问答'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('## Companion Prompt Trace'));
+    expect(copiedText, contains('context=question sources=3'));
+    expect(copiedText, contains('SYSTEM:'));
+    expect(copiedText, contains('完整 system prompt'));
+    expect(copiedText, contains('USER:'));
+    expect(copiedText, contains('完整 user prompt'));
+
+    await tester.tap(find.widgetWithText(TextButton, '清除'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('最近陪伴问答'), findsNothing);
+  });
+
   testWidgets('corrects entry summary from AI debug page', (tester) async {
     SharedPreferences.setMockInitialValues({});
     const diaryRepository = DiaryRepository();
@@ -577,7 +736,13 @@ void main() {
 
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('详情'));
+    await tester.scrollUntilVisible(
+      find.text('详情').first,
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('详情').first);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('summary keyPoints'), findsOneWidget);

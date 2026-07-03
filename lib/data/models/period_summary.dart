@@ -15,6 +15,7 @@ class PeriodSummary {
     required this.generator,
     this.relationshipHighlights = const [],
     this.stoneHighlights = const [],
+    this.contextDebugSummary = '',
   });
 
   final String id;
@@ -30,6 +31,7 @@ class PeriodSummary {
   final String generator;
   final List<String> relationshipHighlights;
   final List<String> stoneHighlights;
+  final String contextDebugSummary;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -45,6 +47,7 @@ class PeriodSummary {
         'generator': generator,
         'relationshipHighlights': relationshipHighlights,
         'stoneHighlights': stoneHighlights,
+        'contextDebugSummary': contextDebugSummary,
       };
 
   static PeriodSummary fromJson(Map<String, dynamic> json) {
@@ -69,6 +72,7 @@ class PeriodSummary {
       generator: json['generator'] as String? ?? 'unknown',
       relationshipHighlights: _stringList(json['relationshipHighlights']),
       stoneHighlights: _stringList(json['stoneHighlights']),
+      contextDebugSummary: json['contextDebugSummary'] as String? ?? '',
     );
   }
 

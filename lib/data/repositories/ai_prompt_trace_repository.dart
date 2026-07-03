@@ -16,13 +16,29 @@ class AiPromptTraceRepository {
 
   Future<AiPromptTrace?> getTrace(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$id');
+    final key = '$_prefix$id';
+    final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
-    return AiPromptTrace.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      return AiPromptTrace.fromJson(decoded);
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
   }
 
   Future<void> deleteTrace(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$id');
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    final value = prefs.get(key);
+    return value is String ? value : null;
   }
 }

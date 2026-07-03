@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../data/models/ai_context_package.dart';
 import '../../../data/models/ai_profile.dart';
@@ -114,12 +115,26 @@ class _SearchPageState extends State<SearchPage> {
                   if (!hasVisibleResults) {
                     return const _EmptyResult();
                   }
+                  final visiblePackage = package!;
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (developerMode) ...[
-                        Text(package!.debugSummary,
-                            style: Theme.of(context).textTheme.bodySmall),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(visiblePackage.debugSummary,
+                                  style: Theme.of(context).textTheme.bodySmall),
+                            ),
+                            TextButton.icon(
+                              onPressed: () =>
+                                  _copyDebugContext(visiblePackage),
+                              icon: const Icon(Icons.copy),
+                              label: const Text('复制上下文'),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 12),
                       ],
                       if (_showDiary)
@@ -192,9 +207,79 @@ class _SearchPageState extends State<SearchPage> {
   bool get _showStone =>
       _filter == _SearchSourceFilter.all ||
       _filter == _SearchSourceFilter.stone;
+
+  Future<void> _copyDebugContext(AiContextPackage package) async {
+    await Clipboard.setData(
+      ClipboardData(text: _SearchDebugContextText(package).build()),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制搜索调试上下文')),
+    );
+  }
 }
 
 enum _SearchSourceFilter { all, diary, memory, relationship, profile, stone }
+
+class _SearchDebugContextText {
+  const _SearchDebugContextText(this.package);
+
+  final AiContextPackage package;
+
+  String build() {
+    return [
+      _section('Summary', [
+        package.debugSummary,
+        if (package.query?.isNotEmpty ?? false) 'query=${package.query}',
+      ]),
+      _section('Search Matches', [
+        for (final match in package.searchMatches)
+          '${match.sourceType}:${match.sourceId} entry=${match.entryId} '
+              'score=${match.score} ${match.title} | ${match.summary} | '
+              '${match.reasons.join('；')}',
+      ]),
+      _section('Memories', [
+        for (final result in package.relatedMemories)
+          '${result.memory.id} score=${result.score} ${result.memory.title} | '
+              '${result.memory.summary} | ${result.reasons.join('；')}',
+      ]),
+      _section('Profile', [
+        for (final fact in package.profileFacts)
+          '${fact.id} ${fact.field}=${fact.value} '
+              'confidence=${fact.confidence.toStringAsFixed(2)} '
+              'evidence=${fact.evidenceCount}',
+      ]),
+      _section('Relationships', [
+        for (final profile in package.relationshipProfiles)
+          '${profile.personName} relationship=${profile.relationship ?? ''} '
+              'confidence=${profile.confidence.toStringAsFixed(2)} '
+              'interactions=${profile.interactionCount} '
+              '${profile.patterns.take(2).join('；')}',
+      ]),
+      _section('Stone', [
+        for (final task in package.stoneTasks)
+          '${task.id} ${task.title} | ${task.description} | '
+              'status=${task.status.name}',
+      ]),
+      if (package.retrievalTrace != null)
+        _section('Retrieval Trace', [
+          'scenario=${package.retrievalTrace!.scenario ?? ''} '
+              'sources=${package.retrievalTrace!.sourceCount} '
+              'generatedAt=${package.retrievalTrace!.generatedAt.toIso8601String()}',
+          for (final item in package.retrievalTrace!.items)
+            '${item.sourceType}:${item.sourceId} score=${item.score} '
+                '${item.title} | ${item.reasons.join('；')}',
+        ]),
+    ].where((section) => section.trim().isNotEmpty).join('\n\n');
+  }
+
+  String _section(String title, List<String> lines) {
+    final visible =
+        lines.map((line) => line.trim()).where((line) => line.isNotEmpty);
+    if (visible.isEmpty) return '';
+    return ['## $title', ...visible].join('\n');
+  }
+}
 
 class _SearchHint extends StatelessWidget {
   const _SearchHint();

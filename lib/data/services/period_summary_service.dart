@@ -47,6 +47,7 @@ class PeriodSummaryService {
       contextThemes: context.periodSummaries
           .expand((summary) => summary.topics)
           .toList(growable: false),
+      contextDebugSummary: context.debugSummary,
       relatedMemoryThemes: context.relatedMemories
           .expand((result) => [
                 ...result.memory.tags,
@@ -76,6 +77,7 @@ class PeriodSummaryService {
       contextThemes: context.periodSummaries
           .expand((summary) => summary.topics)
           .toList(growable: false),
+      contextDebugSummary: context.debugSummary,
       relatedMemoryThemes: context.relatedMemories
           .expand((result) => [
                 ...result.memory.tags,
@@ -93,6 +95,7 @@ class PeriodSummaryService {
     required List<DiaryEntry> entries,
     required Set<String> contextEntryIds,
     required List<String> contextThemes,
+    required String contextDebugSummary,
     required List<String> relatedMemoryThemes,
   }) async {
     final themes = <String, int>{};
@@ -172,6 +175,7 @@ class PeriodSummaryService {
       relationshipHighlights:
           _uniqueTake(relationshipHighlights, limit: 5).toList(),
       stoneHighlights: stoneHighlights,
+      contextDebugSummary: contextDebugSummary,
     );
     await _periodSummaryRepository.saveSummary(summary);
     return summary;

@@ -111,15 +111,36 @@ class AiContextBuilder {
   }
 
   Future<AiContextPackage> buildForSearch(String query) async {
+    return _buildForQuery(
+      query,
+      scenario: AiContextScenario.search,
+      traceId: 'search:last',
+    );
+  }
+
+  Future<AiContextPackage> buildForQuestion(String question) async {
+    return _buildForQuery(
+      question,
+      scenario: AiContextScenario.question,
+      traceId: 'question:last',
+    );
+  }
+
+  Future<AiContextPackage> _buildForQuery(
+    String query, {
+    required AiContextScenario scenario,
+    required String traceId,
+  }) async {
+    final now = DateTime.now();
     final entry = DiaryEntry(
-      id: 'search-query',
-      date: DateTime.now(),
-      createdAt: DateTime.now(),
+      id: traceId,
+      date: now,
+      createdAt: now,
       content: query,
       location: '',
       weather: '',
       temperature: null,
-      updatedAt: DateTime.now(),
+      updatedAt: now,
     );
     final relatedMemories =
         await _memoryRepository.findRelatedWithReasons(entry: entry, limit: 12);
@@ -132,42 +153,36 @@ class AiContextBuilder {
       query,
     );
     final stoneTasks = await _matchingStoneTasks(query);
-    return AiContextPackage(
-      scenario: AiContextScenario.search,
+    final package = AiContextPackage(
+      scenario: scenario,
       query: query,
       searchMatches: searchMatches,
       relatedMemories: relatedMemories,
       profileFacts: profileFacts,
       relationshipProfiles: relationshipProfiles,
       stoneTasks: stoneTasks,
-      retrievalTrace: _traceFromResults(
-        'search-query',
-        relatedMemories,
-        searchMatches: searchMatches,
-        profileFacts: profileFacts,
-        relationshipProfiles: relationshipProfiles,
-        stoneTasks: stoneTasks,
-        scenario: AiContextScenario.search.name,
-        sourceCount: relatedMemories.length +
-            searchMatches.length +
-            profileFacts.length +
-            relationshipProfiles.length +
-            stoneTasks.length,
-      ),
     );
-  }
-
-  Future<AiContextPackage> buildForQuestion(String question) async {
-    final package = await buildForSearch(question);
+    final trace = _traceFromResults(
+      traceId,
+      relatedMemories,
+      searchMatches: searchMatches,
+      profileFacts: profileFacts,
+      relationshipProfiles: relationshipProfiles,
+      stoneTasks: stoneTasks,
+      scenario: package.scenario.name,
+      contextSummary: package.debugSummary,
+      sourceCount: package.sourceCount,
+    );
+    await _retrievalTraceRepository.saveTrace(trace);
     return AiContextPackage(
-      scenario: AiContextScenario.question,
-      query: question,
+      scenario: package.scenario,
+      query: package.query,
       searchMatches: package.searchMatches,
       relatedMemories: package.relatedMemories,
       profileFacts: package.profileFacts,
       relationshipProfiles: package.relationshipProfiles,
       stoneTasks: package.stoneTasks,
-      retrievalTrace: package.retrievalTrace,
+      retrievalTrace: trace,
     );
   }
 
@@ -248,6 +263,9 @@ class AiContextBuilder {
       sourceCount: package.sourceCount,
     );
     await _retrievalTraceRepository.saveTrace(trace);
+    await _retrievalTraceRepository.saveTrace(
+      _traceWithEntryId(trace, 'period:last'),
+    );
     return AiContextPackage(
       scenario: package.scenario,
       periodStart: package.periodStart,
@@ -567,6 +585,17 @@ class AiContextBuilder {
             matchedTokens: task.tags,
           ),
       ],
+    );
+  }
+
+  AiRetrievalTrace _traceWithEntryId(AiRetrievalTrace trace, String entryId) {
+    return AiRetrievalTrace(
+      entryId: entryId,
+      generatedAt: trace.generatedAt,
+      items: trace.items,
+      scenario: trace.scenario,
+      contextSummary: trace.contextSummary,
+      sourceCount: trace.sourceCount,
     );
   }
 

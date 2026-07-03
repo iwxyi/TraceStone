@@ -5,7 +5,10 @@ import 'package:flutter/services.dart';
 
 import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/ai_embedding.dart';
+import '../../../data/models/ai_prompt_trace.dart';
+import '../../../data/models/ai_retrieval_trace.dart';
 import '../../../data/models/entry_summary.dart';
+import '../../../data/models/period_summary.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_analysis_queue_repository.dart';
 import '../../../data/repositories/ai_embedding_repository.dart';
@@ -16,6 +19,7 @@ import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/entry_summary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
+import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../../data/services/ai_embedding_text_builder.dart';
 import '../../../data/services/embedding_service.dart';
@@ -95,6 +99,10 @@ class _AiDebugPageState extends State<AiDebugPage> {
                 onBackfill: _enqueueBackfill,
               ),
               const SizedBox(height: 16),
+              const _RecentRetrievalTraceCard(),
+              const SizedBox(height: 16),
+              const _RecentPeriodSummaryCard(),
+              const SizedBox(height: 16),
               const _CompanionTraceCard(),
               const SizedBox(height: 16),
               if (queue.jobs.isEmpty)
@@ -112,14 +120,198 @@ class _AiDebugPageState extends State<AiDebugPage> {
   }
 }
 
-class _CompanionTraceCard extends StatelessWidget {
-  const _CompanionTraceCard();
+class _RecentRetrievalTraceCard extends StatefulWidget {
+  const _RecentRetrievalTraceCard();
+
+  @override
+  State<_RecentRetrievalTraceCard> createState() =>
+      _RecentRetrievalTraceCardState();
+}
+
+class _RecentRetrievalTraceCardState extends State<_RecentRetrievalTraceCard> {
+  late Future<_RecentRetrievalTraces> _future = _RecentRetrievalTraces.load();
+
+  Future<void> _clear() async {
+    const repository = AiRetrievalTraceRepository();
+    await repository.deleteForEntry('search:last');
+    await repository.deleteForEntry('question:last');
+    await repository.deleteForEntry('period:last');
+    if (!mounted) return;
+    setState(() {
+      _future = _RecentRetrievalTraces.load();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已清除最近检索调试记录')),
+    );
+  }
+
+  Future<void> _copy(
+      BuildContext context, _RecentRetrievalTraces traces) async {
+    await Clipboard.setData(ClipboardData(text: traces.toDebugText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制最近检索调试上下文')),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    const repository = AiPromptTraceRepository();
     return FutureBuilder(
-      future: repository.getTrace('companion:last'),
+      future: _future,
+      builder: (context, snapshot) {
+        final traces = snapshot.data;
+        if (traces == null || traces.items.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('最近检索上下文',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600)),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _copy(context, traces),
+                      icon: const Icon(Icons.copy),
+                      label: const Text('复制'),
+                    ),
+                    TextButton.icon(
+                      onPressed: _clear,
+                      icon: const Icon(Icons.cleaning_services_outlined),
+                      label: const Text('清除'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                for (final trace in traces.items) ...[
+                  _DebugLine(label: trace.label, value: trace.summary),
+                  for (final line in trace.lines.take(4))
+                    _DebugLine(label: 'source', value: line),
+                  if (trace != traces.items.last) const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RecentPeriodSummaryCard extends StatelessWidget {
+  const _RecentPeriodSummaryCard();
+
+  Future<void> _copy(
+      BuildContext context, _RecentPeriodSummaries summaries) async {
+    await Clipboard.setData(ClipboardData(text: summaries.toDebugText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制周期总结调试上下文')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder(
+      future: _RecentPeriodSummaries.load(),
+      builder: (context, snapshot) {
+        final summaries = snapshot.data;
+        if (summaries == null || summaries.items.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('最近周期总结',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600)),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _copy(context, summaries),
+                      icon: const Icon(Icons.copy),
+                      label: const Text('复制总结'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                for (final summary in summaries.items) ...[
+                  _DebugLine(label: summary.label, value: summary.brief),
+                  for (final line in summary.lines)
+                    _DebugLine(label: 'summary', value: line),
+                  if (summary != summaries.items.last)
+                    const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CompanionTraceCard extends StatefulWidget {
+  const _CompanionTraceCard();
+
+  @override
+  State<_CompanionTraceCard> createState() => _CompanionTraceCardState();
+}
+
+class _CompanionTraceCardState extends State<_CompanionTraceCard> {
+  late Future<AiPromptTrace?> _future =
+      const AiPromptTraceRepository().getTrace('companion:last');
+
+  Future<void> _copyTrace(BuildContext context, AiPromptTrace trace) async {
+    final text = [
+      '## Companion Prompt Trace',
+      'scenario=${trace.scenario}',
+      'createdAt=${trace.createdAt.toIso8601String()}',
+      'context=${trace.contextSummary}',
+      'systemLength=${trace.systemPromptLength}',
+      'userLength=${trace.userPromptLength}',
+      if ((trace.systemPrompt ?? '').isNotEmpty)
+        'SYSTEM:\n${trace.systemPrompt}'
+      else if (trace.systemPromptPreview.isNotEmpty)
+        'SYSTEM PREVIEW:\n${trace.systemPromptPreview}',
+      if ((trace.userPrompt ?? '').isNotEmpty)
+        'USER:\n${trace.userPrompt}'
+      else if (trace.userPromptPreview.isNotEmpty)
+        'USER PREVIEW:\n${trace.userPromptPreview}',
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制陪伴问答调试上下文')),
+    );
+  }
+
+  Future<void> _clearTrace(BuildContext context) async {
+    await const AiPromptTraceRepository().deleteTrace('companion:last');
+    if (!context.mounted) return;
+    setState(() {
+      _future = const AiPromptTraceRepository().getTrace('companion:last');
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已清除陪伴问答调试记录')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder(
+      future: _future,
       builder: (context, snapshot) {
         final trace = snapshot.data;
         if (trace == null) return const SizedBox.shrink();
@@ -129,9 +321,25 @@ class _CompanionTraceCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('最近陪伴问答',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('最近陪伴问答',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600)),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _copyTrace(context, trace),
+                      icon: const Icon(Icons.copy),
+                      label: const Text('复制'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _clearTrace(context),
+                      icon: const Icon(Icons.cleaning_services_outlined),
+                      label: const Text('清除'),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 8),
                 _DebugLine(label: 'scenario', value: trace.scenario),
                 _DebugLine(
@@ -994,6 +1202,139 @@ class _JobArtifacts {
         lines.map((line) => line.trim()).where((line) => line.isNotEmpty);
     if (visible.isEmpty) return '';
     return ['## $title', ...visible].join('\n');
+  }
+}
+
+class _RecentRetrievalTraces {
+  const _RecentRetrievalTraces({required this.items});
+
+  final List<_RecentRetrievalTraceItem> items;
+
+  static Future<_RecentRetrievalTraces> load() async {
+    const repository = AiRetrievalTraceRepository();
+    final traces = <AiRetrievalTrace?>[
+      await repository.getTrace('search:last'),
+      await repository.getTrace('question:last'),
+      await repository.getTrace('period:last'),
+    ].whereType<AiRetrievalTrace>().toList()
+      ..sort((a, b) => b.generatedAt.compareTo(a.generatedAt));
+    return _RecentRetrievalTraces(
+      items: traces.map(_RecentRetrievalTraceItem.fromTrace).toList(),
+    );
+  }
+
+  String toDebugText() {
+    return [
+      '## Recent Retrieval Traces',
+      for (final item in items) ...[
+        '',
+        '### ${item.label}',
+        item.summary,
+        ...item.lines,
+      ],
+    ].join('\n');
+  }
+}
+
+class _RecentRetrievalTraceItem {
+  const _RecentRetrievalTraceItem({
+    required this.label,
+    required this.summary,
+    required this.lines,
+  });
+
+  final String label;
+  final String summary;
+  final List<String> lines;
+
+  static _RecentRetrievalTraceItem fromTrace(AiRetrievalTrace trace) {
+    final scenario = trace.scenario ?? '';
+    final label = switch (scenario) {
+      'search' => '搜索',
+      'question' => '问答',
+      'periodSummary' => '周期总结',
+      _ => scenario.isEmpty ? '检索' : scenario,
+    };
+    final context = (trace.contextSummary?.toString() ?? '').trim();
+    final summary = [
+      if (context.isNotEmpty) context else 'sources=${trace.sourceCount}',
+      trace.generatedAt.toIso8601String(),
+    ].join(' | ');
+    return _RecentRetrievalTraceItem(
+      label: label,
+      summary: summary,
+      lines: [
+        for (final item in trace.items)
+          '${item.sourceType}:${item.sourceId} score=${item.score} '
+              '${item.title} ${item.reasons.join('；')}'
+              '${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}',
+      ],
+    );
+  }
+}
+
+class _RecentPeriodSummaries {
+  const _RecentPeriodSummaries({required this.items});
+
+  final List<_RecentPeriodSummaryItem> items;
+
+  static Future<_RecentPeriodSummaries> load() async {
+    const repository = PeriodSummaryRepository();
+    final summaries = await repository.listSummaries();
+    return _RecentPeriodSummaries(
+      items:
+          summaries.take(3).map(_RecentPeriodSummaryItem.fromSummary).toList(),
+    );
+  }
+
+  String toDebugText() {
+    return [
+      '## Recent Period Summaries',
+      for (final item in items) ...[
+        '',
+        '### ${item.label}',
+        item.brief,
+        ...item.lines,
+      ],
+    ].join('\n');
+  }
+}
+
+class _RecentPeriodSummaryItem {
+  const _RecentPeriodSummaryItem({
+    required this.label,
+    required this.brief,
+    required this.lines,
+  });
+
+  final String label;
+  final String brief;
+  final List<String> lines;
+
+  static _RecentPeriodSummaryItem fromSummary(PeriodSummary summary) {
+    final label = summary.type == PeriodSummaryType.month
+        ? '月度总结 ${summary.startDate.year}-${summary.startDate.month.toString().padLeft(2, '0')}'
+        : '年度总结 ${summary.startDate.year}';
+    return _RecentPeriodSummaryItem(
+      label: label,
+      brief: [
+        '${summary.entryCount}篇',
+        'generatedAt=${summary.generatedAt.toIso8601String()}',
+        'generator=${summary.generator}',
+      ].join(' | '),
+      lines: [
+        if (summary.contextDebugSummary.isNotEmpty)
+          'context=${summary.contextDebugSummary}',
+        if (summary.themes.isNotEmpty) 'themes=${summary.themes.join('、')}',
+        if (summary.emotions.isNotEmpty)
+          'emotions=${summary.emotions.join('、')}',
+        if (summary.representativeEntryIds.isNotEmpty)
+          'representative=${summary.representativeEntryIds.join(',')}',
+        for (final line in summary.relationshipHighlights.take(2))
+          'relationship=$line',
+        for (final line in summary.stoneHighlights.take(2)) 'stone=$line',
+      ],
+    );
   }
 }
 

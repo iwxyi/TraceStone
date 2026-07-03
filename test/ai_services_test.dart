@@ -27,6 +27,7 @@ import 'package:trace_stone/data/repositories/calendar_memory_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
 import 'package:trace_stone/data/repositories/memory_repository.dart';
+import 'package:trace_stone/data/repositories/period_summary_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_analysis_queue_runner.dart';
@@ -101,6 +102,34 @@ void main() {
 
       expect(await promptRepository.getTrace('entry'), isNull);
       expect(await retrievalRepository.getTrace('entry'), isNull);
+    });
+
+    test('ignores invalid prompt and retrieval trace storage values', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.promptTraces.list': <String>['not-json'],
+        'ai.retrievalTraces.list': <String>['not-json'],
+        'ai.promptTraces.broken': '{broken',
+        'ai.retrievalTraces.broken': '{broken',
+        'ai.promptTraces.array': '[]',
+        'ai.retrievalTraces.array': '[]',
+      });
+      const promptRepository = AiPromptTraceRepository();
+      const retrievalRepository = AiRetrievalTraceRepository();
+
+      expect(await promptRepository.getTrace('list'), isNull);
+      expect(await retrievalRepository.getTrace('list'), isNull);
+      expect(await promptRepository.getTrace('broken'), isNull);
+      expect(await retrievalRepository.getTrace('broken'), isNull);
+      expect(await promptRepository.getTrace('array'), isNull);
+      expect(await retrievalRepository.getTrace('array'), isNull);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.get('ai.promptTraces.list'), ['not-json']);
+      expect(prefs.get('ai.retrievalTraces.list'), ['not-json']);
+      expect(prefs.get('ai.promptTraces.broken'), isNull);
+      expect(prefs.get('ai.retrievalTraces.broken'), isNull);
+      expect(prefs.get('ai.promptTraces.array'), isNull);
+      expect(prefs.get('ai.retrievalTraces.array'), isNull);
     });
   });
 
@@ -1310,6 +1339,92 @@ void main() {
   });
 
   group('PeriodSummaryService', () {
+    test('period summary keeps context debug summary and legacy defaults',
+        () async {
+      final date = DateTime(2026, 7, 3);
+      final summary = PeriodSummary(
+        id: 'month:2026-07',
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 7),
+        endDate: DateTime(2026, 7, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 1,
+        brief: '七月摘要',
+        themes: const ['散步'],
+        emotions: const ['放松'],
+        representativeEntryIds: const ['entry'],
+        generator: 'test',
+        contextDebugSummary: 'periodSummary sources=3',
+      );
+      final restored = PeriodSummary.fromJson(summary.toJson());
+      final legacy = PeriodSummary.fromJson({
+        'id': 'legacy',
+        'type': 'month',
+        'startDate': date.toIso8601String(),
+        'endDate': date.toIso8601String(),
+        'generatedAt': date.toIso8601String(),
+      });
+
+      expect(restored.contextDebugSummary, 'periodSummary sources=3');
+      expect(legacy.contextDebugSummary, '');
+    });
+
+    test('period summary repository ignores invalid stored values', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.periodSummaries.list': <String>['not-json'],
+        'ai.periodSummaries.broken': '{broken',
+        'ai.periodSummaries.array': '[]',
+      });
+      const repository = PeriodSummaryRepository();
+
+      expect(await repository.getSummary('list'), isNull);
+      expect(await repository.getSummary('broken'), isNull);
+      expect(await repository.getSummary('array'), isNull);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.get('ai.periodSummaries.list'), ['not-json']);
+      expect(prefs.get('ai.periodSummaries.broken'), isNull);
+      expect(prefs.get('ai.periodSummaries.array'), isNull);
+    });
+
+    test('period summary repository lists recent summaries first', () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = PeriodSummaryRepository();
+      final oldDate = DateTime(2026, 7, 1);
+      final newDate = DateTime(2026, 7, 3);
+      await repository.saveSummary(PeriodSummary(
+        id: 'month:2026-06',
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 6),
+        endDate: DateTime(2026, 6, 30, 23, 59, 59),
+        generatedAt: oldDate,
+        entryCount: 1,
+        brief: '六月摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: const [],
+        generator: 'test',
+      ));
+      await repository.saveSummary(PeriodSummary(
+        id: 'month:2026-07',
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 7),
+        endDate: DateTime(2026, 7, 31, 23, 59, 59),
+        generatedAt: newDate,
+        entryCount: 2,
+        brief: '七月摘要',
+        themes: const ['散步'],
+        emotions: const [],
+        representativeEntryIds: const [],
+        generator: 'test',
+      ));
+
+      final summaries = await repository.listSummaries();
+
+      expect(summaries.map((summary) => summary.id),
+          ['month:2026-07', 'month:2026-06']);
+    });
+
     test('builds month summary for scoped entries only', () async {
       SharedPreferences.setMockInitialValues({});
       final entries = [
@@ -1333,6 +1448,8 @@ void main() {
       expect(summary.brief, contains('2026年7月 共记录 1 篇日记'));
       expect(summary.representativeEntryIds, contains('july-entry'));
       expect(summary.representativeEntryIds, isNot(contains('june-entry')));
+      expect(summary.contextDebugSummary, contains('periodSummary'));
+      expect(summary.contextDebugSummary, contains('sources='));
     });
 
     test('includes relationship and stone progress highlights', () async {
@@ -1410,11 +1527,15 @@ void main() {
         start: DateTime(2026, 7, 1),
         end: DateTime(2026, 7, 31, 23, 59, 59),
       );
+      final latestTrace =
+          await const AiRetrievalTraceRepository().getTrace('period:last');
 
       expect(package.periodEntries, hasLength(50));
       expect(package.periodSummaries, hasLength(48));
       expect(package.periodSummaries.first.entryId, 'period-budget-49');
       expect(package.debugSummary, contains('periodSummaries=48'));
+      expect(latestTrace?.scenario, AiContextScenario.periodSummary.name);
+      expect(latestTrace?.contextSummary, package.debugSummary);
     });
 
     test('loads historical solar today and nearby entries', () async {
@@ -1622,6 +1743,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const summaryRepository = EntrySummaryRepository();
+      const traceRepository = AiRetrievalTraceRepository();
       final entry = _entry(
         id: 'entry-search',
         date: DateTime(2026, 7, 3),
@@ -1644,12 +1766,18 @@ void main() {
             .where((type) => type == 'entry_summary' || type == 'segment'),
         isNotEmpty,
       );
+      final savedTrace = await traceRepository.getTrace('search:last');
+      expect(savedTrace?.scenario, AiContextScenario.search.name);
+      expect(savedTrace?.contextSummary, package.debugSummary);
+      expect(savedTrace?.items.map((item) => item.sourceType),
+          containsAll(['entry_summary', 'segment']));
     });
 
     test('question context preserves diary and segment matches', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const summaryRepository = EntrySummaryRepository();
+      const traceRepository = AiRetrievalTraceRepository();
       final entry = _entry(
         id: 'entry-question',
         date: DateTime(2026, 7, 3),
@@ -1666,6 +1794,12 @@ void main() {
       expect(package.scenario, AiContextScenario.question);
       expect(package.searchMatches, isNotEmpty);
       expect(package.searchMatches.map((match) => match.sourceType),
+          contains('segment'));
+      expect(package.retrievalTrace?.scenario, AiContextScenario.question.name);
+      final savedTrace = await traceRepository.getTrace('question:last');
+      expect(savedTrace?.scenario, AiContextScenario.question.name);
+      expect(savedTrace?.contextSummary, package.debugSummary);
+      expect(savedTrace?.items.map((item) => item.sourceType),
           contains('segment'));
     });
   });
