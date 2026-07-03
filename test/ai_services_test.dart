@@ -337,7 +337,7 @@ void main() {
       final recent = _entry(
         id: 'recent-source-entry',
         date: DateTime(2026, 7, 2),
-        content: '昨天也写到散步后的恢复。',
+        content: '这是一段很长的最近日记原文，不应该直接进入今日洞察历史上下文。',
       );
       await const DiaryRepository().saveEntry(entry);
       await const DiaryRepository().saveEntry(recent);
@@ -346,6 +346,12 @@ void main() {
         const EntrySummaryService().buildSummary(entry, segments),
       );
       await const EntrySummaryRepository().saveSegments(entry.id, segments);
+      await const EntrySummaryRepository().saveSummary(_summaryForTest(
+        entry: recent,
+        brief: '昨天也写到散步后的恢复。',
+        importance: 0.72,
+        topics: const ['散步', '恢复'],
+      ));
       await const MemoryRepository().saveMemory(MemoryEntry(
         id: 'memory-walk-source',
         sourceEntryId: 'memory-entry-source',
@@ -443,6 +449,10 @@ void main() {
       expect(client.lastUserPrompt, contains('不要把轻松判断成焦虑'));
       expect(client.lastUserPrompt, contains('segment:${segments.first.id}'));
       expect(client.lastUserPrompt, contains('entry:recent-source-entry'));
+      expect(
+          client.lastUserPrompt, contains('entry_summary:recent-source-entry'));
+      expect(client.lastUserPrompt, contains('昨天也写到散步后的恢复'));
+      expect(client.lastUserPrompt, isNot(contains('很长的最近日记原文')));
       expect(client.lastUserPrompt, contains('memory:memory-walk-source'));
       expect(
           client.lastUserPrompt, contains('sourceEntry:memory-entry-source'));

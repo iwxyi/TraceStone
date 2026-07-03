@@ -134,7 +134,7 @@ ${context.currentSummary == null ? '无' : _summaryBlock(context)}
 ${context.currentSegments.isEmpty ? '无' : context.currentSegments.map(_segmentLine).join('\n')}
 
 最近日记摘要：
-${context.recentEntries.isEmpty ? '无' : context.recentEntries.map(_entryLine).join('\n')}
+${context.recentEntries.isEmpty ? '无' : context.recentEntries.map((entry) => _recentEntryLine(context, entry)).join('\n')}
 
 相关历史记忆：
 ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map(_memoryLine).join('\n')}
@@ -205,6 +205,19 @@ $feedbackBlock
 
   String _entryLine(DiaryEntry entry) =>
       '- entry:${entry.id}｜${_dateLabel(entry.date)}｜${entry.title ?? entry.excerpt}｜${entry.excerpt}';
+
+  String _recentEntryLine(AiContextPackage context, DiaryEntry entry) {
+    final summary = context.recentSummaries
+        .where((summary) => summary.entryId == entry.id)
+        .firstOrNull;
+    if (summary == null) return _entryLine(entry);
+    final title = summary.title.isNotEmpty ? summary.title : entry.excerpt;
+    final body = [
+      summary.brief,
+      ...summary.keyPoints.take(3),
+    ].map((part) => part.trim()).where((part) => part.isNotEmpty).join('；');
+    return '- entry_summary:${summary.entryId}｜entry:${entry.id}｜${_dateLabel(summary.date)}｜$title｜$body';
+  }
 
   String _memoryLine(MemoryRetrievalResult result) {
     final memory = result.memory;

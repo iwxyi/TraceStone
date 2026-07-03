@@ -62,6 +62,7 @@ class AiContextBuilder {
 
   Future<AiContextPackage> buildForTodayInsight(DiaryEntry entry) async {
     final recentEntries = await _recentEntries(entry);
+    final recentSummaries = await _recentSummaries(recentEntries);
     final summary = await _summaryRepository.getSummary(entry.id);
     final segments = await _summaryRepository.listSegments(entry.id);
     final relatedMemories = await _memoryRepository.findRelatedWithReasons(
@@ -82,6 +83,7 @@ class AiContextBuilder {
       currentSummary: summary,
       currentSegments: segments,
       recentEntries: recentEntries,
+      recentSummaries: recentSummaries,
       calendarMatches: calendarMatches,
       relatedMemories: relatedMemories,
       profileFacts: profileFacts,
@@ -106,6 +108,7 @@ class AiContextBuilder {
       currentSummary: package.currentSummary,
       currentSegments: package.currentSegments,
       recentEntries: package.recentEntries,
+      recentSummaries: package.recentSummaries,
       calendarMatches: package.calendarMatches,
       relatedMemories: package.relatedMemories,
       profileFacts: package.profileFacts,
@@ -375,6 +378,15 @@ class AiContextBuilder {
         .where((item) => item.id != entry.id)
         .take(5)
         .toList(growable: false);
+  }
+
+  Future<List<EntrySummary>> _recentSummaries(List<DiaryEntry> entries) async {
+    final summaries = <EntrySummary>[];
+    for (final entry in entries) {
+      final summary = await _summaryRepository.getSummary(entry.id);
+      if (summary != null) summaries.add(summary);
+    }
+    return summaries;
   }
 
   Future<List<AiCalendarMatch>> _calendarMatches(DiaryEntry entry) async {

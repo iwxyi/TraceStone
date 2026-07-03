@@ -17,6 +17,7 @@ class AiContextPackage {
     this.periodEntries = const [],
     this.periodSummaries = const [],
     this.recentEntries = const [],
+    this.recentSummaries = const [],
     this.calendarMatches = const [],
     this.searchMatches = const [],
     this.relatedMemories = const [],
@@ -36,6 +37,7 @@ class AiContextPackage {
   final List<DiaryEntry> periodEntries;
   final List<EntrySummary> periodSummaries;
   final List<DiaryEntry> recentEntries;
+  final List<EntrySummary> recentSummaries;
   final List<AiCalendarMatch> calendarMatches;
   final List<AiSearchMatch> searchMatches;
   final List<MemoryRetrievalResult> relatedMemories;
@@ -54,6 +56,7 @@ class AiContextPackage {
       periodEntries.length +
       periodSummaries.length +
       recentEntries.length +
+      recentSummaries.length +
       calendarMatches.length +
       searchMatches.length +
       relatedMemories.length +
@@ -71,6 +74,8 @@ class AiContextPackage {
         'periodSummaries=${periodSummaries.length}',
       if (relatedMemories.isNotEmpty) 'memories=${relatedMemories.length}',
       if (recentEntries.isNotEmpty) 'recent=${recentEntries.length}',
+      if (recentSummaries.isNotEmpty)
+        'recentSummaries=${recentSummaries.length}',
       if (calendarMatches.isNotEmpty) 'calendar=${calendarMatches.length}',
       if (searchMatches.isNotEmpty) 'search=${searchMatches.length}',
       if (profileFacts.isNotEmpty) 'profile=${profileFacts.length}',
