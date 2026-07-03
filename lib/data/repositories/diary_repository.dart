@@ -220,15 +220,17 @@ class DiaryRepository {
     final indexed = prefs.getStringList(_trashIndexKey) ?? [];
     final scanned = prefs
         .getKeys()
-        .where((key) => key.startsWith(_trashPrefix))
+        .where((key) => key.startsWith(_trashPrefix) && key != _trashIndexKey)
         .map((key) => key.substring(_trashPrefix.length));
-    final ids = <String>{...indexed, ...scanned}.toList();
+    final ids = <String>{...indexed, ...scanned}
+        .where((id) => id.isNotEmpty && id != 'index')
+        .toList();
     await prefs.setStringList(_trashIndexKey, ids);
     return ids;
   }
 
   Future<DiaryTrashItem?> _trashItem(SharedPreferences prefs, String id) async {
-    final raw = prefs.getString('$_trashPrefix$id');
+    final raw = _safeGetString(prefs, '$_trashPrefix$id');
     if (raw == null) return null;
     final parsed = jsonDecode(raw) as Map<String, dynamic>;
     final hasMetadata = parsed['entry'] is Map<String, dynamic>;
@@ -242,6 +244,14 @@ class DiaryRepository {
       deletedAt: deletedAt,
       expiresAt: deletedAt.add(trashRetention),
     );
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      return prefs.getString(key);
+    } on Object {
+      return null;
+    }
   }
 
   Future<void> _removeTrashItem(SharedPreferences prefs, String id) async {

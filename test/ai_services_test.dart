@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_segment.dart';
 import 'package:trace_stone/data/models/period_summary.dart';
+import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/services/embedding_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
@@ -97,6 +98,18 @@ void main() {
       expect(summary.brief, contains('2026年7月 共记录 1 篇日记'));
       expect(summary.representativeEntryIds, contains('july-entry'));
       expect(summary.representativeEntryIds, isNot(contains('june-entry')));
+    });
+  });
+
+  group('DiaryRepository trash', () {
+    test('ignores trash index key when scanning trash items', () async {
+      SharedPreferences.setMockInitialValues({
+        'diary.trash.index': <String>['index'],
+      });
+
+      final items = await const DiaryRepository().listTrashEntries();
+
+      expect(items, isEmpty);
     });
   });
 }
