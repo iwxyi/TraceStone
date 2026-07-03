@@ -2553,6 +2553,66 @@ void main() {
       );
     });
 
+    test('deleting entry summary removes summary and segment embeddings',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = EmbeddingService();
+      final entry = _entry(
+        id: 'summary-delete-embeddings',
+        date: DateTime(2026, 7, 3),
+        content: '上午开会。\n\n---\n\n晚上散步。',
+      );
+      final segments = const EntrySummaryService().buildSegments(entry);
+      final summary = const EntrySummaryService().buildSummary(entry, segments);
+      await summaryRepository.saveSummary(summary);
+      await summaryRepository.saveSegments(entry.id, segments);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        text: _summaryEmbeddingTextForTest(summary),
+        generatedAt: DateTime(2026, 7, 3),
+      );
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.segment,
+        sourceId: segments.first.id,
+        text: _segmentEmbeddingTextForTest(segments.first),
+        generatedAt: DateTime(2026, 7, 3),
+      );
+
+      await summaryRepository.deleteForEntry(entry.id);
+
+      expect(await summaryRepository.getSummary(entry.id), isNull);
+      expect(await summaryRepository.listSegments(entry.id), isEmpty);
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.summary,
+          sourceId: entry.id,
+        ),
+        isNull,
+      );
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.segment,
+          sourceId: segments.first.id,
+        ),
+        isNull,
+      );
+      expect(
+        (await embeddingRepository.listForEntry(entry.id)).where((item) =>
+            item.sourceType == AiEmbeddingSourceType.summary ||
+            item.sourceType == AiEmbeddingSourceType.segment),
+        isEmpty,
+      );
+    });
+
     test('repositories ignore invalid summaries, segments, and embeddings',
         () async {
       final entry = _entry(

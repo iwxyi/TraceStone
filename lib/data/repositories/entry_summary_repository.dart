@@ -124,10 +124,19 @@ class EntrySummaryRepository {
 
   Future<void> deleteForEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
+    const embeddingRepository = AiEmbeddingRepository();
     await prefs.remove('$_summaryPrefix$entryId');
+    await embeddingRepository.deleteBySource(
+      sourceType: AiEmbeddingSourceType.summary,
+      sourceId: entryId,
+    );
     final ids = _safeGetStringList(prefs, '$_segmentIndexPrefix$entryId') ?? [];
     for (final id in ids) {
       await prefs.remove('$_segmentPrefix$id');
+      await embeddingRepository.deleteBySource(
+        sourceType: AiEmbeddingSourceType.segment,
+        sourceId: id,
+      );
     }
     await prefs.remove('$_segmentIndexPrefix$entryId');
   }
