@@ -477,6 +477,7 @@ void main() {
       expect(trace?.contextSummary, contains('relatedSourceFiltered=1'));
       expect(insight?.relatedMemories.map((item) => item.entryId), [
         'memory-entry-source',
+        'recent-source-entry',
         null,
       ]);
       expect(insight?.facts.single.evidence.map((item) => item.id), [
@@ -5154,7 +5155,12 @@ class _CapturingAiClientService extends AiClientService {
         {
           'title': '散步记忆',
           'reason': '同样提到散步后放松',
-          'entry_id': 'memory-entry-source',
+          'entry_id': 'memory:memory-walk-source',
+        },
+        {
+          'title': '最近散步',
+          'reason': '最近日记摘要也提到恢复',
+          'entry_id': 'entry_summary:recent-source-entry',
         },
         {
           'title': '不存在的历史',

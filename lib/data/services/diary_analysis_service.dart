@@ -282,6 +282,7 @@ $feedbackBlock
           .map((item) => RelatedMemoryInsight.fromJson(_mapValue(item)))
           .map((item) => _sanitizeRelatedMemory(
                 item,
+                context,
                 allowedSourceIds,
                 evidenceStats,
               ))
@@ -410,6 +411,7 @@ $feedbackBlock
 
   RelatedMemoryInsight _sanitizeRelatedMemory(
     RelatedMemoryInsight item,
+    AiContextPackage context,
     Set<String> allowedSourceIds,
     _EvidenceFilterStats evidenceStats,
   ) {
@@ -419,11 +421,47 @@ $feedbackBlock
     if (hasInvalidEntryId) {
       evidenceStats.filteredRelatedMemorySources += 1;
     }
+    final canonicalEntryId = entryId == null || hasInvalidEntryId
+        ? null
+        : _canonicalSourceId(context, entryId);
     return RelatedMemoryInsight(
       title: item.title,
       reason: item.reason,
-      entryId: entryId == null || !hasInvalidEntryId ? entryId : null,
+      entryId: canonicalEntryId,
     );
+  }
+
+  String? _canonicalSourceId(AiContextPackage context, String sourceId) {
+    final trimmed = sourceId.trim();
+    if (trimmed.isEmpty) return null;
+    final withoutPrefix = _stripKnownSourcePrefix(trimmed);
+    for (final result in context.relatedMemories) {
+      final memory = result.memory;
+      if (trimmed == memory.id || trimmed == 'memory:${memory.id}') {
+        return memory.sourceEntryId.isNotEmpty
+            ? memory.sourceEntryId
+            : memory.allSourceEntryIds.firstOrNull;
+      }
+      if (memory.allSourceEntryIds.contains(trimmed) ||
+          memory.allSourceEntryIds.contains(withoutPrefix)) {
+        return withoutPrefix;
+      }
+    }
+    return withoutPrefix;
+  }
+
+  String _stripKnownSourcePrefix(String value) {
+    const prefixes = [
+      'current_entry:',
+      'entry_summary:',
+      'entry:',
+      'calendar:',
+      'segment:',
+    ];
+    for (final prefix in prefixes) {
+      if (value.startsWith(prefix)) return value.substring(prefix.length);
+    }
+    return value;
   }
 
   List<InsightEvidence> _validEvidence(
