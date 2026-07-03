@@ -2498,6 +2498,61 @@ void main() {
       expect(secondEmbedding?.textHash, isNot(firstEmbedding?.textHash));
     });
 
+    test('replacing segments removes stale segment embeddings', () async {
+      SharedPreferences.setMockInitialValues({});
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = EmbeddingService();
+      final entry = _entry(
+        id: 'segment-replace-cleanup',
+        date: DateTime(2026, 7, 3),
+        content: '上午开会。\n\n---\n\n晚上散步。',
+      );
+      final oldSegments = const EntrySummaryService().buildSegments(entry);
+      await summaryRepository.saveSegments(entry.id, oldSegments);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.segment,
+        sourceId: oldSegments.first.id,
+        text: _segmentEmbeddingTextForTest(oldSegments.first),
+        generatedAt: DateTime(2026, 7, 3),
+      );
+      final replacement = [
+        DiarySegment(
+          id: '${entry.id}#manual',
+          entryId: entry.id,
+          index: 0,
+          text: '晚上散步后状态恢复。',
+          summary: '散步恢复状态。',
+          topics: const ['运动'],
+          people: const [],
+          boundary: DiarySegmentBoundary.paragraphGap,
+          createdAt: DateTime(2026, 7, 4),
+        ),
+      ];
+
+      await summaryRepository.saveSegments(entry.id, replacement);
+
+      expect(
+        await embeddingRepository.getBySource(
+          sourceType: AiEmbeddingSourceType.segment,
+          sourceId: oldSegments.first.id,
+        ),
+        isNull,
+      );
+      expect(
+        (await embeddingRepository.listForEntry(entry.id))
+            .where((item) => item.sourceType == AiEmbeddingSourceType.segment),
+        isEmpty,
+      );
+      expect(
+        (await summaryRepository.listSegments(entry.id)).map((item) => item.id),
+        ['${entry.id}#manual'],
+      );
+    });
+
     test('repositories ignore invalid summaries, segments, and embeddings',
         () async {
       final entry = _entry(

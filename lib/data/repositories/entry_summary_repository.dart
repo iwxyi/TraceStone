@@ -79,8 +79,13 @@ class EntrySummaryRepository {
     final prefs = await SharedPreferences.getInstance();
     final oldIds =
         _safeGetStringList(prefs, '$_segmentIndexPrefix$entryId') ?? [];
+    const embeddingRepository = AiEmbeddingRepository();
     for (final id in oldIds) {
       await prefs.remove('$_segmentPrefix$id');
+      await embeddingRepository.deleteBySource(
+        sourceType: AiEmbeddingSourceType.segment,
+        sourceId: id,
+      );
     }
     final ids = <String>[];
     for (final segment in segments) {
