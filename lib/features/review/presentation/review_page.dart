@@ -1940,7 +1940,7 @@ class _DayTimelineState extends State<_DayTimeline> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: _TimelineMonthHeader(
                 yearLabel: '${bucket.year}年',
-                monthLabel: '全年',
+                monthLabel: null,
                 entryCount: buckets
                     .where((item) => item.year == bucket.year)
                     .fold<int>(0, (total, item) => total + item.entryCount),
@@ -2080,7 +2080,7 @@ class _TimelineStickyHeaderDelegate extends SliverPersistentHeaderDelegate {
 class _TimelineMonthHeader extends StatelessWidget {
   const _TimelineMonthHeader(
       {required this.yearLabel,
-      required this.monthLabel,
+      this.monthLabel,
       required this.entryCount,
       required this.yearCollapsed,
       required this.monthCollapsed,
@@ -2092,7 +2092,7 @@ class _TimelineMonthHeader extends StatelessWidget {
   static const _contentHeight = 34.0;
 
   final String? yearLabel;
-  final String monthLabel;
+  final String? monthLabel;
   final int entryCount;
   final bool yearCollapsed;
   final bool monthCollapsed;
@@ -2135,15 +2135,17 @@ class _TimelineMonthHeader extends StatelessWidget {
                     ),
                   ),
                 ],
-                _TimelineHeaderButton(
-                  label: monthLabel,
-                  collapsed: monthCollapsed,
-                  onTap: onToggleMonth,
-                  iconSize: 20,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+                if (monthLabel != null) ...[
+                  _TimelineHeaderButton(
+                    label: monthLabel!,
+                    collapsed: monthCollapsed,
+                    onTap: onToggleMonth,
+                    iconSize: 20,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
+                ],
                 const Spacer(),
                 DecoratedBox(
                   decoration: BoxDecoration(
@@ -2415,7 +2417,7 @@ class _TimelineEntry extends StatelessWidget {
                       maxLines: entry.title == null ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w400,
                             height: 1.25,
                           ),
                     ),
