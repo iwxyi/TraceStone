@@ -1,11 +1,16 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../data/models/diary_entry.dart';
+import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
+import '../../../data/repositories/insight_repository.dart';
 
 class ReviewPage extends StatefulWidget {
   const ReviewPage({super.key});
@@ -16,7 +21,8 @@ class ReviewPage extends StatefulWidget {
 
 class _ReviewPageState extends State<ReviewPage> {
   final _repository = const DiaryRepository();
-  int _selectedIndex = 1;
+  int _selectedIndex = 2;
+  String? _pinnedTimelineMonth;
 
   @override
   void initState() {
@@ -99,6 +105,11 @@ class _ReviewPageState extends State<ReviewPage> {
   String get _appBarTitle =>
       _isSelectionMode ? '已选择 ${_selectedIds.length} 篇' : '回顾';
 
+  void _updatePinnedTimelineMonth(String label) {
+    if (_pinnedTimelineMonth == label) return;
+    setState(() => _pinnedTimelineMonth = label);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -109,7 +120,24 @@ class _ReviewPageState extends State<ReviewPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_appBarTitle),
+        title: _isSelectionMode
+            ? Text(_appBarTitle)
+            : Stack(
+                alignment: Alignment.center,
+                children: [
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('回顾'),
+                  ),
+                  _ReviewViewSwitcher(
+                    selectedIndex: _selectedIndex,
+                    onChanged: (index) {
+                      setState(() => _selectedIndex = index);
+                      _saveViewPreference(index);
+                    },
+                  ),
+                ],
+              ),
         actions: [
           if (_isSelectionMode) ...[
             IconButton(
@@ -132,73 +160,146 @@ class _ReviewPageState extends State<ReviewPage> {
           ],
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 0, label: Text('年')),
-              ButtonSegment(value: 1, label: Text('月')),
-              ButtonSegment(value: 2, label: Text('日')),
-            ],
-            selected: {_selectedIndex},
-            onSelectionChanged: (value) {
-              final index = value.first;
-              setState(() => _selectedIndex = index);
-              _saveViewPreference(index);
-            },
-          ),
-          const SizedBox(height: 16),
-          FutureBuilder<List<DiaryEntry>>(
-            future: _entriesFuture,
-            builder: (context, snapshot) {
-              final entries = snapshot.data ?? [];
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              if (entries.isEmpty) {
-                return const _EmptyReviewCard();
-              }
-              final availableYears = entries
-                  .map((e) => e.date.year)
-                  .toSet()
-                  .toList()
-                ..sort((a, b) => b.compareTo(a));
-              _selectedYear ??= availableYears.first;
-              return switch (_selectedIndex) {
-                0 => _YearList(
-                    entries: entries,
-                    selectedYear: _selectedYear!,
-                    onSelectYear: (year) =>
-                        setState(() => _selectedYear = year),
-                    onOpenEntry: _openEntry,
-                    onLongSelectEntry: _startSelection,
-                    selectedIds: _selectedIds,
-                  ),
-                1 => _MonthCalendar(
-                    entries: entries,
-                    selectedMonth: _selectedMonth,
-                    selectedDay: _selectedDay,
-                    onChangeMonth: (month) => setState(() {
-                      _selectedMonth = month;
-                      _selectedDay = DateTime(month.year, month.month, 1);
-                    }),
-                    onSelectDay: (day) => setState(() => _selectedDay = day),
-                    onOpenEntry: _openEntry,
-                    onLongSelectEntry: _startSelection,
-                    selectedIds: _selectedIds,
-                  ),
-                _ => _DayTimeline(
-                    entries: entries,
-                    onOpenEntry: _openEntry,
-                    onLongSelectEntry: _startSelection,
-                    selectedIds: _selectedIds),
-              };
-            },
+      body: CustomScrollView(
+        slivers: [
+          if (_selectedIndex == 2)
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _TimelinePinnedMonthHeaderDelegate(
+                label: _pinnedTimelineMonth ?? '',
+              ),
+            ),
+          SliverPadding(
+            padding:
+                EdgeInsets.fromLTRB(20, _selectedIndex == 2 ? 12 : 20, 20, 20),
+            sliver: SliverToBoxAdapter(
+              child: FutureBuilder<List<DiaryEntry>>(
+                future: _entriesFuture,
+                builder: (context, snapshot) {
+                  final entries = snapshot.data ?? [];
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (entries.isEmpty) {
+                    return const _EmptyReviewCard();
+                  }
+                  final availableYears = entries
+                      .map((e) => e.date.year)
+                      .toSet()
+                      .toList()
+                    ..sort((a, b) => b.compareTo(a));
+                  _selectedYear ??= availableYears.first;
+                  return switch (_selectedIndex) {
+                    0 => _YearList(
+                        entries: entries,
+                        selectedYear: _selectedYear!,
+                        onSelectYear: (year) =>
+                            setState(() => _selectedYear = year),
+                        onOpenEntry: _openEntry,
+                        onLongSelectEntry: _startSelection,
+                        selectedIds: _selectedIds,
+                      ),
+                    1 => _MonthCalendar(
+                        entries: entries,
+                        selectedMonth: _selectedMonth,
+                        selectedDay: _selectedDay,
+                        onChangeMonth: (month) => setState(() {
+                          _selectedMonth = month;
+                          _selectedDay = DateTime(month.year, month.month, 1);
+                        }),
+                        onSelectDay: (day) =>
+                            setState(() => _selectedDay = day),
+                        onOpenEntry: _openEntry,
+                        onLongSelectEntry: _startSelection,
+                        selectedIds: _selectedIds,
+                      ),
+                    _ => _DayTimeline(
+                        entries: entries,
+                        onPinnedMonthChanged: _updatePinnedTimelineMonth,
+                        onOpenEntry: _openEntry,
+                        onLongSelectEntry: _startSelection,
+                        selectedIds: _selectedIds),
+                  };
+                },
+              ),
+            ),
           ),
         ],
       ),
     );
+  }
+}
+
+class _ReviewViewSwitcher extends StatelessWidget {
+  const _ReviewViewSwitcher(
+      {required this.selectedIndex, required this.onChanged});
+
+  final int selectedIndex;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<int>(
+      showSelectedIcon: false,
+      style: ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: WidgetStateProperty.all(
+          const EdgeInsets.symmetric(horizontal: 10),
+        ),
+      ),
+      segments: const [
+        ButtonSegment(value: 2, label: Text('日')),
+        ButtonSegment(value: 1, label: Text('月')),
+        ButtonSegment(value: 0, label: Text('年')),
+      ],
+      selected: {selectedIndex},
+      onSelectionChanged: (value) => onChanged(value.first),
+    );
+  }
+}
+
+class _TimelinePinnedMonthHeaderDelegate
+    extends SliverPersistentHeaderDelegate {
+  const _TimelinePinnedMonthHeaderDelegate({required this.label});
+
+  final String label;
+
+  @override
+  double get minExtent => 42;
+
+  @override
+  double get maxExtent => 42;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: overlapsContent
+                  ? colorScheme.outlineVariant
+                  : Colors.transparent,
+            ),
+          ),
+        ),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _TimelinePinnedMonthHeaderDelegate oldDelegate) {
+    return oldDelegate.label != label;
   }
 }
 
@@ -217,7 +318,537 @@ class _EmptyReviewCard extends StatelessWidget {
   }
 }
 
-class _YearList extends StatelessWidget {
+class _EntryPreviewDialog extends StatefulWidget {
+  const _EntryPreviewDialog({required this.entries, required this.onOpenEntry});
+
+  final List<DiaryEntry> entries;
+  final ValueChanged<String> onOpenEntry;
+
+  @override
+  State<_EntryPreviewDialog> createState() => _EntryPreviewDialogState();
+}
+
+class _EntryPreviewDialogState extends State<_EntryPreviewDialog> {
+  final _insightRepository = const InsightRepository();
+  late final PageController _pageController;
+  late final FocusNode _focusNode;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+    _focusNode = FocusNode();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _go(int delta) {
+    final next = (_index + delta).clamp(0, widget.entries.length - 1);
+    if (next == _index) return;
+    _pageController.animateToPage(
+      next,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      _go(-1);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      _go(1);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = MediaQuery.sizeOf(context);
+    final width = math.min(screen.width * 0.92, 680.0);
+    final height = math.min(screen.height * 0.82, 680.0);
+    final hasPrevious = _index > 0;
+    final hasNext = _index < widget.entries.length - 1;
+    final previousLayerCount = math.min(_index, 3);
+    final nextLayerCount = math.min(widget.entries.length - _index - 1, 3);
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: Focus(
+        autofocus: true,
+        focusNode: _focusNode,
+        onKeyEvent: _handleKey,
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              if (hasPrevious)
+                _PaperLayers(
+                  side: _PaperLayerSide.left,
+                  count: previousLayerCount,
+                ),
+              if (hasNext)
+                _PaperLayers(
+                  side: _PaperLayerSide.right,
+                  count: nextLayerCount,
+                ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: PageView.builder(
+                    controller: _pageController,
+                    itemCount: widget.entries.length,
+                    onPageChanged: (value) => setState(() => _index = value),
+                    itemBuilder: (context, index) {
+                      final entry = widget.entries[index];
+                      return _EntryPreviewPage(
+                        entry: entry,
+                        positionLabel: '${index + 1}/${widget.entries.length}',
+                        insightFuture: _insightRepository.getInsight(entry.id),
+                        hasPrevious: hasPrevious,
+                        hasNext: hasNext,
+                        onPrevious: () => _go(-1),
+                        onNext: () => _go(1),
+                        onOpenEntry: () {
+                          Navigator.of(context).pop();
+                          widget.onOpenEntry(entry.id);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _PaperLayerSide { left, right }
+
+class _PaperLayers extends StatelessWidget {
+  const _PaperLayers({required this.side, required this.count});
+
+  final _PaperLayerSide side;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Stack(
+          children: [
+            for (var i = count - 1; i >= 0; i--)
+              Positioned(
+                top: 18.0 + i * 7,
+                bottom: 4.0 + i * 7,
+                left: side == _PaperLayerSide.left ? 0.0 + i * 10 : 24.0,
+                right: side == _PaperLayerSide.right ? 0.0 + i * 10 : 24.0,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.68 - i * 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: colorScheme.outlineVariant,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.05),
+                        blurRadius: 8,
+                        offset:
+                            Offset(side == _PaperLayerSide.left ? -2 : 2, 2),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewArrow extends StatelessWidget {
+  const _PreviewArrow(
+      {required this.icon, required this.onPressed, required this.enabled});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filledTonal(
+      onPressed: enabled ? onPressed : null,
+      icon: Icon(icon),
+      style: IconButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+}
+
+class _EntryPreviewPage extends StatelessWidget {
+  const _EntryPreviewPage(
+      {required this.entry,
+      required this.positionLabel,
+      required this.insightFuture,
+      required this.hasPrevious,
+      required this.hasNext,
+      required this.onPrevious,
+      required this.onNext,
+      required this.onOpenEntry});
+
+  final DiaryEntry entry;
+  final String positionLabel;
+  final Future<DiaryInsight?> insightFuture;
+  final bool hasPrevious;
+  final bool hasNext;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final VoidCallback onOpenEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final meta = [
+      if (entry.location.trim().isNotEmpty &&
+          entry.location != '未选择地点' &&
+          entry.location != '点击选择地点')
+        entry.location,
+      if (entry.weather.trim().isNotEmpty && entry.weather != '天气')
+        entry.weather,
+      if (entry.temperature?.trim().isNotEmpty ?? false) entry.temperature!,
+    ].join(' · ');
+
+    return Card(
+      elevation: 10,
+      shadowColor: Colors.black.withValues(alpha: 0.18),
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      color: colorScheme.surface,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 8, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _dateLabel(entry.date),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                Text(
+                  positionLabel,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+                IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(18),
+              children: [
+                if (meta.isNotEmpty) ...[
+                  Text(
+                    meta,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: 14),
+                ],
+                _EntryMarkdownPreview(text: entry.content),
+                const SizedBox(height: 18),
+                FutureBuilder<DiaryInsight?>(
+                  future: insightFuture,
+                  builder: (context, snapshot) {
+                    final insight = snapshot.data;
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const LinearProgressIndicator(minHeight: 2);
+                    }
+                    if (insight == null) {
+                      return _InsightPreviewEmpty(onOpenEntry: onOpenEntry);
+                    }
+                    return _InsightPreview(insight: insight);
+                  },
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
+            child: Row(
+              children: [
+                _PreviewArrow(
+                  icon: Icons.chevron_left,
+                  enabled: hasPrevious,
+                  onPressed: onPrevious,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onOpenEntry,
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('打开完整日记'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                _PreviewArrow(
+                  icon: Icons.chevron_right,
+                  enabled: hasNext,
+                  onPressed: onNext,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _dateLabel(DateTime date) {
+    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    return '${date.year}年${date.month}月${date.day}日 ${weekdays[date.weekday - 1]}';
+  }
+}
+
+class _InsightPreviewEmpty extends StatelessWidget {
+  const _InsightPreviewEmpty({required this.onOpenEntry});
+
+  final VoidCallback onOpenEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: const Padding(
+        padding: EdgeInsets.all(14),
+        child: Text('还没有 AI 分析。打开完整日记后可以生成分析。'),
+      ),
+    );
+  }
+}
+
+class _InsightPreview extends StatelessWidget {
+  const _InsightPreview({required this.insight});
+
+  final DiaryInsight insight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('AI 分析', style: Theme.of(context).textTheme.titleSmall),
+            if (insight.reflection.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _EntryMarkdownPreview(text: insight.reflection),
+            ],
+            if (insight.emotion.isNotEmpty ||
+                insight.keywords.isNotEmpty ||
+                insight.people.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  if (insight.emotion.isNotEmpty)
+                    Chip(label: Text(insight.emotion)),
+                  for (final keyword in insight.keywords.take(4))
+                    Chip(label: Text(keyword)),
+                  for (final person in insight.people.take(3))
+                    Chip(label: Text(person)),
+                ],
+              ),
+            ],
+            if (insight.stoneTitle.isNotEmpty ||
+                insight.stoneDescription.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              if (insight.stoneTitle.isNotEmpty)
+                _EntryMarkdownPreview(text: '### ${insight.stoneTitle}'),
+              if (insight.stoneDescription.isNotEmpty)
+                _EntryMarkdownPreview(text: insight.stoneDescription),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EntryMarkdownPreview extends StatelessWidget {
+  const _EntryMarkdownPreview({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.trim().isEmpty ? ['空白日记'] : text.split('\n');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final line in lines) _EntryMarkdownLine(line: line),
+      ],
+    );
+  }
+}
+
+class _EntryMarkdownLine extends StatelessWidget {
+  const _EntryMarkdownLine({required this.line});
+
+  final String line;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = line.trimRight();
+    if (trimmed.trim().isEmpty) {
+      return const SizedBox(height: 8);
+    }
+
+    final headingMatch = RegExp(r'^(#{1,3})\s+(.+)$').firstMatch(trimmed);
+    if (headingMatch != null) {
+      final level = headingMatch.group(1)!.length;
+      final value = headingMatch.group(2)!.trim();
+      final style = switch (level) {
+        1 => Theme.of(context).textTheme.headlineSmall,
+        2 => Theme.of(context).textTheme.titleLarge,
+        _ => Theme.of(context).textTheme.titleMedium,
+      };
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: _MarkdownInlineText(text: value, style: style),
+      );
+    }
+
+    if (trimmed.startsWith('> ')) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: _MarkdownInlineText(text: trimmed.substring(2)),
+          ),
+        ),
+      );
+    }
+
+    final bullet = RegExp(r'^[-*]\s+(.+)$').firstMatch(trimmed);
+    if (bullet != null) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('• '),
+            Expanded(child: _MarkdownInlineText(text: bullet.group(1)!)),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: _MarkdownInlineText(text: trimmed),
+    );
+  }
+}
+
+class _MarkdownInlineText extends StatelessWidget {
+  const _MarkdownInlineText({required this.text, this.style});
+
+  final String text;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final baseStyle = style ?? Theme.of(context).textTheme.bodyMedium;
+    return RichText(
+      text: TextSpan(
+        style: baseStyle?.copyWith(
+          color: baseStyle.color ?? Theme.of(context).colorScheme.onSurface,
+        ),
+        children: _spans(context, text),
+      ),
+    );
+  }
+
+  List<TextSpan> _spans(BuildContext context, String value) {
+    final spans = <TextSpan>[];
+    final pattern = RegExp(r'(\*\*[^*]+\*\*|`[^`]+`)');
+    var cursor = 0;
+    for (final match in pattern.allMatches(value)) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: value.substring(cursor, match.start)));
+      }
+      final token = match.group(0)!;
+      if (token.startsWith('**')) {
+        spans.add(TextSpan(
+          text: token.substring(2, token.length - 2),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ));
+      } else if (token.startsWith('`')) {
+        spans.add(TextSpan(
+          text: token.substring(1, token.length - 1),
+          style: TextStyle(
+            fontFamily: 'monospace',
+            backgroundColor:
+                Theme.of(context).colorScheme.surfaceContainerHighest,
+          ),
+        ));
+      }
+      cursor = match.end;
+    }
+    if (cursor < value.length) {
+      spans.add(TextSpan(text: value.substring(cursor)));
+    }
+    return spans;
+  }
+}
+
+enum _YearHeatmapMode { months, continuous }
+
+class _YearList extends StatefulWidget {
   const _YearList(
       {required this.entries,
       required this.selectedYear,
@@ -234,16 +865,49 @@ class _YearList extends StatelessWidget {
   final Set<String> selectedIds;
 
   @override
+  State<_YearList> createState() => _YearListState();
+}
+
+class _YearListState extends State<_YearList> {
+  _YearHeatmapMode? _mode;
+
+  Future<void> _openEntryPreview(List<DiaryEntry> entries) async {
+    if (entries.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _EntryPreviewDialog(
+        entries: entries,
+        onOpenEntry: widget.onOpenEntry,
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final counts = <int, int>{};
-    for (final entry in entries) {
+    for (final entry in widget.entries) {
       counts.update(entry.date.year, (value) => value + 1, ifAbsent: () => 1);
     }
     final years = counts.keys.toList()..sort((a, b) => b.compareTo(a));
-    final yearEntries = entries
-        .where((e) => e.date.year == selectedYear)
+    final yearEntries = widget.entries
+        .where((e) => e.date.year == widget.selectedYear)
         .toList()
       ..sort((a, b) => b.date.compareTo(a.date));
+    final dayGroups = <String, List<DiaryEntry>>{};
+    for (final entry in yearEntries) {
+      dayGroups.putIfAbsent(entry.dayKey, () => []).add(entry);
+    }
+    for (final dayEntries in dayGroups.values) {
+      dayEntries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+
+    final activeDays = dayGroups.length;
+    final longestStreak = _longestYearStreak(dayGroups.keys);
+    final busiestDay = dayGroups.entries.toList()
+      ..sort((a, b) => b.value.length.compareTo(a.value.length));
+    final busiestLabel = busiestDay.isEmpty
+        ? '无'
+        : '${DateTime.parse(busiestDay.first.key).month}月${DateTime.parse(busiestDay.first.key).day}日 · ${busiestDay.first.value.length}篇';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -255,38 +919,565 @@ class _YearList extends StatelessWidget {
             for (final year in years)
               ChoiceChip(
                 label: Text('$year · ${counts[year]}篇'),
-                selected: year == selectedYear,
-                onSelected: (_) => onSelectYear(year),
+                selected: year == widget.selectedYear,
+                onSelected: (_) => widget.onSelectYear(year),
               ),
           ],
         ),
         const SizedBox(height: 16),
-        for (final entry in yearEntries) ...[
-          Card(
-            elevation: 0,
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => onOpenEntry(entry.id),
-              onLongPress: () => onLongSelectEntry(entry.id),
-              child: ListTile(
-                title: Text(
-                    entry.title ?? '${entry.date.month}月${entry.date.day}日'),
-                subtitle: Text(
-                  entry.bodyPreview,
-                  maxLines: AppConstants.diaryPreviewMaxLines,
-                  overflow: TextOverflow.ellipsis,
+        _YearStats(
+          entryCount: yearEntries.length,
+          activeDays: activeDays,
+          longestStreak: longestStreak,
+          busiestLabel: busiestLabel,
+        ),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final effectiveMode = _mode ??
+                (constraints.maxWidth >= 720
+                    ? _YearHeatmapMode.continuous
+                    : _YearHeatmapMode.months);
+            final modeSwitcher = Center(
+              child: SegmentedButton<_YearHeatmapMode>(
+                showSelectedIcon: false,
+                style: ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: WidgetStateProperty.all(
+                    const EdgeInsets.symmetric(horizontal: 14),
+                  ),
                 ),
-                selected: selectedIds.contains(entry.id),
-                trailing: const Icon(Icons.chevron_right),
+                segments: const [
+                  ButtonSegment(
+                      value: _YearHeatmapMode.months, label: Text('月份')),
+                  ButtonSegment(
+                      value: _YearHeatmapMode.continuous, label: Text('全年')),
+                ],
+                selected: {effectiveMode},
+                onSelectionChanged: (value) =>
+                    setState(() => _mode = value.first),
               ),
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
+            );
+
+            if (effectiveMode == _YearHeatmapMode.continuous) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  modeSwitcher,
+                  const SizedBox(height: 12),
+                  _YearContinuousHeatmap(
+                    year: widget.selectedYear,
+                    dayGroups: dayGroups,
+                    selectedIds: widget.selectedIds,
+                    onOpenEntries: _openEntryPreview,
+                    onLongSelectEntry: widget.onLongSelectEntry,
+                  ),
+                ],
+              );
+            }
+
+            final columns = constraints.maxWidth >= 760
+                ? 3
+                : constraints.maxWidth >= 520
+                    ? 2
+                    : 1;
+            final gap = columns == 1 ? 0.0 : 12.0;
+            final width =
+                (constraints.maxWidth - gap * (columns - 1)) / columns;
+            return Wrap(
+              spacing: gap,
+              runSpacing: 12,
+              children: [
+                SizedBox(width: constraints.maxWidth, child: modeSwitcher),
+                for (var month = 1; month <= 12; month++)
+                  SizedBox(
+                    width: width,
+                    child: _YearMonthHeatmap(
+                      year: widget.selectedYear,
+                      month: month,
+                      dayGroups: dayGroups,
+                      selectedIds: widget.selectedIds,
+                      onOpenEntries: _openEntryPreview,
+                      onLongSelectEntry: widget.onLongSelectEntry,
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
       ],
     );
   }
+
+  int _longestYearStreak(Iterable<String> dayKeys) {
+    final days = dayKeys.map(DateTime.parse).toList()
+      ..sort((a, b) => a.compareTo(b));
+    var longest = 0;
+    var current = 0;
+    DateTime? previous;
+    for (final day in days) {
+      if (previous == null || day.difference(previous).inDays == 1) {
+        current += 1;
+      } else {
+        current = 1;
+      }
+      if (current > longest) longest = current;
+      previous = day;
+    }
+    return longest;
+  }
+}
+
+class _YearStats extends StatelessWidget {
+  const _YearStats(
+      {required this.entryCount,
+      required this.activeDays,
+      required this.longestStreak,
+      required this.busiestLabel});
+
+  final int entryCount;
+  final int activeDays;
+  final int longestStreak;
+  final String busiestLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      ('总篇数', '$entryCount'),
+      ('记录天数', '$activeDays'),
+      ('最长连续', '$longestStreak天'),
+      ('最密集', busiestLabel),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 640 ? 4 : 2;
+        final width = (constraints.maxWidth - 10 * (columns - 1)) / columns;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final item in items)
+              SizedBox(
+                width: width,
+                child: Card(
+                  elevation: 0,
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.$1,
+                          style:
+                              Theme.of(context).textTheme.labelMedium?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          item.$2,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _YearMonthHeatmap extends StatelessWidget {
+  const _YearMonthHeatmap(
+      {required this.year,
+      required this.month,
+      required this.dayGroups,
+      required this.selectedIds,
+      required this.onOpenEntries,
+      required this.onLongSelectEntry});
+
+  final int year;
+  final int month;
+  final Map<String, List<DiaryEntry>> dayGroups;
+  final Set<String> selectedIds;
+  final ValueChanged<List<DiaryEntry>> onOpenEntries;
+  final ValueChanged<String> onLongSelectEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final metrics = _MonthHeatmapMetrics(year: year, month: month);
+    final monthEntryCount = [
+      for (var day = 1; day <= metrics.daysInMonth; day++)
+        ...dayGroups[DiaryEntry.dateKey(DateTime(year, month, day))] ??
+            const <DiaryEntry>[],
+    ].length;
+
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('$month月', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(width: 8),
+                Text(
+                  '$monthEntryCount篇',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final size = metrics.sizeForWidth(constraints.maxWidth);
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (details) {
+                    final day = metrics.dayAt(details.localPosition, size);
+                    if (day == null) return;
+                    final entries = dayGroups[
+                        DiaryEntry.dateKey(DateTime(year, month, day))];
+                    if (entries == null || entries.isEmpty) return;
+                    onOpenEntries(entries);
+                  },
+                  onLongPressStart: (details) {
+                    final day = metrics.dayAt(details.localPosition, size);
+                    if (day == null) return;
+                    final entries = dayGroups[
+                        DiaryEntry.dateKey(DateTime(year, month, day))];
+                    if (entries == null || entries.isEmpty) return;
+                    onLongSelectEntry(entries.first.id);
+                  },
+                  child: CustomPaint(
+                    size: size,
+                    painter: _MonthHeatmapPainter(
+                      metrics: metrics,
+                      dayGroups: dayGroups,
+                      selectedIds: selectedIds,
+                      colorScheme: colorScheme,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _YearContinuousHeatmap extends StatelessWidget {
+  const _YearContinuousHeatmap(
+      {required this.year,
+      required this.dayGroups,
+      required this.selectedIds,
+      required this.onOpenEntries,
+      required this.onLongSelectEntry});
+
+  final int year;
+  final Map<String, List<DiaryEntry>> dayGroups;
+  final Set<String> selectedIds;
+  final ValueChanged<List<DiaryEntry>> onOpenEntries;
+  final ValueChanged<String> onLongSelectEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final metrics = _ContinuousHeatmapMetrics(year: year);
+
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final paintWidth = math.max(constraints.maxWidth, 760.0);
+            final size = metrics.sizeForWidth(paintWidth);
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (details) {
+                  final date = metrics.dateAt(details.localPosition, size);
+                  if (date == null) return;
+                  final entries = dayGroups[DiaryEntry.dateKey(date)];
+                  if (entries == null || entries.isEmpty) return;
+                  onOpenEntries(entries);
+                },
+                onLongPressStart: (details) {
+                  final date = metrics.dateAt(details.localPosition, size);
+                  if (date == null) return;
+                  final entries = dayGroups[DiaryEntry.dateKey(date)];
+                  if (entries == null || entries.isEmpty) return;
+                  onLongSelectEntry(entries.first.id);
+                },
+                child: CustomPaint(
+                  size: size,
+                  painter: _ContinuousHeatmapPainter(
+                    metrics: metrics,
+                    dayGroups: dayGroups,
+                    selectedIds: selectedIds,
+                    colorScheme: colorScheme,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _MonthHeatmapMetrics {
+  const _MonthHeatmapMetrics({required this.year, required this.month});
+
+  final int year;
+  final int month;
+  static const gap = 5.0;
+
+  int get leading => DateTime(year, month).weekday - 1;
+  int get daysInMonth => DateTime(year, month + 1, 0).day;
+  int get rows => ((leading + daysInMonth + 6) / 7).floor();
+
+  Size sizeForWidth(double width) {
+    final cell = (width - gap * 6) / 7;
+    return Size(width, rows * cell + (rows - 1) * gap);
+  }
+
+  Rect rectForDay(int day, Size size) {
+    final cell = (size.width - gap * 6) / 7;
+    final index = leading + day - 1;
+    final row = index ~/ 7;
+    final col = index % 7;
+    return Rect.fromLTWH(
+      col * (cell + gap),
+      row * (cell + gap),
+      cell,
+      cell,
+    );
+  }
+
+  int? dayAt(Offset position, Size size) {
+    final cell = (size.width - gap * 6) / 7;
+    final col = position.dx ~/ (cell + gap);
+    final row = position.dy ~/ (cell + gap);
+    if (col < 0 || col > 6 || row < 0 || row >= rows) return null;
+    final dx = position.dx - col * (cell + gap);
+    final dy = position.dy - row * (cell + gap);
+    if (dx > cell || dy > cell) return null;
+    final day = row * 7 + col - leading + 1;
+    if (day < 1 || day > daysInMonth) return null;
+    return day;
+  }
+}
+
+class _ContinuousHeatmapMetrics {
+  const _ContinuousHeatmapMetrics({required this.year});
+
+  final int year;
+  static const gap = 4.0;
+  static const monthLabelHeight = 18.0;
+
+  int get leading => DateTime(year).weekday - 1;
+  int get daysInYear => DateTime(year + 1).difference(DateTime(year)).inDays;
+  int get columns => ((leading + daysInYear + 6) / 7).floor();
+
+  Size sizeForWidth(double width) {
+    final cell = (width - gap * (columns - 1)) / columns;
+    return Size(width, monthLabelHeight + 7 * cell + 6 * gap);
+  }
+
+  Rect rectForDate(DateTime date, Size size) {
+    final cell = (size.width - gap * (columns - 1)) / columns;
+    final dayIndex = date.difference(DateTime(year)).inDays;
+    final index = leading + dayIndex;
+    final col = index ~/ 7;
+    final row = index % 7;
+    return Rect.fromLTWH(
+      col * (cell + gap),
+      monthLabelHeight + row * (cell + gap),
+      cell,
+      cell,
+    );
+  }
+
+  DateTime? dateAt(Offset position, Size size) {
+    if (position.dy < monthLabelHeight) return null;
+    final cell = (size.width - gap * (columns - 1)) / columns;
+    final col = position.dx ~/ (cell + gap);
+    final row = (position.dy - monthLabelHeight) ~/ (cell + gap);
+    if (col < 0 || col >= columns || row < 0 || row > 6) return null;
+    final dx = position.dx - col * (cell + gap);
+    final dy = position.dy - monthLabelHeight - row * (cell + gap);
+    if (dx > cell || dy > cell) return null;
+    final dayIndex = col * 7 + row - leading;
+    if (dayIndex < 0 || dayIndex >= daysInYear) return null;
+    return DateTime(year).add(Duration(days: dayIndex));
+  }
+}
+
+class _MonthHeatmapPainter extends CustomPainter {
+  const _MonthHeatmapPainter(
+      {required this.metrics,
+      required this.dayGroups,
+      required this.selectedIds,
+      required this.colorScheme});
+
+  final _MonthHeatmapMetrics metrics;
+  final Map<String, List<DiaryEntry>> dayGroups;
+  final Set<String> selectedIds;
+  final ColorScheme colorScheme;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var day = 1; day <= metrics.daysInMonth; day++) {
+      final date = DateTime(metrics.year, metrics.month, day);
+      final entries =
+          dayGroups[DiaryEntry.dateKey(date)] ?? const <DiaryEntry>[];
+      final selected = entries.any((entry) => selectedIds.contains(entry.id));
+      _paintHeatmapCell(
+        canvas: canvas,
+        rect: metrics.rectForDay(day, size),
+        count: entries.length,
+        selected: selected,
+        colorScheme: colorScheme,
+        label: '$day',
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MonthHeatmapPainter oldDelegate) {
+    return oldDelegate.dayGroups != dayGroups ||
+        oldDelegate.selectedIds != selectedIds ||
+        oldDelegate.colorScheme != colorScheme;
+  }
+}
+
+class _ContinuousHeatmapPainter extends CustomPainter {
+  const _ContinuousHeatmapPainter(
+      {required this.metrics,
+      required this.dayGroups,
+      required this.selectedIds,
+      required this.colorScheme});
+
+  final _ContinuousHeatmapMetrics metrics;
+  final Map<String, List<DiaryEntry>> dayGroups;
+  final Set<String> selectedIds;
+  final ColorScheme colorScheme;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final textPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.left,
+    );
+    for (var month = 1; month <= 12; month++) {
+      final rect = metrics.rectForDate(DateTime(metrics.year, month), size);
+      textPainter.text = TextSpan(
+        text: '$month月',
+        style: TextStyle(
+          color: colorScheme.onSurfaceVariant,
+          fontSize: 10,
+        ),
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(rect.left, 0));
+    }
+
+    for (var i = 0; i < metrics.daysInYear; i++) {
+      final date = DateTime(metrics.year).add(Duration(days: i));
+      final entries =
+          dayGroups[DiaryEntry.dateKey(date)] ?? const <DiaryEntry>[];
+      final selected = entries.any((entry) => selectedIds.contains(entry.id));
+      _paintHeatmapCell(
+        canvas: canvas,
+        rect: metrics.rectForDate(date, size),
+        count: entries.length,
+        selected: selected,
+        colorScheme: colorScheme,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ContinuousHeatmapPainter oldDelegate) {
+    return oldDelegate.dayGroups != dayGroups ||
+        oldDelegate.selectedIds != selectedIds ||
+        oldDelegate.colorScheme != colorScheme;
+  }
+}
+
+void _paintHeatmapCell({
+  required Canvas canvas,
+  required Rect rect,
+  required int count,
+  required bool selected,
+  required ColorScheme colorScheme,
+  String? label,
+}) {
+  final alpha = switch (count) {
+    0 => 0.0,
+    1 => 0.18,
+    2 => 0.32,
+    3 || 4 => 0.48,
+    _ => 0.66,
+  };
+  final fill = count == 0
+      ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.45)
+      : colorScheme.primary.withValues(alpha: alpha);
+  final radius = Radius.circular(rect.width < 12 ? 3 : 5);
+  final rrect = RRect.fromRectAndRadius(rect, radius);
+  canvas.drawRRect(rrect, Paint()..color = fill);
+  if (selected) {
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = colorScheme.primary,
+    );
+  }
+  if (label == null || rect.width < 18) return;
+  final textPainter = TextPainter(
+    text: TextSpan(
+      text: label,
+      style: TextStyle(
+        color:
+            count == 0 ? colorScheme.onSurfaceVariant : colorScheme.onSurface,
+        fontSize: rect.width < 28 ? 9 : 10,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+    textAlign: TextAlign.center,
+  )..layout(maxWidth: rect.width);
+  textPainter.paint(
+    canvas,
+    Offset(
+      rect.left + (rect.width - textPainter.width) / 2,
+      rect.top + (rect.height - textPainter.height) / 2,
+    ),
+  );
 }
 
 class _MonthCalendar extends StatelessWidget {
@@ -382,34 +1573,12 @@ class _MonthCalendar extends StatelessWidget {
                     final isSelected = selectedDay.year == selectedMonth.year &&
                         selectedDay.month == selectedMonth.month &&
                         selectedDay.day == day;
-                    return InkWell(
-                      borderRadius: BorderRadius.circular(20),
+                    return _MonthDayCell(
+                      day: day,
+                      count: count,
+                      selected: isSelected,
                       onTap: () => onSelectDay(DateTime(
                           selectedMonth.year, selectedMonth.month, day)),
-                      child: Center(
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isSelected
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .primary
-                                    .withValues(alpha: 0.15)
-                                : null,
-                            border: count > 0
-                                ? Border.all(
-                                    color:
-                                        Theme.of(context).colorScheme.primary,
-                                    width: 1.5)
-                                : null,
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(count > 1 ? '$day\n$count' : '$day',
-                              textAlign: TextAlign.center),
-                        ),
-                      ),
                     );
                   },
                 ),
@@ -456,75 +1625,666 @@ class _MonthCalendar extends StatelessWidget {
   }
 }
 
-class _DayTimeline extends StatelessWidget {
+class _MonthDayCell extends StatelessWidget {
+  const _MonthDayCell(
+      {required this.day,
+      required this.count,
+      required this.selected,
+      required this.onTap});
+
+  final int day;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final dotCount = count.clamp(0, 3);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Center(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: selected
+                ? colorScheme.primary.withValues(alpha: 0.15)
+                : Colors.transparent,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '$day',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 2),
+              SizedBox(
+                height: 4,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (var i = 0; i < dotCount; i++) ...[
+                      Container(
+                        width: 4,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                      if (i != dotCount - 1) const SizedBox(width: 2),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DayTimeline extends StatefulWidget {
   const _DayTimeline(
       {required this.entries,
+      required this.onPinnedMonthChanged,
       required this.onOpenEntry,
       required this.onLongSelectEntry,
       required this.selectedIds});
 
   final List<DiaryEntry> entries;
+  final ValueChanged<String> onPinnedMonthChanged;
   final ValueChanged<String> onOpenEntry;
   final ValueChanged<String> onLongSelectEntry;
   final Set<String> selectedIds;
 
   @override
-  Widget build(BuildContext context) {
-    final grouped = <String, List<DiaryEntry>>{};
-    for (final entry in entries) {
-      grouped.putIfAbsent(entry.dayKey, () => []).add(entry);
+  State<_DayTimeline> createState() => _DayTimelineState();
+}
+
+class _DayTimelineState extends State<_DayTimeline> {
+  static const _initialMonthCount = 4;
+  static const _monthPageSize = 3;
+  static const _loadAheadExtent = 900.0;
+
+  final Set<int> _collapsedYears = <int>{};
+  final Set<String> _collapsedMonths = <String>{};
+  final Map<String, GlobalKey> _monthKeys = <String, GlobalKey>{};
+  ScrollPosition? _scrollPosition;
+  int _visibleMonthCount = _initialMonthCount;
+  String? _pinnedMonthKey;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _attachScrollPosition();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DayTimeline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.entries != widget.entries) {
+      _visibleMonthCount = _initialMonthCount;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
     }
-    final keys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
+  }
+
+  @override
+  void dispose() {
+    _scrollPosition?.removeListener(_handleScroll);
+    super.dispose();
+  }
+
+  void _attachScrollPosition() {
+    final scrollable = Scrollable.maybeOf(context);
+    final position = scrollable?.position;
+    if (position == null || identical(position, _scrollPosition)) return;
+    _scrollPosition?.removeListener(_handleScroll);
+    _scrollPosition = position;
+    _scrollPosition?.addListener(_handleScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
+  }
+
+  void _handleScroll() {
+    final position = _scrollPosition;
+    if (position == null || !position.hasPixels) return;
+    if (position.extentAfter < _loadAheadExtent) {
+      _loadMoreMonths();
+    }
+    _updatePinnedMonth();
+  }
+
+  void _loadMoreMonths() {
+    final bucketCount = _monthBuckets.length;
+    if (_visibleMonthCount >= bucketCount) return;
+    setState(() {
+      _visibleMonthCount =
+          (_visibleMonthCount + _monthPageSize).clamp(0, bucketCount);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
+  }
+
+  void _ensureFilled() {
+    if (!mounted) return;
+    final position = _scrollPosition;
+    final bucketCount = _monthBuckets.length;
+    if (bucketCount == 0 || _visibleMonthCount >= bucketCount) return;
+
+    final needsMoreVisibleContent =
+        _loadedBuckets.every((bucket) => _collapsedYears.contains(bucket.year));
+    final canPreload = position == null ||
+        !position.hasContentDimensions ||
+        position.extentAfter < _loadAheadExtent;
+    if (needsMoreVisibleContent || canPreload) {
+      _loadMoreMonths();
+    }
+    _updatePinnedMonth();
+  }
+
+  List<_TimelineMonthBucket> get _monthBuckets {
+    final sorted = [...widget.entries]..sort((a, b) {
+        final byDate = b.date.compareTo(a.date);
+        if (byDate != 0) return byDate;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+
+    final months = <String, List<DiaryEntry>>{};
+    for (final entry in sorted) {
+      final key = _monthKey(entry.date);
+      months.putIfAbsent(key, () => []).add(entry);
+    }
+
+    return [
+      for (final monthEntries in months.values)
+        _TimelineMonthBucket(monthEntries),
+    ];
+  }
+
+  List<_TimelineMonthBucket> get _loadedBuckets {
+    final buckets = _monthBuckets;
+    return buckets.take(_visibleMonthCount.clamp(0, buckets.length)).toList();
+  }
+
+  void _toggleYear(int year) {
+    setState(() {
+      if (!_collapsedYears.remove(year)) {
+        _collapsedYears.add(year);
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
+  }
+
+  void _toggleMonth(String monthKey) {
+    setState(() {
+      if (!_collapsedMonths.remove(monthKey)) {
+        _collapsedMonths.add(monthKey);
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
+  }
+
+  void _updatePinnedMonth() {
+    final visibleBuckets = _loadedBuckets
+        .where((bucket) => !_collapsedYears.contains(bucket.year))
+        .toList();
+    if (visibleBuckets.isEmpty) return;
+
+    var pinned = visibleBuckets.first;
+    for (final bucket in visibleBuckets) {
+      final keyContext = _monthKeys[bucket.key]?.currentContext;
+      final renderObject = keyContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) continue;
+      final top = renderObject.localToGlobal(Offset.zero).dy;
+      if (top <= 150) {
+        pinned = bucket;
+      } else {
+        break;
+      }
+    }
+
+    if (_pinnedMonthKey == pinned.key) return;
+    _pinnedMonthKey = pinned.key;
+    widget.onPinnedMonthChanged(pinned.label);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final buckets = _monthBuckets;
+    final loadedBuckets = buckets.take(_visibleMonthCount).toList();
+    final firstLoadedMonthInYear = <int, String>{};
+    final lastLoadedMonthInYear = <int, String>{};
+    for (final bucket in loadedBuckets) {
+      firstLoadedMonthInYear.putIfAbsent(bucket.year, () => bucket.key);
+      lastLoadedMonthInYear[bucket.year] = bucket.key;
+    }
+    final hasMore = _visibleMonthCount < buckets.length;
+    var lastYear = -1;
+    final children = <Widget>[];
+
+    for (final bucket in loadedBuckets) {
+      _monthKeys.putIfAbsent(bucket.key, GlobalKey.new);
+      if (bucket.year != lastYear) {
+        children.add(_TimelineYearHeader(
+          year: bucket.year,
+          entryCount: buckets
+              .where((item) => item.year == bucket.year)
+              .fold<int>(0, (total, item) => total + item.entryCount),
+          collapsed: _collapsedYears.contains(bucket.year),
+          onTap: () => _toggleYear(bucket.year),
+        ));
+        lastYear = bucket.year;
+      }
+
+      if (!_collapsedYears.contains(bucket.year)) {
+        children.add(KeyedSubtree(
+          key: _monthKeys[bucket.key],
+          child: _TimelineMonthGroup(
+            bucket: bucket,
+            isFirstInYear: firstLoadedMonthInYear[bucket.year] == bucket.key,
+            isLastInYear: lastLoadedMonthInYear[bucket.year] == bucket.key,
+            collapsed: _collapsedMonths.contains(bucket.key),
+            onToggleMonth: () => _toggleMonth(bucket.key),
+            onOpenEntry: widget.onOpenEntry,
+            onLongSelectEntry: widget.onLongSelectEntry,
+            selectedIds: widget.selectedIds,
+          ),
+        ));
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updatePinnedMonth());
+
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final key in keys)
-          _TimelineDayGroup(
-            entries: grouped[key]!,
-            onOpenEntry: onOpenEntry,
-            onLongSelectEntry: onLongSelectEntry,
-            selectedIds: selectedIds,
+        ...children,
+        if (hasMore)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           ),
       ],
     );
   }
 }
 
-class _TimelineDayGroup extends StatelessWidget {
-  const _TimelineDayGroup(
-      {required this.entries,
+class _TimelineMonthBucket {
+  _TimelineMonthBucket(List<DiaryEntry> entries)
+      : entries = [...entries],
+        year = entries.first.date.year,
+        month = entries.first.date.month,
+        key = _monthKey(entries.first.date) {
+    final grouped = <String, List<DiaryEntry>>{};
+    for (final entry in entries) {
+      grouped.putIfAbsent(entry.dayKey, () => []).add(entry);
+    }
+    dayGroups = grouped.entries
+        .map((entry) => _TimelineDayBucket(entry.value))
+        .toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  final List<DiaryEntry> entries;
+  final int year;
+  final int month;
+  final String key;
+  late final List<_TimelineDayBucket> dayGroups;
+
+  int get entryCount => entries.length;
+  String get label => '$year年$month月';
+}
+
+class _TimelineDayBucket {
+  _TimelineDayBucket(List<DiaryEntry> entries)
+      : entries =
+            ([...entries]..sort((a, b) => b.createdAt.compareTo(a.createdAt))),
+        date = entries.first.date,
+        key = entries.first.dayKey;
+
+  final List<DiaryEntry> entries;
+  final DateTime date;
+  final String key;
+}
+
+String _monthKey(DateTime date) =>
+    '${date.year}-${date.month.toString().padLeft(2, '0')}';
+
+class _TimelineYearHeader extends StatelessWidget {
+  const _TimelineYearHeader(
+      {required this.year,
+      required this.entryCount,
+      required this.collapsed,
+      required this.onTap});
+
+  final int year;
+  final int entryCount;
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: [
+              AnimatedRotation(
+                turns: collapsed ? -0.25 : 0,
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                child: const Icon(Icons.keyboard_arrow_down),
+              ),
+              const SizedBox(width: 6),
+              Text('$year年', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(width: 8),
+              Text(
+                '$entryCount篇',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineMonthGroup extends StatelessWidget {
+  const _TimelineMonthGroup(
+      {required this.bucket,
+      required this.isFirstInYear,
+      required this.isLastInYear,
+      required this.collapsed,
+      required this.onToggleMonth,
       required this.onOpenEntry,
       required this.onLongSelectEntry,
       required this.selectedIds});
 
-  final List<DiaryEntry> entries;
+  final _TimelineMonthBucket bucket;
+  final bool isFirstInYear;
+  final bool isLastInYear;
+  final bool collapsed;
+  final VoidCallback onToggleMonth;
   final ValueChanged<String> onOpenEntry;
   final ValueChanged<String> onLongSelectEntry;
   final Set<String> selectedIds;
 
   @override
   Widget build(BuildContext context) {
-    final sorted = [...entries]
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    final date = sorted.first.date;
-    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    final title = '${date.month}月${date.day}日 ${weekdays[date.weekday - 1]}';
+    final child = collapsed
+        ? _TimelineMonthHeader(
+            key: ValueKey('${bucket.key}-collapsed'),
+            label: bucket.label,
+            entryCount: bucket.entryCount,
+            collapsed: true,
+            indentLeft: true,
+            onTap: onToggleMonth,
+          )
+        : Column(
+            key: ValueKey('${bucket.key}-expanded'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < bucket.dayGroups.length; i++)
+                _TimelineDayGroup(
+                  day: bucket.dayGroups[i],
+                  monthLabel: i == 0 ? bucket.label : null,
+                  monthEntryCount: i == 0 ? bucket.entryCount : null,
+                  hasLineBefore: i == 0 && !isFirstInYear,
+                  hasLineAfter:
+                      !isLastInYear || i < bucket.dayGroups.length - 1,
+                  onToggleMonth: onToggleMonth,
+                  onOpenEntry: onOpenEntry,
+                  onLongSelectEntry: onLongSelectEntry,
+                  selectedIds: selectedIds,
+                ),
+            ],
+          );
 
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      reverseDuration: const Duration(milliseconds: 140),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        return SizeTransition(
+          sizeFactor: animation,
+          alignment: Alignment.topCenter,
+          child: FadeTransition(opacity: animation, child: child),
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+class _TimelineMonthHeader extends StatelessWidget {
+  const _TimelineMonthHeader(
+      {super.key,
+      required this.label,
+      required this.entryCount,
+      required this.collapsed,
+      required this.indentLeft,
+      required this.onTap});
+
+  static const height = 46.0;
+  static const _contentHeight = 36.0;
+
+  final String label;
+  final int entryCount;
+  final bool collapsed;
+  final bool indentLeft;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
+      padding: EdgeInsets.only(left: indentLeft ? 56 : 0),
+      child: SizedBox(
+        height: height,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: SizedBox(
+            height: _contentHeight,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: onTap,
+              child: Row(
+                children: [
+                  AnimatedRotation(
+                    turns: collapsed ? -0.25 : 0,
+                    duration: const Duration(milliseconds: 160),
+                    curve: Curves.easeOutCubic,
+                    child: const Icon(Icons.keyboard_arrow_down, size: 22),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(label, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$entryCount篇',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineDayGroup extends StatelessWidget {
+  const _TimelineDayGroup(
+      {required this.day,
+      required this.monthLabel,
+      required this.monthEntryCount,
+      required this.hasLineBefore,
+      required this.hasLineAfter,
+      required this.onToggleMonth,
+      required this.onOpenEntry,
+      required this.onLongSelectEntry,
+      required this.selectedIds});
+
+  final _TimelineDayBucket day;
+  final String? monthLabel;
+  final int? monthEntryCount;
+  final bool hasLineBefore;
+  final bool hasLineAfter;
+  final VoidCallback onToggleMonth;
+  final ValueChanged<String> onOpenEntry;
+  final ValueChanged<String> onLongSelectEntry;
+  final Set<String> selectedIds;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = day.date;
+    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    final weekday = weekdays[date.weekday - 1];
+
+    return IntrinsicHeight(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 34, bottom: 8),
-            child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+          _TimelineDateRail(
+            day: date.day,
+            weekday: weekday,
+            topInset: monthLabel == null ? 0 : _TimelineMonthHeader.height,
+            hasLineBefore: hasLineBefore,
+            hasLineAfter: hasLineAfter,
+            selected: true,
           ),
-          for (var i = 0; i < sorted.length; i++)
-            _TimelineEntry(
-              entry: sorted[i],
-              isLast: i == sorted.length - 1,
-              onOpenEntry: onOpenEntry,
-              onLongSelectEntry: onLongSelectEntry,
-              selected: selectedIds.contains(sorted[i].id),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (monthLabel != null)
+                  _TimelineMonthHeader(
+                    label: monthLabel!,
+                    entryCount: monthEntryCount ?? 0,
+                    collapsed: false,
+                    indentLeft: false,
+                    onTap: onToggleMonth,
+                  ),
+                for (final entry in day.entries) ...[
+                  _TimelineEntry(
+                    entry: entry,
+                    onOpenEntry: onOpenEntry,
+                    onLongSelectEntry: onLongSelectEntry,
+                    selected: selectedIds.contains(entry.id),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineDateRail extends StatelessWidget {
+  const _TimelineDateRail(
+      {required this.day,
+      required this.weekday,
+      required this.topInset,
+      required this.hasLineBefore,
+      required this.hasLineAfter,
+      required this.selected});
+
+  final int day;
+  final String weekday;
+  final double topInset;
+  final bool hasLineBefore;
+  final bool hasLineAfter;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final railColor = selected ? colorScheme.primary : colorScheme.outline;
+
+    return SizedBox(
+      width: 46,
+      child: Column(
+        children: [
+          if (topInset > 0)
+            SizedBox(
+              height: topInset,
+              child: Center(
+                child: hasLineBefore
+                    ? AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeOutCubic,
+                        width: 1,
+                        color: railColor.withValues(alpha: 0.55),
+                      )
+                    : null,
+              ),
+            ),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            width: 38,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            decoration: BoxDecoration(
+              color: selected
+                  ? colorScheme.primary.withValues(alpha: 0.12)
+                  : colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: railColor.withValues(alpha: 0.55)),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '$day',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: selected
+                            ? colorScheme.primary
+                            : colorScheme.onSurface,
+                      ),
+                ),
+                Text(
+                  weekday,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          if (hasLineAfter)
+            Expanded(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                width: 1,
+                color: railColor.withValues(alpha: 0.55),
+              ),
             ),
         ],
       ),
@@ -535,13 +2295,11 @@ class _TimelineDayGroup extends StatelessWidget {
 class _TimelineEntry extends StatelessWidget {
   const _TimelineEntry(
       {required this.entry,
-      required this.isLast,
       required this.onOpenEntry,
       required this.onLongSelectEntry,
       required this.selected});
 
   final DiaryEntry entry;
-  final bool isLast;
   final ValueChanged<String> onOpenEntry;
   final ValueChanged<String> onLongSelectEntry;
   final bool selected;
@@ -558,60 +2316,69 @@ class _TimelineEntry extends StatelessWidget {
       if (entry.temperature?.trim().isNotEmpty ?? false) entry.temperature!,
     ].join(' · ');
 
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 28,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).colorScheme.primary),
-                ),
-                if (!isLast)
-                  Expanded(
-                      child: Container(
-                          width: 1,
-                          color: Theme.of(context).colorScheme.outline)),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Card(
-              elevation: 0,
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => onOpenEntry(entry.id),
-                onLongPress: () => onLongSelectEntry(entry.id),
-                child: ListTile(
-                  selected: selected,
-                  title: Text(entry.title ?? entry.bodyPreview),
-                  subtitle: meta.isEmpty
-                      ? (entry.title == null
-                          ? null
-                          : Text(
-                              entry.bodyPreview,
-                              maxLines: AppConstants.diaryPreviewMaxLines,
-                              overflow: TextOverflow.ellipsis,
-                            ))
-                      : Text(
-                          '$meta\n${entry.bodyPreview}',
-                          maxLines: AppConstants.diaryPreviewMaxLines + 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                  isThreeLine: entry.title != null || meta.isNotEmpty,
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      color: colorScheme.surface,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => onOpenEntry(entry.id),
+        onLongPress: () => onLongSelectEntry(entry.id),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+          color: selected
+              ? colorScheme.primary.withValues(alpha: 0.08)
+              : Colors.transparent,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entry.title ?? entry.bodyPreview,
+                      maxLines: entry.title == null ? 2 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    if (entry.title != null || meta.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        meta.isEmpty
+                            ? entry.bodyPreview
+                            : '$meta\n${entry.bodyPreview}',
+                        maxLines: meta.isEmpty
+                            ? AppConstants.diaryPreviewMaxLines
+                            : AppConstants.diaryPreviewMaxLines + 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-            ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 140),
+                child: selected
+                    ? Padding(
+                        key: const ValueKey('selected'),
+                        padding: const EdgeInsets.only(left: 12, top: 1),
+                        child: Icon(Icons.check_circle,
+                            color: colorScheme.primary),
+                      )
+                    : const SizedBox.shrink(key: ValueKey('unselected')),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
