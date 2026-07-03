@@ -327,10 +327,12 @@ class _CompanionSourceFilter {
     AiContextPackage context,
   ) {
     final sources = _allowedSources(context);
-    return {
-      for (final source in sources)
-        '${source.sourceType}:${source.sourceId}': source,
-    };
+    final byId = <String, _AllowedCompanionSource>{};
+    for (final source in sources) {
+      byId['${source.sourceType}:${source.sourceId}'] = source;
+      byId.putIfAbsent(source.sourceId, () => source);
+    }
+    return byId;
   }
 
   static Map<String, _AllowedCompanionSource> _buildAllowedByTitle(

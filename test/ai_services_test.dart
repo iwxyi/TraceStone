@@ -2319,6 +2319,12 @@ void main() {
             'score': 8,
           },
           {
+            'source_id': 'walk-entry',
+            'title': '晚间运动',
+            'reason': '裸 ID 也指向检索到的日记摘要',
+            'score': 6,
+          },
+          {
             'source_id': 'entry_summary:hallucinated',
             'title': '不存在的日记',
             'reason': '模型编造的来源',
@@ -2377,10 +2383,12 @@ void main() {
       expect(client.lastUserPrompt, contains('signals:keyword:2.00'));
       expect(client.lastUserPrompt, contains('相关搜索命中'));
       expect(client.lastUserPrompt, isNot(contains('相关日记和片段：')));
-      expect(answer.sources, hasLength(1));
-      expect(answer.sources.single.sourceType, 'memory');
-      expect(answer.sources.single.sourceId, 'walk-memory');
-      expect(answer.sources.single.title, '运动');
+      expect(answer.sources, hasLength(2));
+      expect(answer.sources.map((source) => source.sourceType),
+          ['memory', 'entry_summary']);
+      expect(answer.sources.map((source) => source.sourceId),
+          ['walk-memory', 'walk-entry']);
+      expect(answer.sources.map((source) => source.title), ['运动', '晚间运动']);
       expect(trace?.contextSummary, contains('sourceFiltered=1'));
       expect(trace?.rawResponse, contains('hallucinated'));
       expect(trace?.rawResponsePreview, contains('hallucinated'));
