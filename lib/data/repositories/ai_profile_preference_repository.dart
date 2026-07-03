@@ -168,6 +168,35 @@ class AiProfilePreferenceRepository {
     return visible;
   }
 
+  Future<void> deleteObsoletePreferences({
+    required Iterable<String> profileFactIds,
+    required Iterable<String> relationshipIds,
+  }) async {
+    final validIds = <String>{
+      for (final id in profileFactIds)
+        AiProfilePreference.keyFor(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: id,
+        ),
+      for (final id in relationshipIds)
+        AiProfilePreference.keyFor(
+          targetType: AiProfilePreferenceTargetType.relationship,
+          targetId: id,
+        ),
+    };
+    final prefs = await SharedPreferences.getInstance();
+    final preferences = await listPreferences();
+    for (final preference in preferences) {
+      if (validIds.contains(preference.id)) continue;
+      await prefs.remove('$_prefix${preference.id}');
+    }
+    final remaining = preferences
+        .where((preference) => validIds.contains(preference.id))
+        .map((preference) => preference.id)
+        .toList(growable: false);
+    await prefs.setStringList(_indexKey, remaining);
+  }
+
   Future<void> _savePreference(AiProfilePreference item) async {
     final prefs = await SharedPreferences.getInstance();
     final id = item.id;

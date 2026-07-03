@@ -4770,6 +4770,97 @@ void main() {
       expect(await retrievalRepository.getTrace('search:last'), isNull);
       expect(await retrievalRepository.getTrace('question:last'), isNull);
     });
+
+    test('move to trash prunes unsupported profile preferences', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const insightRepository = InsightRepository();
+      const preferenceRepository = AiProfilePreferenceRepository();
+      const projectionService = ProfileProjectionService();
+      final date = DateTime(2026, 7, 3);
+      final deletedEntry = _entry(
+        id: 'trash-profile-only',
+        date: date,
+        content: '这篇日记只支撑一条临时画像和一段关系。',
+      );
+      final sharedEntry = _entry(
+        id: 'trash-profile-shared',
+        date: date.add(const Duration(days: 1)),
+        content: '这篇日记仍然支撑散步恢复状态的画像。',
+      );
+      await diaryRepository.saveEntry(deletedEntry);
+      await diaryRepository.saveEntry(sharedEntry);
+      await insightRepository.saveInsight(_insight(
+        entryId: deletedEntry.id,
+        date: deletedEntry.date,
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'preference',
+          value: '可能喜欢夜间写作',
+          confidence: 0.62,
+        ),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '小林',
+          relationship: '同事',
+          summary: '讨论产品方案',
+          confidence: 0.66,
+        ),
+      ));
+      await insightRepository.saveInsight(_insight(
+        entryId: sharedEntry.id,
+        date: sharedEntry.date,
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.64,
+        ),
+      ));
+      final projection = projectionService.build(
+        await insightRepository.listInsights(),
+      );
+      final unsupportedFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'preference');
+      final supportedFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'self_regulation');
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: unsupportedFact.id,
+        hidden: true,
+      );
+      await preferenceRepository.setConfirmed(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: supportedFact.id,
+        confirmed: true,
+      );
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: '小林',
+        hidden: true,
+      );
+
+      await diaryRepository.moveToTrash(deletedEntry.id);
+
+      expect(
+        await preferenceRepository.getPreference(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: unsupportedFact.id,
+        ),
+        isNull,
+      );
+      expect(
+        await preferenceRepository.getPreference(
+          targetType: AiProfilePreferenceTargetType.relationship,
+          targetId: '小林',
+        ),
+        isNull,
+      );
+      expect(
+        await preferenceRepository.getPreference(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: supportedFact.id,
+        ),
+        isNotNull,
+      );
+    });
   });
 
   group('MemoryRepository lifecycle', () {

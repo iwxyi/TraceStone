@@ -7,6 +7,7 @@ import '../models/diary_analysis_status.dart';
 import 'ai_analysis_queue_repository.dart';
 import 'ai_embedding_repository.dart';
 import 'ai_feedback_repository.dart';
+import 'ai_profile_preference_repository.dart';
 import 'ai_prompt_trace_repository.dart';
 import 'ai_retrieval_trace_repository.dart';
 import 'diary_change_bus.dart';
@@ -15,6 +16,7 @@ import 'insight_repository.dart';
 import 'memory_repository.dart';
 import 'period_summary_repository.dart';
 import 'stone_task_repository.dart';
+import '../services/profile_projection_service.dart';
 
 class DiaryRepository {
   const DiaryRepository();
@@ -253,6 +255,7 @@ class DiaryRepository {
     const retrievalTraceRepository = AiRetrievalTraceRepository();
     final memoryIds = await memoryRepository.memoryIdsForSourceEntry(id);
     await const InsightRepository().deleteForEntry(id);
+    await _pruneProfilePreferences();
     await promptTraceRepository.deleteForSourceIds(memoryIds);
     await retrievalTraceRepository.deleteForSourceIds(memoryIds);
     await memoryRepository.deleteForSourceEntry(id);
@@ -264,6 +267,16 @@ class DiaryRepository {
     await const EntrySummaryRepository().deleteForEntry(id);
     await retrievalTraceRepository.deleteForEntry(id);
     await const PeriodSummaryRepository().deleteForEntry(id);
+  }
+
+  Future<void> _pruneProfilePreferences() async {
+    final insights = await const InsightRepository().listInsights();
+    final projection = const ProfileProjectionService().build(insights);
+    await const AiProfilePreferenceRepository().deleteObsoletePreferences(
+      profileFactIds: projection.profileFacts.map((fact) => fact.id),
+      relationshipIds:
+          projection.relationshipProfiles.map((profile) => profile.personName),
+    );
   }
 
   String? _safeGetString(SharedPreferences prefs, String key) {
