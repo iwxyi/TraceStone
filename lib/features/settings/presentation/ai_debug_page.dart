@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../data/models/ai_analysis_job.dart';
+import '../../../data/models/ai_embedding.dart';
+import '../../../data/models/entry_summary.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_analysis_queue_repository.dart';
 import '../../../data/repositories/ai_embedding_repository.dart';
@@ -15,6 +17,8 @@ import '../../../data/repositories/entry_summary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/ai_embedding_text_builder.dart';
+import '../../../data/services/embedding_service.dart';
 
 class AiDebugPage extends StatefulWidget {
   const AiDebugPage({super.key});
@@ -301,6 +305,13 @@ class _JobCard extends StatelessWidget {
                         label: const Text('详情'),
                       ),
                       TextButton.icon(
+                        onPressed: artifacts.hasSummary
+                            ? () => _correctSummary(context, artifacts)
+                            : null,
+                        icon: const Icon(Icons.edit_note_outlined),
+                        label: const Text('修正摘要'),
+                      ),
+                      TextButton.icon(
                         onPressed: job.state == AiAnalysisJobState.running
                             ? null
                             : () => _reenqueue(context),
@@ -329,6 +340,9 @@ class _JobCard extends StatelessWidget {
                     ],
                   ),
                   _DebugLine(label: 'summary.brief', value: artifacts.brief),
+                  if (artifacts.summaryMeta.isNotEmpty)
+                    _DebugLine(
+                        label: 'summary.meta', value: artifacts.summaryMeta),
                   _DebugLine(
                       label: 'segments', value: '${artifacts.segmentCount}'),
                   if (artifacts.firstSegment.isNotEmpty)
@@ -342,6 +356,8 @@ class _JobCard extends StatelessWidget {
                     _DebugLine(
                         label: 'embedding.types',
                         value: artifacts.embeddingTypes),
+                  for (final line in artifacts.embeddingLines.take(3))
+                    _DebugLine(label: 'embedding', value: line),
                   if (artifacts.contextSummary.isNotEmpty)
                     _DebugLine(
                         label: 'context', value: artifacts.contextSummary),
@@ -478,6 +494,106 @@ class _JobCard extends StatelessWidget {
     );
   }
 
+  Future<void> _correctSummary(
+    BuildContext context,
+    _JobArtifacts artifacts,
+  ) async {
+    final corrected = await showDialog<_SummaryCorrectionResult>(
+      context: context,
+      builder: (context) =>
+          _SummaryCorrectionDialog(summary: artifacts.summary!),
+    );
+    if (corrected == null || corrected.brief.isEmpty) {
+      return;
+    }
+    final current = artifacts.summary;
+    if (current != null &&
+        corrected.brief == current.brief.trim() &&
+        corrected.title == current.title.trim() &&
+        corrected.emotion == current.emotion.trim() &&
+        corrected.importance == current.importance &&
+        _sameList(corrected.keyPoints, current.keyPoints) &&
+        _sameList(corrected.importantQuotes, current.importantQuotes)) {
+      return;
+    }
+    final updated = await const EntrySummaryRepository().correctSummaryPackage(
+      entryId: job.entryId,
+      brief: corrected.brief,
+      title: corrected.title,
+      emotion: corrected.emotion,
+      importance: corrected.importance,
+      keyPoints: corrected.keyPoints,
+      importantQuotes: corrected.importantQuotes,
+    );
+    if (!context.mounted) return;
+    if (updated == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('摘要不存在，无法修正')),
+      );
+      return;
+    }
+    await _refreshEntryEmbedding(updated);
+    await _appendSummaryCorrectionLog(updated);
+    if (!context.mounted) return;
+    onChanged();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已修正摘要并刷新摘要向量')),
+    );
+  }
+
+  Future<void> _appendSummaryCorrectionLog(EntrySummary summary) async {
+    const repository = AiAnalysisQueueRepository();
+    final latest = await repository.getJob(job.id) ?? job;
+    final log = AiAnalysisStageLog(
+      stage: AiAnalysisStage.generatingSummary,
+      startedAt: DateTime.now(),
+      message: '用户修正摘要包',
+      inputSummary: 'entryId=${summary.entryId}',
+      outputSummary: [
+        'generator=${summary.generator}',
+        'importance=${summary.importance.toStringAsFixed(2)}',
+        'keyPoints=${summary.keyPoints.length}',
+        'quotes=${summary.importantQuotes.length}',
+      ].join(' '),
+      retryCount: latest.retryCount,
+    );
+    final logs = [...latest.stageLogs, log];
+    await repository.saveJob(latest.copyWith(
+      updatedAt: DateTime.now(),
+      stageLogs: logs.length <= 80 ? logs : logs.sublist(logs.length - 80),
+    ));
+  }
+
+  Future<void> _refreshEntryEmbedding(EntrySummary summary) async {
+    final entry = await const DiaryRepository().getEntryById(summary.entryId);
+    if (entry == null) return;
+    const textBuilder = AiEmbeddingTextBuilder();
+    const embeddingService = EmbeddingService();
+    const embeddingRepository = AiEmbeddingRepository();
+    final result =
+        embeddingService.embed(textBuilder.entryText(entry, summary));
+    await embeddingRepository.saveEmbedding(AiEmbedding(
+      id: '${AiEmbeddingSourceType.entry.name}:${entry.id}',
+      sourceType: AiEmbeddingSourceType.entry,
+      sourceId: entry.id,
+      entryId: entry.id,
+      modelId: result.modelId,
+      modelVersion: result.modelVersion,
+      dimensions: result.dimensions,
+      vector: result.vector,
+      generatedAt: DateTime.now(),
+      textHash: result.textHash,
+    ));
+  }
+
+  bool _sameList(List<String> first, List<String> second) {
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index++) {
+      if (first[index] != second[index]) return false;
+    }
+    return true;
+  }
+
   void _showDebugDetails(BuildContext context, _JobArtifacts artifacts) {
     showDialog<void>(
       context: context,
@@ -517,11 +633,15 @@ class _JobCard extends StatelessWidget {
                       title: '上下文',
                       lines: [
                         artifacts.contextSummary,
+                        if (artifacts.summaryMeta.isNotEmpty)
+                          'summary meta: ${artifacts.summaryMeta}',
                         'summary: ${artifacts.brief}',
+                        ...artifacts.summaryPackageLines,
                         'segments: ${artifacts.segmentCount}',
                         'embeddings: ${artifacts.embeddingCount} ${artifacts.embeddingModel}',
                         if (artifacts.embeddingTypes.isNotEmpty)
                           'embedding types: ${artifacts.embeddingTypes}',
+                        ...artifacts.embeddingLines,
                       ],
                     ),
                     _DebugSection(
@@ -661,12 +781,15 @@ class _DebugSection extends StatelessWidget {
 
 class _JobArtifacts {
   const _JobArtifacts({
+    required this.summary,
     required this.brief,
+    required this.summaryMeta,
     required this.segmentCount,
     required this.firstSegment,
     required this.embeddingCount,
     required this.embeddingModel,
     required this.embeddingTypes,
+    required this.embeddingLines,
     required this.contextSummary,
     required this.promptSummary,
     required this.promptPreview,
@@ -683,12 +806,15 @@ class _JobArtifacts {
     required this.retrievalLines,
   });
 
+  final EntrySummary? summary;
   final String brief;
+  final String summaryMeta;
   final int segmentCount;
   final String firstSegment;
   final int embeddingCount;
   final String embeddingModel;
   final String embeddingTypes;
+  final List<String> embeddingLines;
   final String contextSummary;
   final String promptSummary;
   final String promptPreview;
@@ -703,6 +829,22 @@ class _JobArtifacts {
   final int retrievalCount;
   final int calendarCount;
   final List<String> retrievalLines;
+
+  bool get hasSummary => summary != null;
+
+  List<String> get summaryPackageLines {
+    final value = summary;
+    if (value == null) return const [];
+    return [
+      if (value.keyPoints.isNotEmpty)
+        'summary keyPoints: ${value.keyPoints.join('；')}',
+      if (value.importantQuotes.isNotEmpty)
+        'summary quotes: ${value.importantQuotes.join('；')}',
+      if (value.topics.isNotEmpty) 'summary topics: ${value.topics.join('、')}',
+      if (value.people.isNotEmpty) 'summary people: ${value.people.join('、')}',
+      if (value.places.isNotEmpty) 'summary places: ${value.places.join('、')}',
+    ];
+  }
 
   static Future<_JobArtifacts> load(String entryId) async {
     const summaryRepository = EntrySummaryRepository();
@@ -729,6 +871,7 @@ class _JobArtifacts {
           (typeCounts[embedding.sourceType.name] ?? 0) + 1;
     }
     return _JobArtifacts(
+      summary: summary,
       brief: summary?.brief ?? '未生成',
       segmentCount: segments.length,
       firstSegment: segments.isEmpty ? '' : segments.first.summary,
@@ -739,6 +882,12 @@ class _JobArtifacts {
       embeddingTypes: typeCounts.entries
           .map((entry) => '${entry.key}:${entry.value}')
           .join(', '),
+      embeddingLines: [
+        for (final embedding in embeddings)
+          '${embedding.sourceType.name}:${embedding.sourceId} entry=${embedding.entryId} '
+              '${embedding.dimensions}d hash=${embedding.textHash} '
+              'generatedAt=${embedding.generatedAt.toIso8601String()}',
+      ],
       contextSummary: trace?.contextSummary ??
           (trace?.scenario == null
               ? ''
@@ -798,6 +947,15 @@ class _JobArtifacts {
         for (final item in trace?.items ?? [])
           '${item.sourceType}:${item.sourceId} score=${item.score} ${item.title} ${item.reasons.join('；')}${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}',
       ],
+      summaryMeta: summary == null
+          ? ''
+          : [
+              if (summary.title.isNotEmpty) 'title=${summary.title}',
+              'date=${summary.date.toIso8601String()}',
+              if (summary.emotion.isNotEmpty) 'emotion=${summary.emotion}',
+              'importance=${summary.importance.toStringAsFixed(2)}',
+              'generator=${summary.generator}',
+            ].join(' '),
     );
   }
 
@@ -805,10 +963,13 @@ class _JobArtifacts {
     final sections = <String>[
       _section('Context', [
         contextSummary,
+        if (summaryMeta.isNotEmpty) 'summary meta: $summaryMeta',
         'summary: $brief',
+        ...summaryPackageLines,
         'segments: $segmentCount',
         'embeddings: $embeddingCount $embeddingModel',
         if (embeddingTypes.isNotEmpty) 'embedding types: $embeddingTypes',
+        ...embeddingLines,
       ]),
       _section('Prompt', [
         promptSummary,
@@ -834,6 +995,166 @@ class _JobArtifacts {
     if (visible.isEmpty) return '';
     return ['## $title', ...visible].join('\n');
   }
+}
+
+class _SummaryCorrectionDialog extends StatefulWidget {
+  const _SummaryCorrectionDialog({required this.summary});
+
+  final EntrySummary summary;
+
+  @override
+  State<_SummaryCorrectionDialog> createState() =>
+      _SummaryCorrectionDialogState();
+}
+
+class _SummaryCorrectionDialogState extends State<_SummaryCorrectionDialog> {
+  late final TextEditingController _briefController =
+      TextEditingController(text: widget.summary.brief);
+  late final TextEditingController _titleController =
+      TextEditingController(text: widget.summary.title);
+  late final TextEditingController _emotionController =
+      TextEditingController(text: widget.summary.emotion);
+  late final TextEditingController _importanceController =
+      TextEditingController(text: widget.summary.importance.toStringAsFixed(2));
+  late final TextEditingController _keyPointsController =
+      TextEditingController(text: widget.summary.keyPoints.join('\n'));
+  late final TextEditingController _quotesController =
+      TextEditingController(text: widget.summary.importantQuotes.join('\n'));
+
+  @override
+  void dispose() {
+    _briefController.dispose();
+    _titleController.dispose();
+    _emotionController.dispose();
+    _importanceController.dispose();
+    _keyPointsController.dispose();
+    _quotesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('修正摘要'),
+      content: SizedBox(
+        width: 560,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _briefController,
+                autofocus: true,
+                minLines: 3,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: '更准确的日记摘要',
+                  alignLabelWithHint: true,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(labelText: '摘要标题'),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _emotionController,
+                      decoration: const InputDecoration(labelText: '情绪'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 140,
+                    child: TextField(
+                      controller: _importanceController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: '重要度 0-1'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _keyPointsController,
+                minLines: 3,
+                maxLines: 7,
+                decoration: const InputDecoration(
+                  labelText: '关键点（每行一条）',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _quotesController,
+                minLines: 2,
+                maxLines: 5,
+                decoration: const InputDecoration(
+                  labelText: '重要原文短句（每行一条）',
+                  alignLabelWithHint: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _briefController.text.trim().isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_SummaryCorrectionResult(
+                    brief: _briefController.text.trim(),
+                    title: _titleController.text.trim(),
+                    emotion: _emotionController.text.trim(),
+                    importance: _importance(),
+                    keyPoints: _lines(_keyPointsController.text),
+                    importantQuotes: _lines(_quotesController.text),
+                  )),
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+
+  List<String> _lines(String value) {
+    return value
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  double _importance() {
+    final parsed = double.tryParse(_importanceController.text.trim());
+    return (parsed ?? widget.summary.importance).clamp(0, 1).toDouble();
+  }
+}
+
+class _SummaryCorrectionResult {
+  const _SummaryCorrectionResult({
+    required this.brief,
+    required this.title,
+    required this.emotion,
+    required this.importance,
+    required this.keyPoints,
+    required this.importantQuotes,
+  });
+
+  final String brief;
+  final String title;
+  final String emotion;
+  final double importance;
+  final List<String> keyPoints;
+  final List<String> importantQuotes;
 }
 
 class _DebugLine extends StatelessWidget {

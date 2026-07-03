@@ -67,7 +67,8 @@ class AiSearchService {
       final source = await _sourceForEmbedding(embedding);
       if (source == null) continue;
       final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
-      final score = (similarity * 12).round() + keywordScore;
+      final importanceBonus = _importanceBonus(source.importance);
+      final score = (similarity * 12).round() + keywordScore + importanceBonus;
       candidates.add(AiSearchMatch(
         sourceType: source.sourceType,
         sourceId: source.sourceId,
@@ -78,6 +79,8 @@ class AiSearchService {
         reasons: [
           '向量相似度 ${similarity.toStringAsFixed(2)}',
           if (keywordScore > 0) '关键词校准 +$keywordScore',
+          if (importanceBonus > 0)
+            '摘要重要度 ${source.importance.toStringAsFixed(2)}',
         ],
         matchedTokens: _matchedTokens(queryTokens, _tokens(source.text)),
       ));
@@ -92,11 +95,13 @@ class AiSearchService {
       final summary = await _summaryRepository.getSummary(entry.id);
       if (summary != null) {
         final text = [
+          summary.title,
           summary.brief,
           ...summary.keyPoints,
           ...summary.topics,
           ...summary.people,
           ...summary.places,
+          summary.emotion,
           ...summary.importantQuotes,
         ].join(' ');
         final match = _matchText(
@@ -106,6 +111,7 @@ class AiSearchService {
           entryId: entry.id,
           title: entry.title ?? summary.brief,
           summary: summary.brief,
+          importance: summary.importance,
           text: text,
         );
         if (match != null) matches.add(match);
@@ -117,6 +123,7 @@ class AiSearchService {
           entryId: entry.id,
           title: entry.title ?? entry.excerpt,
           summary: entry.excerpt,
+          importance: 0,
           text: entry.bodyPreview,
         );
         if (match != null) matches.add(match);
@@ -131,6 +138,7 @@ class AiSearchService {
           entryId: entry.id,
           title: segment.summary,
           summary: segment.text,
+          importance: 0,
           text: [
             segment.summary,
             segment.text,
@@ -157,10 +165,13 @@ class AiSearchService {
           entryId: embedding.entryId,
           title: entry.title ?? summary.brief,
           summary: summary.brief,
+          importance: summary.importance,
           text: [
+            summary.title,
             summary.brief,
             ...summary.keyPoints,
             ...summary.topics,
+            summary.emotion,
             ...summary.importantQuotes,
           ].join(' '),
         );
@@ -177,6 +188,7 @@ class AiSearchService {
           entryId: embedding.entryId,
           title: segment.summary,
           summary: segment.text,
+          importance: 0,
           text: [
             segment.summary,
             segment.text,
@@ -191,6 +203,7 @@ class AiSearchService {
           entryId: embedding.entryId,
           title: entry.title ?? entry.excerpt,
           summary: entry.excerpt,
+          importance: 0,
           text: entry.bodyPreview,
         );
       case AiEmbeddingSourceType.memory:
@@ -205,12 +218,14 @@ class AiSearchService {
     required String entryId,
     required String title,
     required String summary,
+    required double importance,
     required String text,
   }) {
     final sourceTokens = _tokens(text);
     final matchedTokens = _matchedTokens(queryTokens, sourceTokens);
     if (matchedTokens.isEmpty) return null;
-    final score = _keywordScore(queryTokens, sourceTokens);
+    final importanceBonus = _importanceBonus(importance);
+    final score = _keywordScore(queryTokens, sourceTokens) + importanceBonus;
     return AiSearchMatch(
       sourceType: sourceType,
       sourceId: sourceId,
@@ -218,7 +233,10 @@ class AiSearchService {
       title: title,
       summary: summary,
       score: score,
-      reasons: ['关键词重合：${matchedTokens.take(6).join('、')}'],
+      reasons: [
+        '关键词重合：${matchedTokens.take(6).join('、')}',
+        if (importanceBonus > 0) '摘要重要度 ${importance.toStringAsFixed(2)}',
+      ],
       matchedTokens: matchedTokens.take(12).toList(),
     );
   }
@@ -243,6 +261,12 @@ class AiSearchService {
       score += token.length >= 4 ? 3 : 2;
     }
     return score;
+  }
+
+  int _importanceBonus(double importance) {
+    if (importance >= 0.75) return 2;
+    if (importance >= 0.6) return 1;
+    return 0;
   }
 
   List<String> _matchedTokens(
@@ -278,6 +302,7 @@ class _SearchSource {
     required this.entryId,
     required this.title,
     required this.summary,
+    required this.importance,
     required this.text,
   });
 
@@ -286,5 +311,6 @@ class _SearchSource {
   final String entryId;
   final String title;
   final String summary;
+  final double importance;
   final String text;
 }

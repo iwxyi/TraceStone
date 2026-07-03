@@ -4,6 +4,7 @@ import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_analysis_status.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/diary_segment.dart';
+import 'package:trace_stone/data/models/entry_summary.dart';
 import 'package:trace_stone/data/models/ai_embedding.dart';
 import 'package:trace_stone/data/models/ai_feedback.dart';
 import 'package:trace_stone/data/models/ai_profile.dart';
@@ -390,7 +391,7 @@ void main() {
         entryId: entry.id,
         sourceType: AiEmbeddingSourceType.entry,
         sourceId: entry.id,
-        text: '${summary.brief}\n${entry.bodyPreview}',
+        text: _entryEmbeddingTextForTest(entry, summary),
         generatedAt: oldGeneratedAt,
       );
       await _saveTestEmbedding(
@@ -399,7 +400,7 @@ void main() {
         entryId: entry.id,
         sourceType: AiEmbeddingSourceType.summary,
         sourceId: entry.id,
-        text: summary.brief,
+        text: _summaryEmbeddingTextForTest(summary),
         generatedAt: oldGeneratedAt,
       );
       for (final segment in segments) {
@@ -409,7 +410,7 @@ void main() {
           entryId: entry.id,
           sourceType: AiEmbeddingSourceType.segment,
           sourceId: segment.id,
-          text: segment.summary,
+          text: _segmentEmbeddingTextForTest(segment),
           generatedAt: oldGeneratedAt,
         );
       }
@@ -445,6 +446,115 @@ void main() {
           contains(AiAnalysisStage.embedding));
       expect(job?.stageLogs.map((log) => log.message), contains('整理完成'));
       expect(entryEmbedding?.generatedAt, oldGeneratedAt);
+    });
+
+    test('runner rebuilds stale summary and segments after entry edits',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const summaryService = EntrySummaryService();
+      final oldEntry = _entry(
+        id: 'edited-entry',
+        date: DateTime(2026, 7, 3, 20),
+        content: '旧内容：今天只写了工作压力。',
+      );
+      final newEntry = _entry(
+        id: oldEntry.id,
+        date: DateTime(2026, 7, 3, 21),
+        content: '新内容：晚上散步以后状态恢复。',
+      );
+      await diaryRepository.saveEntry(oldEntry);
+      final oldSegments = summaryService.buildSegments(oldEntry);
+      final oldSummary = summaryService.buildSummary(oldEntry, oldSegments);
+      await summaryRepository.saveSegments(oldEntry.id, oldSegments);
+      await summaryRepository.saveSummary(oldSummary);
+      await diaryRepository.saveEntry(newEntry);
+      await queueRepository.enqueueEntry(newEntry);
+
+      await AiAnalysisQueueRunner(
+        analysisService: _FakeDiaryAnalysisService(),
+      ).processNext();
+
+      final rebuiltSummary = await summaryRepository.getSummary(newEntry.id);
+      final rebuiltSegments = await summaryRepository.listSegments(newEntry.id);
+      final job = await queueRepository.getJob(newEntry.id);
+
+      expect(rebuiltSummary?.entryUpdatedAt, newEntry.updatedAt);
+      expect(rebuiltSummary?.brief, contains('晚上散步'));
+      expect(rebuiltSegments.single.text, contains('晚上散步'));
+      expect(job?.stageLogs.map((log) => log.message),
+          containsAll(['日记已更新，重建日记片段', '日记已更新，重建摘要包']));
+    });
+
+    test('runner rebuilds embeddings when stored hashes are stale', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const summaryService = EntrySummaryService();
+      const embeddingService = EmbeddingService();
+      final entry = _entry(
+        id: 'stale-embedding-entry',
+        date: DateTime(2026, 7, 3),
+        content: '晚上散步以后状态恢复。',
+      );
+      await diaryRepository.saveEntry(entry);
+      final segments = summaryService.buildSegments(entry);
+      final summary = summaryService.buildSummary(entry, segments);
+      await summaryRepository.saveSegments(entry.id, segments);
+      await summaryRepository.saveSummary(summary);
+      final oldGeneratedAt = DateTime(2026, 7, 1);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: entry.id,
+        text: '旧 entry embedding',
+        generatedAt: oldGeneratedAt,
+      );
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        text: '旧 summary embedding',
+        generatedAt: oldGeneratedAt,
+      );
+      final oldSummaryEmbedding = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+      );
+      for (final segment in segments) {
+        await _saveTestEmbedding(
+          repository: embeddingRepository,
+          service: embeddingService,
+          entryId: entry.id,
+          sourceType: AiEmbeddingSourceType.segment,
+          sourceId: segment.id,
+          text: '旧 segment embedding',
+          generatedAt: oldGeneratedAt,
+        );
+      }
+      await queueRepository.enqueueEntry(entry);
+
+      await AiAnalysisQueueRunner(
+        analysisService: _FakeDiaryAnalysisService(),
+      ).processNext();
+
+      final summaryEmbedding = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+      );
+      final job = await queueRepository.getJob(entry.id);
+
+      expect(summaryEmbedding?.textHash, isNot(oldSummaryEmbedding?.textHash));
+      expect(summaryEmbedding?.generatedAt, isNot(oldGeneratedAt));
+      expect(job?.stageLogs.map((log) => log.message), contains('生成多级向量'));
     });
 
     test('backfill enqueues entries with missing AI artifacts only', () async {
@@ -485,7 +595,7 @@ void main() {
         entryId: complete.id,
         sourceType: AiEmbeddingSourceType.entry,
         sourceId: complete.id,
-        text: '${summary.brief}\n${complete.bodyPreview}',
+        text: _entryEmbeddingTextForTest(complete, summary),
         generatedAt: date,
       );
       await _saveTestEmbedding(
@@ -494,7 +604,7 @@ void main() {
         entryId: complete.id,
         sourceType: AiEmbeddingSourceType.summary,
         sourceId: complete.id,
-        text: summary.brief,
+        text: _summaryEmbeddingTextForTest(summary),
         generatedAt: date,
       );
       for (final segment in segments) {
@@ -504,7 +614,7 @@ void main() {
           entryId: complete.id,
           sourceType: AiEmbeddingSourceType.segment,
           sourceId: segment.id,
-          text: segment.summary,
+          text: _segmentEmbeddingTextForTest(segment),
           generatedAt: date,
         );
       }
@@ -970,7 +1080,7 @@ void main() {
 
     test('builds summary from segment key points', () {
       final entry = _entry(
-        content: '今天跑步，也整理了产品计划。',
+        content: '# 晚间恢复\n\n今天跑步，也整理了产品计划，感觉轻松了一些。',
         location: '上海',
       );
       final segments = const EntrySummaryService().buildSegments(entry);
@@ -978,10 +1088,127 @@ void main() {
       final summary = const EntrySummaryService().buildSummary(entry, segments);
 
       expect(summary.entryId, entry.id);
+      expect(summary.date, entry.date);
+      expect(summary.title, '晚间恢复');
       expect(summary.brief, contains('今天跑步'));
       expect(summary.keyPoints, isNotEmpty);
       expect(summary.places, contains('上海'));
+      expect(summary.emotion, contains('放松'));
+      expect(summary.importance, greaterThan(0.4));
       expect(summary.generator, 'local-rule-v1');
+    });
+
+    test('reads legacy summary json with safe defaults', () {
+      final updatedAt = DateTime(2026, 7, 3);
+
+      final summary = EntrySummary.fromJson({
+        'entryId': 'legacy-summary',
+        'entryUpdatedAt': updatedAt.toIso8601String(),
+        'generatedAt': updatedAt.toIso8601String(),
+        'brief': '旧摘要',
+      });
+
+      expect(summary.date, updatedAt);
+      expect(summary.title, isEmpty);
+      expect(summary.emotion, isEmpty);
+      expect(summary.importance, 0.5);
+    });
+
+    test('corrects summary brief and refreshes summary embedding', () async {
+      SharedPreferences.setMockInitialValues({});
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = EmbeddingService();
+      final entry = _entry(
+        id: 'summary-correction',
+        date: DateTime(2026, 7, 3),
+        content: '今天散步以后焦虑下降。',
+      );
+      final segments = const EntrySummaryService().buildSegments(entry);
+      final summary = const EntrySummaryService().buildSummary(entry, segments);
+      await summaryRepository.saveSummary(summary);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        text: summary.brief,
+        generatedAt: DateTime(2026, 7, 3),
+      );
+      final before = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+      );
+
+      final updated = await summaryRepository.correctBrief(
+        entryId: entry.id,
+        brief: '晚上散步后，焦虑感有所下降。',
+      );
+      final after = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+      );
+
+      expect(updated?.brief, '晚上散步后，焦虑感有所下降。');
+      expect(updated?.generator, 'user-corrected');
+      expect(after?.textHash, isNot(before?.textHash));
+      expect((await summaryRepository.getSummary(entry.id))?.brief,
+          '晚上散步后，焦虑感有所下降。');
+    });
+
+    test('corrects summary package details and refreshes embedding', () async {
+      SharedPreferences.setMockInitialValues({});
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      final entry = _entry(
+        id: 'summary-package-correction',
+        date: DateTime(2026, 7, 3),
+        content: '今天散步以后焦虑下降，也记录了一句关键原文。',
+      );
+      final summary = _summaryForTest(
+        entry: entry,
+        brief: '旧摘要',
+        importance: 0.7,
+      );
+      await summaryRepository.saveSummary(summary);
+      await summaryRepository.correctSummaryPackage(
+        entryId: entry.id,
+        brief: '散步后焦虑下降。',
+        title: '散步恢复',
+        emotion: '放松',
+        importance: 0.88,
+        keyPoints: const ['完成散步', '焦虑下降'],
+        importantQuotes: const ['走完以后轻松一点'],
+      );
+      final firstEmbedding = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+      );
+
+      await summaryRepository.correctSummaryPackage(
+        entryId: entry.id,
+        brief: '散步后焦虑下降，并保留关键原文。',
+        title: '散步恢复',
+        emotion: '放松',
+        importance: 0.9,
+        keyPoints: const ['完成散步', '焦虑下降', '保留原文'],
+        importantQuotes: const ['走完以后轻松一点'],
+      );
+      final updated = await summaryRepository.getSummary(entry.id);
+      final secondEmbedding = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+      );
+
+      expect(updated?.brief, '散步后焦虑下降，并保留关键原文。');
+      expect(updated?.title, '散步恢复');
+      expect(updated?.emotion, '放松');
+      expect(updated?.importance, 0.9);
+      expect(updated?.keyPoints, ['完成散步', '焦虑下降', '保留原文']);
+      expect(updated?.importantQuotes, ['走完以后轻松一点']);
+      expect(updated?.generator, 'user-corrected');
+      expect(secondEmbedding?.textHash, isNot(firstEmbedding?.textHash));
     });
   });
 
@@ -1045,6 +1272,40 @@ void main() {
       expect(
           matches.map((match) => match.sourceType), contains('entry_summary'));
       expect(matches.first.reasons.join(' '), contains('向量相似度'));
+    });
+
+    test('uses summary importance as a rerank signal', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      final date = DateTime(2026, 7, 3);
+      final low = _entry(
+        id: 'low-importance-summary',
+        date: date,
+        content: '散步 焦虑',
+      );
+      final high = _entry(
+        id: 'high-importance-summary',
+        date: date.add(const Duration(days: 1)),
+        content: '散步 焦虑',
+      );
+      await diaryRepository.saveEntry(low);
+      await diaryRepository.saveEntry(high);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: low,
+        brief: '散步 焦虑',
+        importance: 0.3,
+      ));
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: high,
+        brief: '散步 焦虑',
+        importance: 0.82,
+      ));
+
+      final matches = await const AiSearchService().search('散步 焦虑');
+
+      expect(matches.first.entryId, high.id);
+      expect(matches.first.reasons.join(' '), contains('摘要重要度'));
     });
   });
 
@@ -1124,6 +1385,38 @@ void main() {
   });
 
   group('AiContextBuilder calendar matches', () {
+    test('period context keeps higher-importance summaries within budget',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      final entries = <DiaryEntry>[];
+      for (var index = 0; index < 50; index++) {
+        final entry = _entry(
+          id: 'period-budget-$index',
+          date: DateTime(2026, 7, 1 + (index % 28)),
+          content: '周期摘要预算 $index',
+        );
+        entries.add(entry);
+        await diaryRepository.saveEntry(entry);
+        await summaryRepository.saveSummary(_summaryForTest(
+          entry: entry,
+          brief: '周期摘要预算 $index',
+          importance: index == 49 ? 0.95 : 0.3,
+        ));
+      }
+
+      final package = await const AiContextBuilder().buildForPeriodSummary(
+        start: DateTime(2026, 7, 1),
+        end: DateTime(2026, 7, 31, 23, 59, 59),
+      );
+
+      expect(package.periodEntries, hasLength(50));
+      expect(package.periodSummaries, hasLength(48));
+      expect(package.periodSummaries.first.entryId, 'period-budget-49');
+      expect(package.debugSummary, contains('periodSummaries=48'));
+    });
+
     test('loads historical solar today and nearby entries', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
@@ -1664,6 +1957,50 @@ DiaryEntry _entry({
     temperature: '26',
     updatedAt: valueDate,
   );
+}
+
+EntrySummary _summaryForTest({
+  required DiaryEntry entry,
+  required String brief,
+  required double importance,
+}) {
+  return EntrySummary(
+    entryId: entry.id,
+    date: entry.date,
+    entryUpdatedAt: entry.updatedAt,
+    generatedAt: entry.updatedAt,
+    title: entry.title ?? brief,
+    brief: brief,
+    keyPoints: [brief],
+    topics: const [],
+    people: const [],
+    places: const [],
+    emotion: '',
+    importance: importance,
+    importantQuotes: const [],
+    generator: 'test',
+  );
+}
+
+String _entryEmbeddingTextForTest(DiaryEntry entry, EntrySummary summary) {
+  return '${summary.brief}\n${entry.bodyPreview}';
+}
+
+String _summaryEmbeddingTextForTest(EntrySummary summary) {
+  return [
+    summary.title,
+    summary.brief,
+    ...summary.keyPoints,
+    ...summary.topics,
+    ...summary.people,
+    ...summary.places,
+    summary.emotion,
+    ...summary.importantQuotes,
+  ].join('\n');
+}
+
+String _segmentEmbeddingTextForTest(DiarySegment segment) {
+  return '${segment.summary}\n${segment.text}';
 }
 
 Future<void> _saveTestEmbedding({

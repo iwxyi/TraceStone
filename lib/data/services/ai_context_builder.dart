@@ -186,11 +186,19 @@ class AiContextBuilder {
       final summary = await _summaryRepository.getSummary(entry.id);
       if (summary != null) summaries.add(summary);
     }
+    summaries.sort((a, b) {
+      final byImportance = b.importance.compareTo(a.importance);
+      if (byImportance != 0) return byImportance;
+      return b.date.compareTo(a.date);
+    });
+    final contextSummaries = summaries.take(48).toList(growable: false);
     final queryText = [
-      for (final summary in summaries) ...[
+      for (final summary in contextSummaries) ...[
+        if (summary.title.isNotEmpty) summary.title,
         summary.brief,
         ...summary.keyPoints,
         ...summary.topics,
+        if (summary.emotion.isNotEmpty) summary.emotion,
       ],
       if (summaries.isEmpty)
         for (final entry in periodEntries) entry.excerpt,
@@ -221,7 +229,7 @@ class AiContextBuilder {
       periodStart: start,
       periodEnd: end,
       periodEntries: periodEntries,
-      periodSummaries: summaries,
+      periodSummaries: contextSummaries,
       relatedMemories: relatedMemories,
       profileFacts: profileFacts,
       relationshipProfiles: relationshipProfiles,

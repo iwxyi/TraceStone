@@ -6,6 +6,7 @@ import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
+import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
@@ -16,6 +17,7 @@ import 'package:trace_stone/features/companion/presentation/companion_page.dart'
 import 'package:trace_stone/features/relationships/presentation/relationships_page.dart';
 import 'package:trace_stone/features/settings/presentation/calendar_memory_page.dart';
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
+import 'package:trace_stone/features/settings/presentation/ai_debug_page.dart';
 import 'package:trace_stone/features/settings/presentation/memory_management_page.dart';
 import 'package:trace_stone/features/search/presentation/search_page.dart';
 import 'package:trace_stone/features/shaping_stone/presentation/shaping_stone_page.dart';
@@ -506,6 +508,84 @@ void main() {
 
     expect(find.textContaining('晚上散步'), findsWidgets);
     expect(find.textContaining('score'), findsWidgets);
+  });
+
+  testWidgets('corrects entry summary from AI debug page', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const diaryRepository = DiaryRepository();
+    const summaryRepository = EntrySummaryRepository();
+    const queueRepository = AiAnalysisQueueRepository();
+    final date = DateTime(2026, 7, 3);
+    final entry = DiaryEntry(
+      id: 'debug-summary-entry',
+      date: date,
+      createdAt: date,
+      content: '今天散步以后，焦虑下降了一些。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    );
+    await diaryRepository.saveEntry(entry);
+    final segments = const EntrySummaryService().buildSegments(entry);
+    await summaryRepository.saveSummary(
+      const EntrySummaryService().buildSummary(entry, segments),
+    );
+    await queueRepository.enqueueEntry(entry);
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('修正摘要'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, '更准确的日记摘要'),
+      '晚上散步后，焦虑感有所下降。',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '摘要标题'),
+      '散步恢复',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '情绪'),
+      '放松',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '重要度 0-1'),
+      '0.91',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '关键点（每行一条）'),
+      '完成散步\n焦虑下降',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '重要原文短句（每行一条）'),
+      '走完以后轻松一点',
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    final summary = await summaryRepository.getSummary(entry.id);
+    final job = await queueRepository.getJob(entry.id);
+    expect(summary?.brief, '晚上散步后，焦虑感有所下降。');
+    expect(summary?.title, '散步恢复');
+    expect(summary?.emotion, '放松');
+    expect(summary?.importance, 0.91);
+    expect(summary?.keyPoints, ['完成散步', '焦虑下降']);
+    expect(summary?.importantQuotes, ['走完以后轻松一点']);
+    expect(summary?.generator, 'user-corrected');
+    expect(job?.stageLogs.map((log) => log.message), contains('用户修正摘要包'));
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('详情'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('summary keyPoints'), findsOneWidget);
+    expect(find.textContaining('完成散步；焦虑下降'), findsOneWidget);
+    expect(find.textContaining('summary quotes'), findsOneWidget);
+    expect(find.textContaining('summary:debug-summary-entry'), findsWidgets);
+    expect(find.textContaining('entry:debug-summary-entry'), findsWidgets);
+    expect(find.textContaining('hash='), findsWidgets);
   });
 }
 

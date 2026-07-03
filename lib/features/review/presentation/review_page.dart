@@ -2055,13 +2055,13 @@ class _TimelineStickyHeaderDelegate extends SliverPersistentHeaderDelegate {
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     final theme = Theme.of(context);
     return Material(
-      color: theme.scaffoldBackgroundColor.withValues(alpha: 0.97),
+      color: theme.scaffoldBackgroundColor.withValues(alpha: 0.965),
       child: DecoratedBox(
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
               color: overlapsContent
-                  ? theme.colorScheme.outlineVariant.withValues(alpha: 0.7)
+                  ? theme.colorScheme.outlineVariant.withValues(alpha: 0.52)
                   : Colors.transparent,
             ),
           ),
@@ -2089,7 +2089,7 @@ class _TimelineMonthHeader extends StatelessWidget {
       required this.onToggleMonth});
 
   static const height = 46.0;
-  static const _contentHeight = 36.0;
+  static const _contentHeight = 34.0;
 
   final String? yearLabel;
   final String monthLabel;
@@ -2109,7 +2109,7 @@ class _TimelineMonthHeader extends StatelessWidget {
       child: SizedBox(
         height: height,
         child: Padding(
-          padding: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.only(top: 2, bottom: 10),
           child: SizedBox(
             height: _contentHeight,
             child: Row(
@@ -2119,14 +2119,18 @@ class _TimelineMonthHeader extends StatelessWidget {
                     label: yearLabel!,
                     collapsed: yearCollapsed,
                     onTap: onToggleYear,
-                    style: theme.textTheme.titleMedium,
+                    iconSize: 17,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
                     child: Text(
                       '/',
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.outline,
+                        color: colorScheme.outline.withValues(alpha: 0.72),
                       ),
                     ),
                   ),
@@ -2135,13 +2139,27 @@ class _TimelineMonthHeader extends StatelessWidget {
                   label: monthLabel,
                   collapsed: monthCollapsed,
                   onTap: onToggleMonth,
-                  style: theme.textTheme.titleMedium,
+                  iconSize: 20,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  '$entryCount篇',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
+                const Spacer(),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.44),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    child: Text(
+                      '$entryCount篇',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -2159,12 +2177,14 @@ class _TimelineHeaderButton extends StatelessWidget {
     required this.collapsed,
     required this.onTap,
     required this.style,
+    required this.iconSize,
   });
 
   final String label;
   final bool collapsed;
   final VoidCallback onTap;
   final TextStyle? style;
+  final double iconSize;
 
   @override
   Widget build(BuildContext context) {
@@ -2180,7 +2200,7 @@ class _TimelineHeaderButton extends StatelessWidget {
               turns: collapsed ? -0.25 : 0,
               duration: const Duration(milliseconds: 160),
               curve: Curves.easeOutCubic,
-              child: const Icon(Icons.keyboard_arrow_down, size: 20),
+              child: Icon(Icons.keyboard_arrow_down, size: iconSize),
             ),
             const SizedBox(width: 2),
             Text(label, style: style),
@@ -2225,7 +2245,7 @@ class _TimelineDayGroup extends StatelessWidget {
             hasLineAfter: hasLineAfter,
             selected: true,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2271,7 +2291,7 @@ class _TimelineDateRail extends StatelessWidget {
     final railColor = selected ? colorScheme.primary : colorScheme.outline;
 
     return SizedBox(
-      width: 46,
+      width: 42,
       child: Column(
         children: [
           if (topInset > 0)
@@ -2283,7 +2303,7 @@ class _TimelineDateRail extends StatelessWidget {
                         duration: const Duration(milliseconds: 160),
                         curve: Curves.easeOutCubic,
                         width: 1,
-                        color: railColor.withValues(alpha: 0.55),
+                        color: railColor.withValues(alpha: 0.28),
                       )
                     : null,
               ),
@@ -2291,20 +2311,22 @@ class _TimelineDateRail extends StatelessWidget {
           AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            width: 38,
-            padding: const EdgeInsets.symmetric(vertical: 6),
+            width: 34,
+            padding: const EdgeInsets.symmetric(vertical: 5),
             decoration: BoxDecoration(
               color: selected
-                  ? colorScheme.primary.withValues(alpha: 0.12)
-                  : colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: railColor.withValues(alpha: 0.55)),
+                  ? colorScheme.primary.withValues(alpha: 0.08)
+                  : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(color: railColor.withValues(alpha: 0.28)),
             ),
             child: Column(
               children: [
                 Text(
                   '$day',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontSize: 19,
+                        height: 1.05,
                         color: selected
                             ? colorScheme.primary
                             : colorScheme.onSurface,
@@ -2325,7 +2347,7 @@ class _TimelineDateRail extends StatelessWidget {
                 duration: const Duration(milliseconds: 160),
                 curve: Curves.easeOutCubic,
                 width: 1,
-                color: railColor.withValues(alpha: 0.55),
+                color: railColor.withValues(alpha: 0.28),
               ),
             ),
         ],
@@ -2360,21 +2382,26 @@ class _TimelineEntry extends StatelessWidget {
 
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Card(
-      elevation: 0,
-      clipBehavior: Clip.antiAlias,
-      margin: EdgeInsets.zero,
-      color: colorScheme.surface,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.86),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: selected
+              ? colorScheme.primary.withValues(alpha: 0.34)
+              : colorScheme.outlineVariant.withValues(alpha: 0.54),
+        ),
+      ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         onTap: () => onOpenEntry(entry.id),
         onLongPress: () => onLongSelectEntry(entry.id),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+          padding: const EdgeInsets.fromLTRB(14, 13, 13, 13),
           color: selected
-              ? colorScheme.primary.withValues(alpha: 0.08)
+              ? colorScheme.primary.withValues(alpha: 0.045)
               : Colors.transparent,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2387,20 +2414,33 @@ class _TimelineEntry extends StatelessWidget {
                       entry.title ?? entry.bodyPreview,
                       maxLines: entry.title == null ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            height: 1.25,
+                          ),
                     ),
                     if (entry.title != null || meta.isNotEmpty) ...[
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 7),
+                      if (meta.isNotEmpty) ...[
+                        Text(
+                          meta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant
+                                        .withValues(alpha: 0.78),
+                                  ),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
                       Text(
-                        meta.isEmpty
-                            ? entry.bodyPreview
-                            : '$meta\n${entry.bodyPreview}',
-                        maxLines: meta.isEmpty
-                            ? AppConstants.diaryPreviewMaxLines
-                            : AppConstants.diaryPreviewMaxLines + 1,
+                        entry.bodyPreview,
+                        maxLines: AppConstants.diaryPreviewMaxLines,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                               color: colorScheme.onSurfaceVariant,
+                              height: 1.42,
                             ),
                       ),
                     ],
@@ -2412,9 +2452,9 @@ class _TimelineEntry extends StatelessWidget {
                 child: selected
                     ? Padding(
                         key: const ValueKey('selected'),
-                        padding: const EdgeInsets.only(left: 12, top: 1),
+                        padding: const EdgeInsets.only(left: 10, top: 1),
                         child: Icon(Icons.check_circle,
-                            color: colorScheme.primary),
+                            size: 18, color: colorScheme.primary),
                       )
                     : const SizedBox.shrink(key: ValueKey('unselected')),
               ),

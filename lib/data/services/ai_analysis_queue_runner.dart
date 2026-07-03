@@ -13,6 +13,7 @@ import 'diary_analysis_service.dart';
 import 'embedding_service.dart';
 import 'entry_summary_service.dart';
 import 'ai_client_service.dart';
+import 'ai_embedding_text_builder.dart';
 
 class AiAnalysisQueueRunner {
   const AiAnalysisQueueRunner({
@@ -24,6 +25,7 @@ class AiAnalysisQueueRunner {
     DiaryAnalysisService? analysisService,
     EmbeddingService? embeddingService,
     EntrySummaryService? summaryService,
+    AiEmbeddingTextBuilder? embeddingTextBuilder,
   })  : _queueRepository = queueRepository ?? const AiAnalysisQueueRepository(),
         _embeddingRepository =
             embeddingRepository ?? const AiEmbeddingRepository(),
@@ -33,7 +35,9 @@ class AiAnalysisQueueRunner {
         _insightRepository = insightRepository ?? const InsightRepository(),
         _analysisService = analysisService ?? const DiaryAnalysisService(),
         _embeddingService = embeddingService ?? const EmbeddingService(),
-        _summaryService = summaryService ?? const EntrySummaryService();
+        _summaryService = summaryService ?? const EntrySummaryService(),
+        _embeddingTextBuilder =
+            embeddingTextBuilder ?? const AiEmbeddingTextBuilder();
 
   static bool _isRunning = false;
 
@@ -45,6 +49,7 @@ class AiAnalysisQueueRunner {
   final DiaryAnalysisService _analysisService;
   final EmbeddingService _embeddingService;
   final EntrySummaryService _summaryService;
+  final AiEmbeddingTextBuilder _embeddingTextBuilder;
 
   Future<void> enqueue(DiaryEntry entry, {bool start = true}) async {
     if (entry.content.trim().isEmpty) return;
@@ -115,7 +120,7 @@ class AiAnalysisQueueRunner {
     final summary = await _summaryRepository.getSummary(entry.id);
     final segments = await _summaryRepository.listSegments(entry.id);
     if (summary == null || segments.isEmpty) return true;
-    if (!await _hasAllEmbeddings(entry, segments)) return true;
+    if (!await _hasAllEmbeddings(entry, summary, segments)) return true;
     final insight = await _insightRepository.getInsight(entry.id);
     if (insight == null) return true;
     return job.state != AiAnalysisJobState.completed;
@@ -149,15 +154,18 @@ class AiAnalysisQueueRunner {
         AiAnalysisStage.preparing,
       );
 
+      var summary = await _summaryRepository.getSummary(entry.id);
+      final staleArtifacts = summary != null &&
+          !summary.entryUpdatedAt.isAtSameMomentAs(entry.updatedAt);
       var segments = await _summaryRepository.listSegments(entry.id);
-      if (segments.isEmpty) {
+      if (segments.isEmpty || staleArtifacts) {
         segments = _summaryService.buildSegments(entry);
         await _saveStage(
           job,
           state: AiAnalysisJobState.running,
           stage: AiAnalysisStage.segmenting,
           analysisState: DiaryAnalysisState.analyzing,
-          message: '拆分日记片段',
+          message: staleArtifacts ? '日记已更新，重建日记片段' : '拆分日记片段',
           retryCount: job.retryCount,
           completedStages: completedStages,
           clearLastError: true,
@@ -180,15 +188,14 @@ class AiAnalysisQueueRunner {
         AiAnalysisStage.segmenting,
       );
 
-      var summary = await _summaryRepository.getSummary(entry.id);
-      if (summary == null) {
+      if (summary == null || staleArtifacts) {
         summary = _summaryService.buildSummary(entry, segments);
         await _saveStage(
           job,
           state: AiAnalysisJobState.running,
           stage: AiAnalysisStage.generatingSummary,
           analysisState: DiaryAnalysisState.analyzing,
-          message: '生成摘要包',
+          message: staleArtifacts ? '日记已更新，重建摘要包' : '生成摘要包',
           retryCount: job.retryCount,
           completedStages: completedStages,
           clearLastError: true,
@@ -211,7 +218,7 @@ class AiAnalysisQueueRunner {
         AiAnalysisStage.generatingSummary,
       );
 
-      final embeddingsReady = await _hasAllEmbeddings(entry, segments);
+      final embeddingsReady = await _hasAllEmbeddings(entry, summary, segments);
       if (!embeddingsReady) {
         await _saveStage(
           job,
@@ -408,30 +415,27 @@ class AiAnalysisQueueRunner {
       entryId: entry.id,
       sourceType: AiEmbeddingSourceType.entry,
       sourceId: entry.id,
-      text: '${summary.brief}\n${entry.bodyPreview}',
+      text: _embeddingTextBuilder.entryText(entry, summary),
     );
     await _saveEmbedding(
       entryId: entry.id,
       sourceType: AiEmbeddingSourceType.summary,
       sourceId: entry.id,
-      text: [
-        summary.brief,
-        ...summary.keyPoints,
-        ...summary.topics,
-      ].join('\n'),
+      text: _embeddingTextBuilder.summaryText(summary),
     );
     for (final segment in segments) {
       await _saveEmbedding(
         entryId: entry.id,
         sourceType: AiEmbeddingSourceType.segment,
         sourceId: segment.id,
-        text: '${segment.summary}\n${segment.text}',
+        text: _embeddingTextBuilder.segmentText(segment),
       );
     }
   }
 
   Future<bool> _hasAllEmbeddings(
     DiaryEntry entry,
+    EntrySummary summary,
     List<DiarySegment> segments,
   ) async {
     final entryEmbedding = await _embeddingRepository.getBySource(
@@ -443,12 +447,30 @@ class AiAnalysisQueueRunner {
       sourceId: entry.id,
     );
     if (entryEmbedding == null || summaryEmbedding == null) return false;
+    if (entryEmbedding.textHash !=
+        _embeddingService
+            .embed(_embeddingTextBuilder.entryText(entry, summary))
+            .textHash) {
+      return false;
+    }
+    if (summaryEmbedding.textHash !=
+        _embeddingService
+            .embed(_embeddingTextBuilder.summaryText(summary))
+            .textHash) {
+      return false;
+    }
     for (final segment in segments) {
       final embedding = await _embeddingRepository.getBySource(
         sourceType: AiEmbeddingSourceType.segment,
         sourceId: segment.id,
       );
       if (embedding == null) return false;
+      if (embedding.textHash !=
+          _embeddingService
+              .embed(_embeddingTextBuilder.segmentText(segment))
+              .textHash) {
+        return false;
+      }
     }
     return true;
   }

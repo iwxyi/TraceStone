@@ -15,8 +15,10 @@ class EntrySummaryService {
         .toList();
     return EntrySummary(
       entryId: entry.id,
+      date: entry.date,
       entryUpdatedAt: entry.updatedAt,
       generatedAt: DateTime.now(),
+      title: entry.title ?? _truncate(body, 28),
       brief: _truncate(body, 120),
       keyPoints: keyPoints.isEmpty ? [_truncate(body, 80)] : keyPoints,
       topics: _topics(entry.content),
@@ -26,6 +28,8 @@ class EntrySummaryService {
             entry.location.trim() != '未选择地点')
           entry.location.trim(),
       ],
+      emotion: _emotion(entry.content),
+      importance: _importance(entry, segments),
       importantQuotes: _importantQuotes(entry.content),
       generator: 'local-rule-v1',
     );
@@ -180,6 +184,46 @@ class EntrySummaryService {
         .toList();
     lines.sort((a, b) => b.length.compareTo(a.length));
     return lines.take(3).map((line) => _truncate(line, 60)).toList();
+  }
+
+  String _emotion(String text) {
+    final normalized = _plainText(text);
+    const rules = {
+      '疲惫': ['累', '疲惫', '困', '撑不住'],
+      '焦虑': ['焦虑', '紧张', '担心', '压力'],
+      '放松': ['放松', '轻松', '舒服', '恢复'],
+      '开心': ['开心', '高兴', '快乐', '兴奋'],
+      '低落': ['难过', '低落', '沮丧', '委屈'],
+      '平静': ['平静', '稳定', '还好'],
+    };
+    final scores = <String, int>{};
+    for (final entry in rules.entries) {
+      for (final keyword in entry.value) {
+        if (normalized.contains(keyword)) {
+          scores[entry.key] = (scores[entry.key] ?? 0) + 1;
+        }
+      }
+    }
+    if (scores.isEmpty) return '';
+    final sorted = scores.entries.toList()
+      ..sort((a, b) {
+        final byScore = b.value.compareTo(a.value);
+        if (byScore != 0) return byScore;
+        return a.key.compareTo(b.key);
+      });
+    return sorted.take(2).map((entry) => entry.key).join('、');
+  }
+
+  double _importance(DiaryEntry entry, List<DiarySegment> segments) {
+    var score = 0.42;
+    final contentLength = entry.bodyPreview.characters.length;
+    if (contentLength >= 80) score += 0.08;
+    if (contentLength >= 240) score += 0.08;
+    if (segments.length >= 2) score += 0.06;
+    if (_people(entry.content).isNotEmpty) score += 0.06;
+    if (_importantQuotes(entry.content).isNotEmpty) score += 0.04;
+    if (_emotion(entry.content).isNotEmpty) score += 0.04;
+    return score.clamp(0.2, 0.95).toDouble();
   }
 
   String _plainText(String text) =>
