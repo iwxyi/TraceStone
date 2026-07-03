@@ -39,6 +39,7 @@ import 'package:trace_stone/data/services/ai_analysis_queue_runner.dart';
 import 'package:trace_stone/data/services/ai_client_service.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
+import 'package:trace_stone/data/services/app_startup_service.dart';
 import 'package:trace_stone/data/services/companion_answer_service.dart';
 import 'package:trace_stone/data/services/diary_analysis_service.dart';
 import 'package:trace_stone/data/services/embedding_service.dart';
@@ -47,6 +48,27 @@ import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/data/services/profile_projection_service.dart';
 
 void main() {
+  group('AppStartupService', () {
+    test('runs blocking cleanup before app and resumes AI queue after start',
+        () async {
+      final events = <String>[];
+      final service = AppStartupService(
+        purgeExpiredTrash: () async {
+          events.add('purge');
+        },
+        resumeAiQueue: () async {
+          events.add('resume');
+        },
+      );
+
+      await service.runBeforeApp();
+      service.runAfterAppStart();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, ['purge', 'resume']);
+    });
+  });
+
   group('AiPromptTrace', () {
     test('round trips full prompts and remains legacy compatible', () {
       final date = DateTime(2026, 7, 3);
