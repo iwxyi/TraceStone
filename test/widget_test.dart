@@ -22,6 +22,7 @@ import 'package:trace_stone/data/repositories/memory_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
+import 'package:trace_stone/data/services/app_startup_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/features/ai_insight/presentation/ai_feedback_bar.dart';
@@ -47,6 +48,25 @@ void main() {
     expect(find.text('回顾'), findsOneWidget);
     expect(find.text('洞察'), findsOneWidget);
     expect(find.text('我的'), findsOneWidget);
+  });
+
+  testWidgets('resumes AI queue when app returns to foreground',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    var resumeCount = 0;
+    final startupService = AppStartupService(
+      resumeAiQueue: () async {
+        resumeCount += 1;
+      },
+    );
+    await tester.pumpWidget(TraceStoneApp(startupService: startupService));
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    expect(resumeCount, 1);
   });
 
   testWidgets('review page ignores invalid stored tab preference',

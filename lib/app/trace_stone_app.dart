@@ -1,10 +1,42 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/routing/app_routes.dart';
+import '../data/services/app_startup_service.dart';
 import 'theme_controller.dart';
 
-class TraceStoneApp extends StatelessWidget {
-  const TraceStoneApp({super.key});
+class TraceStoneApp extends StatefulWidget {
+  const TraceStoneApp({
+    super.key,
+    this.startupService = const AppStartupService(),
+  });
+
+  final AppStartupService startupService;
+
+  @override
+  State<TraceStoneApp> createState() => _TraceStoneAppState();
+}
+
+class _TraceStoneAppState extends State<TraceStoneApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(widget.startupService.resumeAiQueue());
+  }
 
   @override
   Widget build(BuildContext context) {
