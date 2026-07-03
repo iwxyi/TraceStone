@@ -2,11 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../../../data/models/ai_feedback.dart';
 import '../../../data/repositories/ai_feedback_repository.dart';
+import '../../../data/repositories/memory_repository.dart';
 
 class AiFeedbackBar extends StatefulWidget {
-  const AiFeedbackBar({super.key, required this.entryId});
+  const AiFeedbackBar({
+    super.key,
+    required this.entryId,
+    this.compact = false,
+  });
 
   final String entryId;
+  final bool compact;
 
   @override
   State<AiFeedbackBar> createState() => _AiFeedbackBarState();
@@ -14,6 +20,7 @@ class AiFeedbackBar extends StatefulWidget {
 
 class _AiFeedbackBarState extends State<AiFeedbackBar> {
   final _repository = const AiFeedbackRepository();
+  final _memoryRepository = const MemoryRepository();
   late Future<AiFeedback?> _feedbackFuture =
       _repository.getFeedback(widget.entryId);
 
@@ -26,6 +33,10 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
       note: note?.trim().isEmpty ?? true ? null : note!.trim(),
     );
     await _repository.saveFeedback(feedback);
+    await _memoryRepository.applyFeedback(
+      sourceEntryId: widget.entryId,
+      value: value,
+    );
     if (!mounted) return;
     setState(() {
       _feedbackFuture = Future.value(feedback);
@@ -85,6 +96,13 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
       future: _feedbackFuture,
       builder: (context, snapshot) {
         final value = snapshot.data?.value;
+        if (widget.compact) {
+          return _CompactFeedbackActions(
+            value: value,
+            onHelpful: () => _save(AiFeedbackValue.helpful),
+            onInaccurate: _markInaccurate,
+          );
+        }
         return Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -104,6 +122,75 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
           ],
         );
       },
+    );
+  }
+}
+
+class _CompactFeedbackActions extends StatelessWidget {
+  const _CompactFeedbackActions({
+    required this.value,
+    required this.onHelpful,
+    required this.onInaccurate,
+  });
+
+  final AiFeedbackValue? value;
+  final VoidCallback onHelpful;
+  final VoidCallback onInaccurate;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.72);
+    final selectedColor = theme.colorScheme.primary.withValues(alpha: 0.84);
+    return Wrap(
+      spacing: 12,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _FeedbackTextButton(
+          label: value == AiFeedbackValue.helpful ? '已标记有帮助' : '有帮助',
+          color: value == AiFeedbackValue.helpful ? selectedColor : color,
+          onTap: onHelpful,
+        ),
+        Text('/', style: theme.textTheme.bodySmall?.copyWith(color: color)),
+        _FeedbackTextButton(
+          label: value == AiFeedbackValue.inaccurate ? '已标记不准确' : '不准确',
+          color: value == AiFeedbackValue.inaccurate ? selectedColor : color,
+          onTap: onInaccurate,
+        ),
+      ],
+    );
+  }
+}
+
+class _FeedbackTextButton extends StatelessWidget {
+  const _FeedbackTextButton({
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: color,
+                decoration: TextDecoration.underline,
+                decorationColor: color.withValues(alpha: 0.34),
+                decorationThickness: 0.8,
+              ),
+        ),
+      ),
     );
   }
 }

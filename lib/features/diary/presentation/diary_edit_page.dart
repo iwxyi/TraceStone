@@ -1193,12 +1193,16 @@ class _DiaryMetaBar extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.fromLTRB(22, 2, 22, 10),
         child: Center(
-          child: ConstrainedBox(
+          child: Container(
+            width: double.infinity,
             constraints: const BoxConstraints(maxWidth: 760),
-            child: _ReadMetaTags(
-              dateLabel: dateLabel,
-              locationLabel: locationLabel,
-              weatherLabel: weatherLabel.trim().isEmpty ? '天气' : weatherLabel,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _ReadMetaTags(
+                dateLabel: dateLabel,
+                locationLabel: locationLabel,
+                weatherLabel: weatherLabel.trim().isEmpty ? '天气' : weatherLabel,
+              ),
             ),
           ),
         ),
@@ -1992,13 +1996,78 @@ class _SoftDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Container(
-        width: 42,
-        height: 1,
-        color:
-            Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.7),
+      child: SizedBox(
+        width: 92,
+        height: 12,
+        child: CustomPaint(
+          painter: _InkWashDividerPainter(
+            color: Theme.of(context).colorScheme.outline,
+          ),
+        ),
       ),
     );
+  }
+}
+
+class _InkWashDividerPainter extends CustomPainter {
+  const _InkWashDividerPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final centerY = size.height * 0.52;
+    final shader = LinearGradient(
+      colors: [
+        color.withValues(alpha: 0),
+        color.withValues(alpha: 0.18),
+        color.withValues(alpha: 0.56),
+        color.withValues(alpha: 0.18),
+        color.withValues(alpha: 0),
+      ],
+      stops: const [0, 0.22, 0.52, 0.82, 1],
+    ).createShader(Offset.zero & size);
+
+    final basePaint = Paint()
+      ..shader = shader
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 1.2;
+
+    final path = Path()
+      ..moveTo(0, centerY + 0.8)
+      ..cubicTo(size.width * 0.24, centerY - 0.9, size.width * 0.46,
+          centerY + 0.9, size.width * 0.66, centerY)
+      ..cubicTo(size.width * 0.78, centerY - 0.5, size.width * 0.9,
+          centerY + 0.4, size.width, centerY - 0.2);
+    canvas.drawPath(path, basePaint);
+
+    final corePaint = Paint()
+      ..color = color.withValues(alpha: 0.22)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2.6;
+    canvas.drawLine(
+      Offset(size.width * 0.39, centerY + 0.1),
+      Offset(size.width * 0.62, centerY - 0.1),
+      corePaint,
+    );
+
+    final washPaint = Paint()
+      ..color = color.withValues(alpha: 0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 4.2;
+    canvas.drawLine(
+      Offset(size.width * 0.45, centerY + 0.5),
+      Offset(size.width * 0.56, centerY + 0.2),
+      washPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _InkWashDividerPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 
@@ -2173,7 +2242,7 @@ class _InsightResultBlock extends StatelessWidget {
             SimpleMarkdownText(text: insight.stoneDescription),
         ],
         const SizedBox(height: 12),
-        AiFeedbackBar(entryId: insight.entryId),
+        AiFeedbackBar(entryId: insight.entryId, compact: true),
       ],
     );
   }

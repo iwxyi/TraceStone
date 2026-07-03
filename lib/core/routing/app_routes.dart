@@ -8,6 +8,7 @@ import '../../features/relationships/presentation/relationships_page.dart';
 import '../../features/review/presentation/review_page.dart';
 import '../../features/search/presentation/search_page.dart';
 import '../../features/settings/presentation/ai_debug_page.dart';
+import '../../features/settings/presentation/calendar_memory_page.dart';
 import '../../features/settings/presentation/custom_ai_page.dart';
 import '../../features/settings/presentation/memory_management_page.dart';
 import '../../features/settings/presentation/recycle_bin_page.dart';
@@ -30,6 +31,7 @@ class AppRoutes {
   static const relationships = '/relationships';
   static const settings = '/settings';
   static const customAi = '/settings/custom-ai';
+  static const calendarMemory = '/settings/calendar-memory';
   static const memoryManagement = '/settings/memories';
   static const aiDebug = '/settings/ai-debug';
   static const recycleBin = '/settings/recycle-bin';
@@ -56,6 +58,7 @@ class AppRoutes {
     relationships: (_) => const RelationshipsPage(),
     settings: (_) => const SettingsPage(),
     customAi: (_) => const CustomAiPage(),
+    calendarMemory: (_) => const CalendarMemoryPage(),
     memoryManagement: (_) => const MemoryManagementPage(),
     aiDebug: (_) => const AiDebugPage(),
     recycleBin: (_) => const RecycleBinPage(),

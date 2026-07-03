@@ -41,6 +41,15 @@ class SettingsPage extends StatelessWidget {
                   onTap: () => Navigator.of(context)
                       .pushNamed(AppRoutes.memoryManagement),
                 ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.event_note_outlined),
+                  title: const Text('纪念日'),
+                  subtitle: const Text('用于多年今日和节日关联'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.calendarMemory),
+                ),
               ],
             ),
           ),

@@ -12,6 +12,7 @@ import '../repositories/insight_repository.dart';
 import 'diary_analysis_service.dart';
 import 'embedding_service.dart';
 import 'entry_summary_service.dart';
+import 'ai_client_service.dart';
 
 class AiAnalysisQueueRunner {
   const AiAnalysisQueueRunner({
@@ -59,6 +60,25 @@ class AiAnalysisQueueRunner {
     }
   }
 
+  Future<int> enqueueBackfill({int limit = 200}) async {
+    final entries = await _diaryRepository.listEntries();
+    var enqueued = 0;
+    for (final entry in entries) {
+      if (enqueued >= limit) break;
+      if (entry.content.trim().isEmpty) continue;
+      if (!await _needsBackfill(entry)) continue;
+      await _queueRepository.enqueueEntry(entry);
+      await _insightRepository.saveStatus(DiaryAnalysisStatus(
+        entryId: entry.id,
+        state: DiaryAnalysisState.queued,
+        updatedAt: DateTime.now(),
+        message: '等待补建 AI 资料',
+      ));
+      enqueued += 1;
+    }
+    return enqueued;
+  }
+
   Future<void> processNext() async {
     if (_isRunning) return;
     _isRunning = true;
@@ -73,10 +93,32 @@ class AiAnalysisQueueRunner {
 
   Future<void> processUntilIdle({int maxJobs = 1}) async {
     for (var index = 0; index < maxJobs; index++) {
+      final current = await _queueRepository.nextRunnableJob();
+      if (current == null) break;
       await processNext();
       final next = await _queueRepository.nextRunnableJob();
       if (next == null) break;
+      if (next.id == current.id) break;
     }
+  }
+
+  Future<bool> _needsBackfill(DiaryEntry entry) async {
+    final job = await _queueRepository.getJob(entry.id);
+    if (job != null &&
+        (job.state == AiAnalysisJobState.running || job.canRun)) {
+      return false;
+    }
+    final pipelineVersion = entry.updatedAt.microsecondsSinceEpoch;
+    if (job == null || job.pipelineVersion != pipelineVersion) {
+      return true;
+    }
+    final summary = await _summaryRepository.getSummary(entry.id);
+    final segments = await _summaryRepository.listSegments(entry.id);
+    if (summary == null || segments.isEmpty) return true;
+    if (!await _hasAllEmbeddings(entry, segments)) return true;
+    final insight = await _insightRepository.getInsight(entry.id);
+    if (insight == null) return true;
+    return job.state != AiAnalysisJobState.completed;
   }
 
   Future<void> _runJob(AiAnalysisJob job) async {
@@ -101,50 +143,103 @@ class AiAnalysisQueueRunner {
       clearLastError: true,
     );
     try {
-      final segments = _summaryService.buildSegments(entry);
-      await _saveStage(
-        job,
-        state: AiAnalysisJobState.running,
-        stage: AiAnalysisStage.segmenting,
-        analysisState: DiaryAnalysisState.analyzing,
-        message: '拆分日记片段',
-        retryCount: job.retryCount,
-        completedStages: const [AiAnalysisStage.preparing],
-        clearLastError: true,
+      var completedStages = [...job.completedStages];
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.preparing,
       );
-      await _summaryRepository.saveSegments(entry.id, segments);
 
-      final summary = _summaryService.buildSummary(entry, segments);
-      await _saveStage(
-        job,
-        state: AiAnalysisJobState.running,
-        stage: AiAnalysisStage.generatingSummary,
-        analysisState: DiaryAnalysisState.analyzing,
-        message: '生成摘要包',
-        retryCount: job.retryCount,
-        completedStages: const [
-          AiAnalysisStage.preparing,
-          AiAnalysisStage.segmenting,
-        ],
-        clearLastError: true,
+      var segments = await _summaryRepository.listSegments(entry.id);
+      if (segments.isEmpty) {
+        segments = _summaryService.buildSegments(entry);
+        await _saveStage(
+          job,
+          state: AiAnalysisJobState.running,
+          stage: AiAnalysisStage.segmenting,
+          analysisState: DiaryAnalysisState.analyzing,
+          message: '拆分日记片段',
+          retryCount: job.retryCount,
+          completedStages: completedStages,
+          clearLastError: true,
+        );
+        await _summaryRepository.saveSegments(entry.id, segments);
+      } else {
+        await _saveStage(
+          job,
+          state: AiAnalysisJobState.running,
+          stage: AiAnalysisStage.segmenting,
+          analysisState: DiaryAnalysisState.analyzing,
+          message: '复用已有日记片段',
+          retryCount: job.retryCount,
+          completedStages: completedStages,
+          clearLastError: true,
+        );
+      }
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.segmenting,
       );
-      await _summaryRepository.saveSummary(summary);
 
-      await _saveStage(
-        job,
-        state: AiAnalysisJobState.running,
-        stage: AiAnalysisStage.embedding,
-        analysisState: DiaryAnalysisState.analyzing,
-        message: '生成多级向量',
-        retryCount: job.retryCount,
-        completedStages: const [
-          AiAnalysisStage.preparing,
-          AiAnalysisStage.segmenting,
-          AiAnalysisStage.generatingSummary,
-        ],
-        clearLastError: true,
+      var summary = await _summaryRepository.getSummary(entry.id);
+      if (summary == null) {
+        summary = _summaryService.buildSummary(entry, segments);
+        await _saveStage(
+          job,
+          state: AiAnalysisJobState.running,
+          stage: AiAnalysisStage.generatingSummary,
+          analysisState: DiaryAnalysisState.analyzing,
+          message: '生成摘要包',
+          retryCount: job.retryCount,
+          completedStages: completedStages,
+          clearLastError: true,
+        );
+        await _summaryRepository.saveSummary(summary);
+      } else {
+        await _saveStage(
+          job,
+          state: AiAnalysisJobState.running,
+          stage: AiAnalysisStage.generatingSummary,
+          analysisState: DiaryAnalysisState.analyzing,
+          message: '复用已有摘要包',
+          retryCount: job.retryCount,
+          completedStages: completedStages,
+          clearLastError: true,
+        );
+      }
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.generatingSummary,
       );
-      await _saveEmbeddings(entry, summary, segments);
+
+      final embeddingsReady = await _hasAllEmbeddings(entry, segments);
+      if (!embeddingsReady) {
+        await _saveStage(
+          job,
+          state: AiAnalysisJobState.running,
+          stage: AiAnalysisStage.embedding,
+          analysisState: DiaryAnalysisState.analyzing,
+          message: '生成多级向量',
+          retryCount: job.retryCount,
+          completedStages: completedStages,
+          clearLastError: true,
+        );
+        await _saveEmbeddings(entry, summary, segments);
+      } else {
+        await _saveStage(
+          job,
+          state: AiAnalysisJobState.running,
+          stage: AiAnalysisStage.embedding,
+          analysisState: DiaryAnalysisState.analyzing,
+          message: '复用已有多级向量',
+          retryCount: job.retryCount,
+          completedStages: completedStages,
+          clearLastError: true,
+        );
+      }
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.embedding,
+      );
 
       await _saveStage(
         job,
@@ -153,13 +248,12 @@ class AiAnalysisQueueRunner {
         analysisState: DiaryAnalysisState.analyzing,
         message: '关联历史记录',
         retryCount: job.retryCount,
-        completedStages: const [
-          AiAnalysisStage.preparing,
-          AiAnalysisStage.segmenting,
-          AiAnalysisStage.generatingSummary,
-          AiAnalysisStage.embedding,
-        ],
+        completedStages: completedStages,
         clearLastError: true,
+      );
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.retrieving,
       );
       await _saveStage(
         job,
@@ -168,17 +262,18 @@ class AiAnalysisQueueRunner {
         analysisState: DiaryAnalysisState.analyzing,
         message: '生成今日洞察',
         retryCount: job.retryCount,
-        completedStages: const [
-          AiAnalysisStage.preparing,
-          AiAnalysisStage.segmenting,
-          AiAnalysisStage.generatingSummary,
-          AiAnalysisStage.embedding,
-          AiAnalysisStage.retrieving,
-        ],
+        completedStages: completedStages,
         clearLastError: true,
       );
-
       await _analysisService.analyzeEntry(entry);
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.generatingInsight,
+      );
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.updatingMemory,
+      );
 
       await _saveStage(
         job,
@@ -187,24 +282,31 @@ class AiAnalysisQueueRunner {
         analysisState: DiaryAnalysisState.completed,
         message: '整理完成',
         retryCount: job.retryCount,
-        completedStages: const [
-          AiAnalysisStage.preparing,
-          AiAnalysisStage.segmenting,
-          AiAnalysisStage.generatingSummary,
-          AiAnalysisStage.embedding,
-          AiAnalysisStage.retrieving,
-          AiAnalysisStage.generatingInsight,
-          AiAnalysisStage.updatingMemory,
-        ],
+        completedStages: completedStages,
         clearLastError: true,
       );
+    } on AiClientException catch (error) {
+      await _deferJobForAi(job, error.message);
     } on Object catch (error) {
-      await _queueRepository.saveJob(job.copyWith(
+      final latest = await _queueRepository.getJob(job.id) ?? job;
+      await _queueRepository.saveJob(latest.copyWith(
         state: AiAnalysisJobState.failed,
-        currentStage: AiAnalysisStage.generatingInsight,
+        currentStage: latest.currentStage,
         updatedAt: now,
-        retryCount: job.retryCount + 1,
+        retryCount: latest.retryCount + 1,
         lastError: error.toString(),
+        stageLogs: _appendStageLog(
+          latest.stageLogs,
+          AiAnalysisStageLog(
+            stage: latest.currentStage,
+            startedAt: DateTime.now(),
+            message: '阶段失败',
+            inputSummary: 'entryId=${job.entryId}',
+            outputSummary: '',
+            error: error.toString(),
+            retryCount: latest.retryCount + 1,
+          ),
+        ),
       ));
       await _insightRepository.saveStatus(DiaryAnalysisStatus(
         entryId: job.entryId,
@@ -213,6 +315,35 @@ class AiAnalysisQueueRunner {
         message: error.toString(),
       ));
     }
+  }
+
+  Future<void> _deferJobForAi(AiAnalysisJob job, String message) async {
+    final latest = await _queueRepository.getJob(job.id) ?? job;
+    final now = DateTime.now();
+    await _queueRepository.saveJob(latest.copyWith(
+      state: AiAnalysisJobState.incomplete,
+      currentStage: AiAnalysisStage.generatingInsight,
+      updatedAt: now,
+      lastError: '等待 AI 可用：$message',
+      stageLogs: _appendStageLog(
+        latest.stageLogs,
+        AiAnalysisStageLog(
+          stage: AiAnalysisStage.generatingInsight,
+          startedAt: now,
+          message: '等待 AI 可用',
+          inputSummary: 'entryId=${job.entryId}',
+          outputSummary: '本地摘要、分段和向量已保留',
+          error: message,
+          retryCount: latest.retryCount,
+        ),
+      ),
+    ));
+    await _insightRepository.saveStatus(DiaryAnalysisStatus(
+      entryId: job.entryId,
+      state: DiaryAnalysisState.incomplete,
+      updatedAt: now,
+      message: '本地资料已整理，等待 AI 可用后生成今日洞察',
+    ));
   }
 
   Future<void> _saveStage(
@@ -225,11 +356,28 @@ class AiAnalysisQueueRunner {
     List<AiAnalysisStage>? completedStages,
     bool clearLastError = false,
   }) async {
-    await _queueRepository.saveJob(job.copyWith(
+    final latest = await _queueRepository.getJob(job.id) ?? job;
+    final logs = _appendStageLog(
+      latest.stageLogs,
+      AiAnalysisStageLog(
+        stage: stage,
+        startedAt: DateTime.now(),
+        message: message,
+        inputSummary: 'entryId=${job.entryId}',
+        outputSummary: [
+          if (completedStages != null)
+            'completed=${completedStages.map((item) => item.name).join(',')}',
+          'state=${state.name}',
+        ].join(' '),
+        retryCount: retryCount,
+      ),
+    );
+    await _queueRepository.saveJob(latest.copyWith(
       state: state,
       currentStage: stage,
       updatedAt: DateTime.now(),
       completedStages: completedStages,
+      stageLogs: logs,
       retryCount: retryCount,
       clearLastError: clearLastError,
     ));
@@ -239,6 +387,15 @@ class AiAnalysisQueueRunner {
       updatedAt: DateTime.now(),
       message: message,
     ));
+  }
+
+  List<AiAnalysisStageLog> _appendStageLog(
+    List<AiAnalysisStageLog> logs,
+    AiAnalysisStageLog log,
+  ) {
+    final next = [...logs, log];
+    if (next.length <= 80) return next;
+    return next.sublist(next.length - 80);
   }
 
   Future<void> _saveEmbeddings(
@@ -273,6 +430,37 @@ class AiAnalysisQueueRunner {
     }
   }
 
+  Future<bool> _hasAllEmbeddings(
+    DiaryEntry entry,
+    List<DiarySegment> segments,
+  ) async {
+    final entryEmbedding = await _embeddingRepository.getBySource(
+      sourceType: AiEmbeddingSourceType.entry,
+      sourceId: entry.id,
+    );
+    final summaryEmbedding = await _embeddingRepository.getBySource(
+      sourceType: AiEmbeddingSourceType.summary,
+      sourceId: entry.id,
+    );
+    if (entryEmbedding == null || summaryEmbedding == null) return false;
+    for (final segment in segments) {
+      final embedding = await _embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.segment,
+        sourceId: segment.id,
+      );
+      if (embedding == null) return false;
+    }
+    return true;
+  }
+
+  List<AiAnalysisStage> _markCompleted(
+    List<AiAnalysisStage> stages,
+    AiAnalysisStage stage,
+  ) {
+    if (stages.contains(stage)) return stages;
+    return [...stages, stage];
+  }
+
   Future<void> _saveEmbedding({
     required String entryId,
     required AiEmbeddingSourceType sourceType,
@@ -295,11 +483,23 @@ class AiAnalysisQueueRunner {
   }
 
   Future<void> _failJob(AiAnalysisJob job, String message) async {
-    await _queueRepository.saveJob(job.copyWith(
+    final latest = await _queueRepository.getJob(job.id) ?? job;
+    await _queueRepository.saveJob(latest.copyWith(
       state: AiAnalysisJobState.failed,
       updatedAt: DateTime.now(),
-      retryCount: job.retryCount + 1,
+      retryCount: latest.retryCount + 1,
       lastError: message,
+      stageLogs: _appendStageLog(
+        latest.stageLogs,
+        AiAnalysisStageLog(
+          stage: latest.currentStage,
+          startedAt: DateTime.now(),
+          message: '任务失败',
+          inputSummary: 'entryId=${job.entryId}',
+          error: message,
+          retryCount: latest.retryCount + 1,
+        ),
+      ),
     ));
     await _insightRepository.saveStatus(DiaryAnalysisStatus(
       entryId: job.entryId,

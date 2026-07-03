@@ -46,6 +46,28 @@ class _MemoryManagementPageState extends State<MemoryManagementPage> {
         .showSnackBar(const SnackBar(content: Text('已删除记忆')));
   }
 
+  Future<void> _toggleArchive(MemoryEntry memory) async {
+    await _repository.archiveMemory(memory.id, archived: !memory.archived);
+    if (!mounted) return;
+    _refresh();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(memory.archived ? '已恢复记忆' : '已归档记忆'),
+    ));
+  }
+
+  Future<void> _correct(MemoryEntry memory) async {
+    final corrected = await showDialog<String>(
+      context: context,
+      builder: (context) => _MemoryCorrectionDialog(memory: memory),
+    );
+    if (corrected == null) return;
+    await _repository.correctSummary(id: memory.id, summary: corrected);
+    if (!mounted) return;
+    _refresh();
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('已修正记忆')));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -69,6 +91,8 @@ class _MemoryManagementPageState extends State<MemoryManagementPage> {
                 return _MemoryCard(
                   memory: memory,
                   onDelete: () => _delete(memory),
+                  onToggleArchive: () => _toggleArchive(memory),
+                  onCorrect: () => _correct(memory),
                 );
               },
             ),
@@ -106,10 +130,14 @@ class _MemoryCard extends StatelessWidget {
   const _MemoryCard({
     required this.memory,
     required this.onDelete,
+    required this.onToggleArchive,
+    required this.onCorrect,
   });
 
   final MemoryEntry memory;
   final VoidCallback onDelete;
+  final VoidCallback onToggleArchive;
+  final VoidCallback onCorrect;
 
   @override
   Widget build(BuildContext context) {
@@ -144,15 +172,54 @@ class _MemoryCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                IconButton(
-                  tooltip: '删除记忆',
-                  onPressed: onDelete,
-                  icon: const Icon(Icons.delete_outline),
+                PopupMenuButton<_MemoryAction>(
+                  tooltip: '记忆操作',
+                  onSelected: (action) {
+                    switch (action) {
+                      case _MemoryAction.archive:
+                        onToggleArchive();
+                      case _MemoryAction.correct:
+                        onCorrect();
+                      case _MemoryAction.delete:
+                        onDelete();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: _MemoryAction.archive,
+                      child: Text(memory.archived ? '恢复引用' : '归档'),
+                    ),
+                    const PopupMenuItem(
+                      value: _MemoryAction.correct,
+                      child: Text('修正'),
+                    ),
+                    const PopupMenuItem(
+                      value: _MemoryAction.delete,
+                      child: Text('删除'),
+                    ),
+                  ],
+                  icon: const Icon(Icons.more_horiz),
                 ),
               ],
             ),
             const SizedBox(height: 10),
             Text(memory.summary),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MetricChip(
+                    label: '重要度 ${memory.importance.toStringAsFixed(2)}'),
+                _MetricChip(
+                    label: '置信度 ${memory.confidence.toStringAsFixed(2)}'),
+                _MetricChip(label: '证据 ${memory.allSourceEntryIds.length} 篇'),
+                _MetricChip(label: '引用 ${memory.referenceCount}'),
+                if (memory.decay > 0)
+                  _MetricChip(label: '衰减 ${memory.decay.toStringAsFixed(2)}'),
+                if (memory.archived) const _MetricChip(label: '已归档'),
+              ],
+            ),
             if (chips.isNotEmpty) ...[
               const SizedBox(height: 12),
               Wrap(
@@ -171,3 +238,72 @@ class _MemoryCard extends StatelessWidget {
 
   String _dateLabel(DateTime date) => '${date.year}年${date.month}月${date.day}日';
 }
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      label: Text(label),
+    );
+  }
+}
+
+class _MemoryCorrectionDialog extends StatefulWidget {
+  const _MemoryCorrectionDialog({required this.memory});
+
+  final MemoryEntry memory;
+
+  @override
+  State<_MemoryCorrectionDialog> createState() =>
+      _MemoryCorrectionDialogState();
+}
+
+class _MemoryCorrectionDialogState extends State<_MemoryCorrectionDialog> {
+  late final _controller = TextEditingController(text: widget.memory.summary);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final value = _controller.text.trim();
+    if (value.isEmpty) return;
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('修正记忆'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        minLines: 4,
+        maxLines: 8,
+        decoration: const InputDecoration(
+          labelText: '更准确的记忆摘要',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+enum _MemoryAction { archive, correct, delete }

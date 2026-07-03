@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import 'ai_feedback_bar.dart';
 
@@ -14,10 +15,15 @@ class InsightPage extends StatefulWidget {
 
 class _InsightPageState extends State<InsightPage> {
   final _repository = const InsightRepository();
+  final _developerSettings = const DeveloperSettingsRepository();
   late Future<DiaryInsight?> _insightFuture = _repository.getLatestInsight();
+  late final Future<bool> _developerModeFuture =
+      _developerSettings.isDeveloperModeEnabled();
 
   Future<void> _refresh() async {
-    setState(() => _insightFuture = _repository.getLatestInsight());
+    setState(() {
+      _insightFuture = _repository.getLatestInsight();
+    });
     await _insightFuture;
   }
 
@@ -35,7 +41,15 @@ class _InsightPageState extends State<InsightPage> {
             }
             final insight = snapshot.data;
             if (insight == null) return const _EmptyInsight();
-            return _InsightBody(insight: insight);
+            return FutureBuilder<bool>(
+              future: _developerModeFuture,
+              builder: (context, developerSnapshot) {
+                return _InsightBody(
+                  insight: insight,
+                  developerMode: developerSnapshot.data ?? false,
+                );
+              },
+            );
           },
         ),
       ),
@@ -44,9 +58,13 @@ class _InsightPageState extends State<InsightPage> {
 }
 
 class _InsightBody extends StatelessWidget {
-  const _InsightBody({required this.insight});
+  const _InsightBody({
+    required this.insight,
+    required this.developerMode,
+  });
 
   final DiaryInsight insight;
+  final bool developerMode;
 
   @override
   Widget build(BuildContext context) {
@@ -70,6 +88,51 @@ class _InsightBody extends StatelessWidget {
             emptyText: '洞察生成中。',
           ),
         ),
+        if (insight.facts.isNotEmpty ||
+            insight.signals.isNotEmpty ||
+            insight.hypotheses.isNotEmpty ||
+            insight.suggestions.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: '结论分层',
+            icon: Icons.account_tree_outlined,
+            child: Column(
+              children: [
+                _ClaimGroup(
+                  title: '事实',
+                  claims: insight.facts,
+                  developerMode: developerMode,
+                ),
+                _ClaimGroup(
+                  title: '信号',
+                  claims: insight.signals,
+                  developerMode: developerMode,
+                ),
+                _ClaimGroup(
+                  title: '可能性',
+                  claims: insight.hypotheses,
+                  developerMode: developerMode,
+                ),
+                _ClaimGroup(
+                  title: '建议',
+                  claims: insight.suggestions,
+                  developerMode: developerMode,
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (developerMode &&
+            (insight.profileUpdateCandidates.isNotEmpty ||
+                insight.relationshipUpdates.isNotEmpty ||
+                insight.contradictions.isNotEmpty)) ...[
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: '更新候选',
+            icon: Icons.tune_outlined,
+            child: _UpdateCandidateList(insight: insight),
+          ),
+        ],
         if (insight.relatedMemories.isNotEmpty) ...[
           const SizedBox(height: 12),
           _SectionCard(
@@ -134,6 +197,148 @@ class _InsightBody extends StatelessWidget {
   }
 
   String _dateLabel(DateTime date) => '${date.year}年${date.month}月${date.day}日';
+}
+
+class _UpdateCandidateList extends StatelessWidget {
+  const _UpdateCandidateList({required this.insight});
+
+  final DiaryInsight insight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _CandidateGroup(
+          title: '画像候选',
+          lines: [
+            for (final candidate in insight.profileUpdateCandidates)
+              '${candidate.field}：${candidate.value}${_confidence(candidate.confidence)}',
+          ],
+        ),
+        _CandidateGroup(
+          title: '关系候选',
+          lines: [
+            for (final update in insight.relationshipUpdates)
+              [
+                if (update.personName.isNotEmpty) update.personName,
+                if (update.summary.isNotEmpty) update.summary,
+                if (update.pattern?.isNotEmpty ?? false) update.pattern!,
+                _confidence(update.confidence),
+              ].where((item) => item.isNotEmpty).join('｜'),
+          ],
+        ),
+        _CandidateGroup(
+          title: '反证候选',
+          lines: [
+            for (final contradiction in insight.contradictions)
+              [
+                if (contradiction.oldMemoryId.isNotEmpty)
+                  '旧记忆 ${contradiction.oldMemoryId}',
+                if (contradiction.newEvidence.isNotEmpty)
+                  contradiction.newEvidence,
+                if (contradiction.interpretation.isNotEmpty)
+                  contradiction.interpretation,
+                _confidence(contradiction.confidence),
+              ].where((item) => item.isNotEmpty).join('｜'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  String _confidence(double? value) =>
+      value == null ? '' : '｜置信度 ${value.toStringAsFixed(2)}';
+}
+
+class _CandidateGroup extends StatelessWidget {
+  const _CandidateGroup({required this.title, required this.lines});
+
+  final String title;
+  final List<String> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    if (lines.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: 8),
+      title: Text(title, style: theme.textTheme.titleSmall),
+      children: [
+        for (final line in lines)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(line),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ClaimGroup extends StatelessWidget {
+  const _ClaimGroup({
+    required this.title,
+    required this.claims,
+    required this.developerMode,
+  });
+
+  final String title;
+  final List<InsightClaim> claims;
+  final bool developerMode;
+
+  @override
+  Widget build(BuildContext context) {
+    if (claims.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: 8),
+      title: Text(title, style: theme.textTheme.titleSmall),
+      initiallyExpanded: title == '事实',
+      children: [
+        for (final claim in claims)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(claim.text),
+                if (developerMode && claim.confidence != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '置信度 ${claim.confidence!.toStringAsFixed(2)}',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ],
+                if (developerMode && claim.evidence.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final evidence in claim.evidence.take(3))
+                        Chip(
+                          visualDensity: VisualDensity.compact,
+                          label: Text(_evidenceLabel(evidence)),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _evidenceLabel(InsightEvidence evidence) {
+    final id = evidence.id.isEmpty ? '' : ' ${evidence.id}';
+    return '${evidence.type}$id'.trim();
+  }
 }
 
 class _SectionCard extends StatelessWidget {

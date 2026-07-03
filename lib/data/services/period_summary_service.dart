@@ -1,7 +1,9 @@
 import '../models/diary_entry.dart';
 import '../models/period_summary.dart';
+import '../models/stone_task.dart';
 import '../repositories/insight_repository.dart';
 import '../repositories/period_summary_repository.dart';
+import '../repositories/stone_task_repository.dart';
 import 'ai_context_builder.dart';
 
 class PeriodSummaryService {
@@ -9,14 +11,18 @@ class PeriodSummaryService {
     AiContextBuilder? contextBuilder,
     InsightRepository? insightRepository,
     PeriodSummaryRepository? periodSummaryRepository,
+    StoneTaskRepository? stoneTaskRepository,
   })  : _contextBuilder = contextBuilder ?? const AiContextBuilder(),
         _insightRepository = insightRepository ?? const InsightRepository(),
         _periodSummaryRepository =
-            periodSummaryRepository ?? const PeriodSummaryRepository();
+            periodSummaryRepository ?? const PeriodSummaryRepository(),
+        _stoneTaskRepository =
+            stoneTaskRepository ?? const StoneTaskRepository();
 
   final AiContextBuilder _contextBuilder;
   final InsightRepository _insightRepository;
   final PeriodSummaryRepository _periodSummaryRepository;
+  final StoneTaskRepository _stoneTaskRepository;
 
   Future<PeriodSummary> buildMonthSummary(
     DateTime month,
@@ -93,6 +99,7 @@ class PeriodSummaryService {
     final emotions = <String, int>{};
     final briefs = <String>[];
     final representativeIds = <String>[];
+    final relationshipHighlights = <String>[];
 
     for (final theme in contextThemes) {
       themes[theme] = (themes[theme] ?? 0) + 2;
@@ -111,8 +118,17 @@ class PeriodSummaryService {
         for (final keyword in insight.keywords) {
           themes[keyword] = (themes[keyword] ?? 0) + 1;
         }
+        for (final update in insight.relationshipUpdates.take(3)) {
+          final line = [
+            if (update.personName.isNotEmpty) update.personName,
+            if (update.summary.isNotEmpty) update.summary,
+            if (update.pattern?.isNotEmpty ?? false) update.pattern!,
+          ].join('｜');
+          if (line.isNotEmpty) relationshipHighlights.add(line);
+        }
       }
     }
+    final stoneHighlights = await _stoneHighlights(start, end);
 
     final topThemes = _topKeys(themes, 8);
     final topEmotions = _topKeys(emotions, 5);
@@ -153,9 +169,54 @@ class PeriodSummaryService {
       emotions: topEmotions,
       representativeEntryIds: representativeIds,
       generator: 'local-aggregate-v1',
+      relationshipHighlights:
+          _uniqueTake(relationshipHighlights, limit: 5).toList(),
+      stoneHighlights: stoneHighlights,
     );
     await _periodSummaryRepository.saveSummary(summary);
     return summary;
+  }
+
+  Future<List<String>> _stoneHighlights(DateTime start, DateTime end) async {
+    final tasks = await _stoneTaskRepository.listTasks();
+    final created = <StoneTask>[];
+    final completed = <StoneTask>[];
+    final checkIns = <StoneTaskCheckIn>[];
+    for (final task in tasks) {
+      if (_within(task.createdAt, start, end)) created.add(task);
+      final completedAt = task.completedAt;
+      if (completedAt != null && _within(completedAt, start, end)) {
+        completed.add(task);
+      }
+      checkIns.addAll(
+        task.checkIns.where((item) => _within(item.createdAt, start, end)),
+      );
+    }
+    final lines = <String>[
+      if (created.isNotEmpty) '新增塑石行动 ${created.length} 个',
+      if (checkIns.isNotEmpty) '记录塑石进展 ${checkIns.length} 次',
+      if (completed.isNotEmpty) '完成塑石行动 ${completed.length} 个',
+      for (final task in completed.take(3)) '完成：${task.title}',
+      if (completed.isEmpty)
+        for (final task in created.take(3)) '进行中：${task.title}',
+    ];
+    return lines;
+  }
+
+  bool _within(DateTime date, DateTime start, DateTime end) {
+    return !date.isBefore(start) && !date.isAfter(end);
+  }
+
+  Iterable<String> _uniqueTake(List<String> values,
+      {required int limit}) sync* {
+    final seen = <String>{};
+    for (final value in values) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || seen.contains(trimmed)) continue;
+      seen.add(trimmed);
+      yield trimmed;
+      if (seen.length >= limit) return;
+    }
   }
 
   List<String> _topKeys(Map<String, int> values, int limit) {

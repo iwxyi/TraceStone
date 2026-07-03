@@ -287,9 +287,21 @@ class _AiQueueCard extends StatelessWidget {
     final theme = Theme.of(context);
     final hasRunning = job?.state == AiAnalysisJobState.running;
     final hasFailed = snapshot.failedCount > 0 && !hasRunning;
-    final title = hasFailed ? '有日记整理失败' : '正在整理记忆';
+    final isResuming = job?.state == AiAnalysisJobState.incomplete;
+    final title = hasFailed
+        ? '有日记整理失败'
+        : isResuming
+            ? '继续整理记忆'
+            : '正在整理记忆';
     final stage = job?.stageLabel ?? '等待继续';
-    final remaining = snapshot.pendingCount;
+    final waiting = snapshot.waitingCount;
+    final totalActive = snapshot.runnableCount +
+        (job?.state == AiAnalysisJobState.running ? 1 : 0);
+    final batchProgress = job == null || totalActive <= 0
+        ? ''
+        : '正在整理 ${snapshot.activeOrdinal}/$totalActive 篇';
+    final progress =
+        job == null ? 0.0 : (job.completedStages.length / 7).clamp(0.0, 1.0);
 
     return _HomeCard(
       child: Column(
@@ -316,12 +328,30 @@ class _AiQueueCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          if (hasRunning) const LinearProgressIndicator(minHeight: 3),
-          if (hasRunning) const SizedBox(height: 10),
-          Text(stage),
-          if (remaining > 0) ...[
+          if (job != null) ...[
+            LinearProgressIndicator(value: progress, minHeight: 3),
+            const SizedBox(height: 10),
+          ],
+          if (batchProgress.isNotEmpty) ...[
+            Text(batchProgress, style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
-            Text('剩余 $remaining 篇，会在后台串行继续。', style: theme.textTheme.bodySmall),
+          ],
+          Text(isResuming ? '上次整理被中断，将从已完成阶段继续：$stage' : stage),
+          if (job != null && job.completedStages.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              '已完成 ${job.completedStages.length}/7 个阶段',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+          if (snapshot.incompleteCount > 0 && !isResuming) ...[
+            const SizedBox(height: 4),
+            Text('有 ${snapshot.incompleteCount} 篇会从中断处恢复。',
+                style: theme.textTheme.bodySmall),
+          ],
+          if (waiting > 0) ...[
+            const SizedBox(height: 4),
+            Text('还有 $waiting 篇等待后台串行继续。', style: theme.textTheme.bodySmall),
           ],
           if (job?.lastError != null && job!.lastError!.isNotEmpty) ...[
             const SizedBox(height: 8),

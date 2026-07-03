@@ -22,6 +22,7 @@ class AiAnalysisJob {
     required this.createdAt,
     required this.updatedAt,
     this.completedStages = const [],
+    this.stageLogs = const [],
     this.retryCount = 0,
     this.lastError,
   });
@@ -34,6 +35,7 @@ class AiAnalysisJob {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<AiAnalysisStage> completedStages;
+  final List<AiAnalysisStageLog> stageLogs;
   final int retryCount;
   final String? lastError;
 
@@ -70,6 +72,7 @@ class AiAnalysisJob {
     AiAnalysisStage? currentStage,
     DateTime? updatedAt,
     List<AiAnalysisStage>? completedStages,
+    List<AiAnalysisStageLog>? stageLogs,
     int? retryCount,
     String? lastError,
     bool clearLastError = false,
@@ -83,6 +86,7 @@ class AiAnalysisJob {
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       completedStages: completedStages ?? this.completedStages,
+      stageLogs: stageLogs ?? this.stageLogs,
       retryCount: retryCount ?? this.retryCount,
       lastError: clearLastError ? null : lastError ?? this.lastError,
     );
@@ -97,6 +101,7 @@ class AiAnalysisJob {
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'completedStages': completedStages.map((item) => item.name).toList(),
+        'stageLogs': stageLogs.map((item) => item.toJson()).toList(),
         'retryCount': retryCount,
         'lastError': lastError,
       };
@@ -128,8 +133,59 @@ class AiAnalysisJob {
                 orElse: () => AiAnalysisStage.queued,
               ))
           .toList(),
+      stageLogs: (json['stageLogs'] as List<dynamic>? ?? [])
+          .map((item) => AiAnalysisStageLog.fromJson(
+              item as Map<String, dynamic>? ?? const {}))
+          .toList(),
       retryCount: json['retryCount'] as int? ?? 0,
       lastError: json['lastError'] as String?,
+    );
+  }
+}
+
+class AiAnalysisStageLog {
+  const AiAnalysisStageLog({
+    required this.stage,
+    required this.startedAt,
+    required this.message,
+    this.inputSummary = '',
+    this.outputSummary = '',
+    this.error,
+    this.retryCount = 0,
+  });
+
+  final AiAnalysisStage stage;
+  final DateTime startedAt;
+  final String message;
+  final String inputSummary;
+  final String outputSummary;
+  final String? error;
+  final int retryCount;
+
+  Map<String, dynamic> toJson() => {
+        'stage': stage.name,
+        'startedAt': startedAt.toIso8601String(),
+        'message': message,
+        'inputSummary': inputSummary,
+        'outputSummary': outputSummary,
+        'error': error,
+        'retryCount': retryCount,
+      };
+
+  static AiAnalysisStageLog fromJson(Map<String, dynamic> json) {
+    final now = DateTime.now();
+    final stageName = json['stage'] as String? ?? AiAnalysisStage.queued.name;
+    return AiAnalysisStageLog(
+      stage: AiAnalysisStage.values.firstWhere(
+        (item) => item.name == stageName,
+        orElse: () => AiAnalysisStage.queued,
+      ),
+      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? '') ?? now,
+      message: json['message'] as String? ?? '',
+      inputSummary: json['inputSummary'] as String? ?? '',
+      outputSummary: json['outputSummary'] as String? ?? '',
+      error: json['error'] as String?,
+      retryCount: json['retryCount'] as int? ?? 0,
     );
   }
 }
@@ -145,8 +201,38 @@ class AiAnalysisQueueSnapshot {
 
   int get pendingCount => jobs.where((job) => job.canRun).length;
 
+  int get runnableCount => jobs.where((job) => job.canRun).length;
+
+  int get waitingCount => jobs
+      .where((job) =>
+          job.canRun &&
+          job.id != currentJob?.id &&
+          job.state != AiAnalysisJobState.running)
+      .length;
+
+  int get incompleteCount =>
+      jobs.where((job) => job.state == AiAnalysisJobState.incomplete).length;
+
   int get failedCount =>
       jobs.where((job) => job.state == AiAnalysisJobState.failed).length;
+
+  int get completedCount =>
+      jobs.where((job) => job.state == AiAnalysisJobState.completed).length;
+
+  int get totalTrackedCount => jobs.length;
+
+  int get activeOrdinal {
+    final job = currentJob;
+    if (job == null) return 0;
+    final activeJobs = jobs
+        .where((item) =>
+            item.canRun ||
+            item.state == AiAnalysisJobState.running ||
+            item.state == AiAnalysisJobState.completed)
+        .toList();
+    final index = activeJobs.indexWhere((item) => item.id == job.id);
+    return index < 0 ? 1 : index + 1;
+  }
 
   bool get hasVisibleWork =>
       currentJob != null || pendingCount > 0 || failedCount > 0;

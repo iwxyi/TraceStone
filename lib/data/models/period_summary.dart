@@ -13,6 +13,8 @@ class PeriodSummary {
     required this.emotions,
     required this.representativeEntryIds,
     required this.generator,
+    this.relationshipHighlights = const [],
+    this.stoneHighlights = const [],
   });
 
   final String id;
@@ -26,6 +28,8 @@ class PeriodSummary {
   final List<String> emotions;
   final List<String> representativeEntryIds;
   final String generator;
+  final List<String> relationshipHighlights;
+  final List<String> stoneHighlights;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -39,6 +43,8 @@ class PeriodSummary {
         'emotions': emotions,
         'representativeEntryIds': representativeEntryIds,
         'generator': generator,
+        'relationshipHighlights': relationshipHighlights,
+        'stoneHighlights': stoneHighlights,
       };
 
   static PeriodSummary fromJson(Map<String, dynamic> json) {
@@ -61,6 +67,8 @@ class PeriodSummary {
       emotions: _stringList(json['emotions']),
       representativeEntryIds: _stringList(json['representativeEntryIds']),
       generator: json['generator'] as String? ?? 'unknown',
+      relationshipHighlights: _stringList(json['relationshipHighlights']),
+      stoneHighlights: _stringList(json['stoneHighlights']),
     );
   }
 

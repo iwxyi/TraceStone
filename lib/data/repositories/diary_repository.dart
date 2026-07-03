@@ -27,7 +27,7 @@ class DiaryRepository {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         '$_entryPrefix${entry.id}', jsonEncode(entry.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(entry.id)) {
       index.add(entry.id);
       await prefs.setStringList(_indexKey, index);
@@ -38,17 +38,17 @@ class DiaryRepository {
 
   Future<DiaryEntry?> getEntryById(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_entryPrefix$id');
+    final raw = _safeGetString(prefs, '$_entryPrefix$id');
     if (raw == null) return null;
     return DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
   }
 
   Future<List<DiaryEntry>> listEntries() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     final entries = <DiaryEntry>[];
     for (final id in index) {
-      final raw = prefs.getString('$_entryPrefix$id');
+      final raw = _safeGetString(prefs, '$_entryPrefix$id');
       if (raw == null) continue;
       entries.add(DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>));
     }
@@ -86,7 +86,7 @@ class DiaryRepository {
 
   Future<void> moveToTrash(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_entryPrefix$id');
+    final raw = _safeGetString(prefs, '$_entryPrefix$id');
     if (raw == null) return;
     final deletedAt = DateTime.now();
     final trashPayload = {
@@ -95,10 +95,10 @@ class DiaryRepository {
     };
     await prefs.setString('$_trashPrefix$id', jsonEncode(trashPayload));
     await prefs.remove('$_entryPrefix$id');
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     index.remove(id);
     await prefs.setStringList(_indexKey, index);
-    final trashIndex = prefs.getStringList(_trashIndexKey) ?? [];
+    final trashIndex = _safeGetStringList(prefs, _trashIndexKey) ?? [];
     if (!trashIndex.contains(id)) {
       trashIndex.add(id);
       await prefs.setStringList(_trashIndexKey, trashIndex);
@@ -140,7 +140,7 @@ class DiaryRepository {
     if (item == null) return;
     await prefs.setString(
         '$_entryPrefix${item.entry.id}', jsonEncode(item.entry.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(item.entry.id)) {
       index.add(item.entry.id);
       await prefs.setStringList(_indexKey, index);
@@ -192,7 +192,7 @@ class DiaryRepository {
 
   Future<DiaryEntry?> getRecoverySnapshot(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_recoveryPrefix$id');
+    final raw = _safeGetString(prefs, '$_recoveryPrefix$id');
     if (raw == null) return null;
     return DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
   }
@@ -207,7 +207,7 @@ class DiaryRepository {
     final snapshots = <DiaryEntry>[];
     for (final key in prefs.getKeys()) {
       if (!key.startsWith(_recoveryPrefix)) continue;
-      final raw = prefs.getString(key);
+      final raw = _safeGetString(prefs, key);
       if (raw == null) continue;
       snapshots
           .add(DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>));
@@ -217,7 +217,7 @@ class DiaryRepository {
   }
 
   Future<List<String>> _trashIds(SharedPreferences prefs) async {
-    final indexed = prefs.getStringList(_trashIndexKey) ?? [];
+    final indexed = _safeGetStringList(prefs, _trashIndexKey) ?? [];
     final scanned = prefs
         .getKeys()
         .where((key) => key.startsWith(_trashPrefix) && key != _trashIndexKey)
@@ -232,31 +232,42 @@ class DiaryRepository {
   Future<DiaryTrashItem?> _trashItem(SharedPreferences prefs, String id) async {
     final raw = _safeGetString(prefs, '$_trashPrefix$id');
     if (raw == null) return null;
-    final parsed = jsonDecode(raw) as Map<String, dynamic>;
-    final hasMetadata = parsed['entry'] is Map<String, dynamic>;
-    final entryJson =
-        hasMetadata ? parsed['entry'] as Map<String, dynamic> : parsed;
-    final entry = DiaryEntry.fromJson(entryJson);
-    final deletedAt = DateTime.tryParse(parsed['deletedAt'] as String? ?? '') ??
-        entry.updatedAt;
-    return DiaryTrashItem(
-      entry: entry,
-      deletedAt: deletedAt,
-      expiresAt: deletedAt.add(trashRetention),
-    );
-  }
-
-  String? _safeGetString(SharedPreferences prefs, String key) {
     try {
-      return prefs.getString(key);
+      final parsed = jsonDecode(raw) as Map<String, dynamic>;
+      final hasMetadata = parsed['entry'] is Map<String, dynamic>;
+      final entryJson =
+          hasMetadata ? parsed['entry'] as Map<String, dynamic> : parsed;
+      final entry = DiaryEntry.fromJson(entryJson);
+      final deletedAt =
+          DateTime.tryParse(parsed['deletedAt'] as String? ?? '') ??
+              entry.updatedAt;
+      return DiaryTrashItem(
+        entry: entry,
+        deletedAt: deletedAt,
+        expiresAt: deletedAt.add(trashRetention),
+      );
     } on Object {
       return null;
     }
   }
 
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    final value = prefs.get(key);
+    return value is String ? value : null;
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    final value = prefs.get(key);
+    if (value is List<String>) return List<String>.from(value);
+    if (value is List) {
+      return value.whereType<String>().toList();
+    }
+    return null;
+  }
+
   Future<void> _removeTrashItem(SharedPreferences prefs, String id) async {
     await prefs.remove('$_trashPrefix$id');
-    final trashIndex = prefs.getStringList(_trashIndexKey) ?? [];
+    final trashIndex = _safeGetStringList(prefs, _trashIndexKey) ?? [];
     trashIndex.remove(id);
     await prefs.setStringList(_trashIndexKey, trashIndex);
   }

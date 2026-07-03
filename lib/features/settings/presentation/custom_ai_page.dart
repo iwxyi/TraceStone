@@ -5,11 +5,41 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../data/services/ai_analysis_queue_runner.dart';
+
 class CustomAiPage extends StatefulWidget {
   const CustomAiPage({super.key});
 
   @override
   State<CustomAiPage> createState() => _CustomAiPageState();
+}
+
+class _CustomAiPrivacyNotice extends StatelessWidget {
+  const _CustomAiPrivacyNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.colorScheme.errorContainer.withValues(alpha: 0.45),
+      child: const Padding(
+        padding: EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.privacy_tip_outlined),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '自定义 AI 会把当前日记、相关历史摘要、长期记忆、画像、关系档案和行动记录发送到你配置的服务。'
+                '秘钥只保存在本机，但第三方服务的数据处理规则由服务方决定。',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _CustomAiPageState extends State<CustomAiPage> {
@@ -18,6 +48,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
   static const _baseUrlKey = 'ai.baseUrl';
   static const _apiKeyKey = 'ai.apiKey';
   static const _modelKey = 'ai.model';
+  static const _privacyAcceptedKey = 'ai.customPrivacyAccepted';
 
   final _baseUrlController =
       TextEditingController(text: 'https://api.openai.com/v1');
@@ -28,6 +59,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
   bool _isLoadingModels = false;
   bool _isTestingConfig = false;
   bool _modelsFetchedOnline = false;
+  bool _privacyAccepted = false;
   String _selectedPlatform = 'OpenAI';
   String? _modelFetchHint;
   String? _lastFetchUrl;
@@ -82,6 +114,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
       _apiKeyController.text = prefs.getString(_apiKeyKey) ?? '';
       _modelController.text = prefs.getString(_modelKey) ??
           (_defaultModels[_selectedPlatform] ?? '');
+      _privacyAccepted = prefs.getBool(_privacyAcceptedKey) ?? false;
     });
     if (_canAutoFetch) {
       await _fetchModels();
@@ -89,15 +122,50 @@ class _CustomAiPageState extends State<CustomAiPage> {
   }
 
   Future<void> _saveSettings() async {
+    if (!_useOfficialAi && !_privacyAccepted) {
+      final accepted = await _confirmCustomAiPrivacy();
+      if (accepted != true) return;
+      _privacyAccepted = true;
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_useOfficialKey, _useOfficialAi);
     await prefs.setString(_platformKey, _selectedPlatform);
     await prefs.setString(_baseUrlKey, _baseUrlController.text.trim());
     await prefs.setString(_apiKeyKey, _apiKeyController.text.trim());
     await prefs.setString(_modelKey, _modelController.text.trim());
+    await prefs.setBool(_privacyAcceptedKey, _privacyAccepted);
+    if (!_useOfficialAi &&
+        _baseUrlController.text.trim().isNotEmpty &&
+        _apiKeyController.text.trim().isNotEmpty &&
+        _modelController.text.trim().isNotEmpty) {
+      unawaited(const AiAnalysisQueueRunner().processUntilIdle(maxJobs: 1));
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('已保存 AI 设置')));
+  }
+
+  Future<bool?> _confirmCustomAiPrivacy() {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('使用第三方 AI？'),
+        content: const Text(
+          '启用自定义接口后，日记原文、摘要、相关记忆、画像、关系和塑石行动等上下文会发送到你配置的模型服务。'
+          '请确认该服务可信，并理解 TraceStone 无法控制第三方如何处理这些数据。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('我理解并继续'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _testConfiguration() async {
@@ -287,6 +355,24 @@ class _CustomAiPageState extends State<CustomAiPage> {
         padding: const EdgeInsets.all(20),
         children: [
           Card(
+            child: SwitchListTile(
+              secondary: const Icon(Icons.cloud_outlined),
+              title: const Text('使用官方 AI'),
+              subtitle: Text(
+                _useOfficialAi ? '由应用内置服务处理 AI 请求' : '使用下方自定义接口，数据会发送到你配置的服务',
+              ),
+              value: _useOfficialAi,
+              onChanged: (value) {
+                setState(() => _useOfficialAi = value);
+              },
+            ),
+          ),
+          if (!_useOfficialAi) ...[
+            const SizedBox(height: 16),
+            const _CustomAiPrivacyNotice(),
+          ],
+          const SizedBox(height: 16),
+          Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: AbsorbPointer(
@@ -393,6 +479,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
               ),
             ],
           ),
+          const SizedBox(height: 32),
         ],
       ),
     );

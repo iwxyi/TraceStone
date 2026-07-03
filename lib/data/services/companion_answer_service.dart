@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../models/ai_context_package.dart';
 import '../models/ai_prompt_trace.dart';
+import '../models/ai_profile.dart';
 import '../models/companion_answer.dart';
 import '../repositories/ai_prompt_trace_repository.dart';
 import 'ai_client_service.dart';
@@ -36,6 +37,8 @@ class CompanionAnswerService {
         userPromptPreview: _preview(userPrompt),
         systemPromptLength: systemPrompt.length,
         userPromptLength: userPrompt.length,
+        systemPrompt: systemPrompt,
+        userPrompt: userPrompt,
       ));
       final jsonText = await _client.completeJson(
         systemPrompt: systemPrompt,
@@ -64,12 +67,36 @@ ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map((result)
             return '- score ${result.score}｜${memory.title}｜${memory.summary}｜${result.reasons.join('；')}';
           }).join('\n')}
 
+相关日记和片段：
+${context.searchMatches.isEmpty ? '无' : context.searchMatches.map((match) {
+            return '- ${match.sourceType} score ${match.score}｜${match.title}｜${match.summary}｜${match.reasons.join('；')}';
+          }).join('\n')}
+
+稳定画像：
+${context.profileFacts.isEmpty ? '无' : context.profileFacts.map((profile) {
+            return '- ${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜置信度 ${profile.confidence.toStringAsFixed(2)}';
+          }).join('\n')}
+
+关系档案：
+${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.map((profile) {
+            return '- ${profile.personName}｜${profile.relationship ?? '未知关系'}｜${profile.interactionCount} 次互动｜${[
+              ...profile.emotions.take(2),
+              ...profile.patterns.take(2),
+            ].join('、')}';
+          }).join('\n')}
+
+塑石行动：
+${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
+            return '- ${task.title}｜${task.description}';
+          }).join('\n')}
+
 要求：
-1. 回答必须基于上面的相关记忆；
+1. 回答必须基于上面的相关记忆、日记摘要、日记片段、画像、关系档案或塑石行动；
 2. 如果材料不足，要明确说“不太够判断”；
 3. 语气温和、具体，不做医疗或心理诊断；
 4. 可以提出一个帮助用户继续理解自己的追问；
-5. sources 只能来自给定的相关记忆。
+5. 画像、关系档案和塑石行动只能作为辅助背景，不要当作绝对结论；
+6. sources 只能来自给定材料。
 
 输出 JSON：
 {
@@ -80,7 +107,16 @@ ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map((result)
   }
 
   CompanionAnswer _fallbackAnswer(String question, AiContextPackage context) {
-    if (context.relatedMemories.isEmpty) {
+    final memories = context.relatedMemories.take(3).toList();
+    final matches = context.searchMatches.take(3).toList();
+    final profiles = context.profileFacts.take(2).toList();
+    final relationships = context.relationshipProfiles.take(2).toList();
+    final stones = context.stoneTasks.take(2).toList();
+    if (memories.isEmpty &&
+        matches.isEmpty &&
+        profiles.isEmpty &&
+        relationships.isEmpty &&
+        stones.isEmpty) {
       return CompanionAnswer(
         answer: '我暂时没有找到足够相关的历史记录来回答“$question”。可以换一种更具体的问法，比如加上时间、人物或事件。',
         followUp: '这件事大概发生在什么时候？',
@@ -88,25 +124,81 @@ ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map((result)
         usedFallback: true,
       );
     }
-    final top = context.relatedMemories.take(3).toList();
     return CompanionAnswer(
       answer: [
-        '我先根据本地记忆给你一个简短回答：这件事可能和这些记录有关。',
-        for (final result in top)
-          '“${result.memory.title}”：${result.memory.summary}',
-        '如果配置了自定义 AI，我可以把这些线索整理成更完整的分析。',
+        '我先根据本地资料给你一个简短回答：',
+        if (relationships.isNotEmpty) ...[
+          for (final relationship in relationships)
+            _relationshipFallbackLine(relationship),
+        ],
+        if (profiles.isNotEmpty) ...[
+          for (final profile in profiles)
+            '关于你自己，已有候选观察是“${profile.field}”：${profile.value}。',
+        ],
+        if (memories.isNotEmpty || matches.isNotEmpty) ...[
+          for (final result in memories)
+            '历史记忆“${result.memory.title}”：${result.memory.summary}',
+          for (final match in matches) '相关记录“${match.title}”：${match.summary}',
+        ],
+        if (stones.isNotEmpty) ...[
+          for (final task in stones) '塑石行动“${task.title}”：${task.description}',
+        ],
+        '这些只是本地检索到的线索，不足以直接下结论。配置自定义 AI 后，我可以把它们整理成更完整的分析。',
       ].join('\n'),
       followUp: '这些记录里，哪一条最接近你现在想问的感觉？',
       sources: [
-        for (final result in top)
+        for (final result in memories)
           CompanionAnswerSource(
             title: result.memory.title,
             reason: result.reasons.join('；'),
             score: result.score,
           ),
+        for (final match in matches)
+          CompanionAnswerSource(
+            title: match.title,
+            reason: match.reasons.join('；'),
+            score: match.score,
+          ),
+        for (final profile in profiles)
+          CompanionAnswerSource(
+            title: profile.field,
+            reason: '${profile.evidenceCount} 条证据',
+            score: (profile.confidence * 10).round(),
+          ),
+        for (final relationship in relationships)
+          CompanionAnswerSource(
+            title: relationship.personName,
+            reason: '${relationship.interactionCount} 次互动',
+            score: (relationship.confidence * 10).round(),
+          ),
+        for (final task in stones)
+          CompanionAnswerSource(
+            title: task.title,
+            reason: '塑石行动',
+            score: 1,
+          ),
       ],
       usedFallback: true,
     );
+  }
+
+  String _relationshipFallbackLine(RelationshipProfile relationship) {
+    final latest = relationship.recentInteractions.isEmpty
+        ? null
+        : relationship.recentInteractions.first;
+    final parts = [
+      '关于“${relationship.personName}”',
+      if (relationship.relationship?.isNotEmpty ?? false)
+        '关系类型记录为 ${relationship.relationship}',
+      '共有 ${relationship.interactionCount} 次互动线索',
+      if (relationship.emotions.isNotEmpty)
+        '常见情绪有 ${relationship.emotions.take(2).join('、')}',
+      if (relationship.patterns.isNotEmpty)
+        '可能的互动模式是 ${relationship.patterns.take(2).join('；')}',
+      if (latest != null && latest.summary.isNotEmpty)
+        '最近一次是：${latest.summary}',
+    ];
+    return '${parts.join('，')}。';
   }
 
   List<CompanionAnswerSource> _sources(Object? value) {

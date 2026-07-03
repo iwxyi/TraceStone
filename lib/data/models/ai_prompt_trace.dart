@@ -8,6 +8,8 @@ class AiPromptTrace {
     required this.userPromptPreview,
     required this.systemPromptLength,
     required this.userPromptLength,
+    this.systemPrompt,
+    this.userPrompt,
   });
 
   final String id;
@@ -18,6 +20,8 @@ class AiPromptTrace {
   final String userPromptPreview;
   final int systemPromptLength;
   final int userPromptLength;
+  final String? systemPrompt;
+  final String? userPrompt;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -28,6 +32,8 @@ class AiPromptTrace {
         'userPromptPreview': userPromptPreview,
         'systemPromptLength': systemPromptLength,
         'userPromptLength': userPromptLength,
+        'systemPrompt': systemPrompt,
+        'userPrompt': userPrompt,
       };
 
   static AiPromptTrace fromJson(Map<String, dynamic> json) {
@@ -41,6 +47,8 @@ class AiPromptTrace {
       userPromptPreview: json['userPromptPreview'] as String? ?? '',
       systemPromptLength: json['systemPromptLength'] as int? ?? 0,
       userPromptLength: json['userPromptLength'] as int? ?? 0,
+      systemPrompt: json['systemPrompt'] as String?,
+      userPrompt: json['userPrompt'] as String?,
     );
   }
 }

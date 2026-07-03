@@ -33,6 +33,16 @@ class AiEmbeddingRepository {
     return _loadMany(prefs, ids);
   }
 
+  Future<AiEmbedding?> getBySource({
+    required AiEmbeddingSourceType sourceType,
+    required String sourceId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('$_prefix${sourceType.name}:$sourceId');
+    if (raw == null) return null;
+    return AiEmbedding.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+  }
+
   Future<void> deleteBySource({
     required AiEmbeddingSourceType sourceType,
     required String sourceId,

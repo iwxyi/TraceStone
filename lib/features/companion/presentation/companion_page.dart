@@ -2,10 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/companion_answer.dart';
+import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/services/companion_answer_service.dart';
 
 class CompanionPage extends StatefulWidget {
-  const CompanionPage({super.key});
+  const CompanionPage({
+    super.key,
+    this.initialQuestion,
+  });
+
+  final String? initialQuestion;
 
   @override
   State<CompanionPage> createState() => _CompanionPageState();
@@ -13,7 +19,11 @@ class CompanionPage extends StatefulWidget {
 
 class _CompanionPageState extends State<CompanionPage> {
   final _controller = TextEditingController();
+  final _scrollController = ScrollController();
   final _service = const CompanionAnswerService();
+  final _developerSettings = const DeveloperSettingsRepository();
+  late final Future<bool> _developerModeFuture =
+      _developerSettings.isDeveloperModeEnabled();
   final _messages = <_ChatMessage>[
     const _ChatMessage.assistant(
       text: '你可以问我：最近我反复在意什么？我和自己的关系有什么变化？',
@@ -22,8 +32,20 @@ class _CompanionPageState extends State<CompanionPage> {
   bool _isSending = false;
 
   @override
+  void initState() {
+    super.initState();
+    final question = widget.initialQuestion?.trim();
+    if (question == null || question.isEmpty) return;
+    _controller.text = question;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _send();
+    });
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -35,6 +57,7 @@ class _CompanionPageState extends State<CompanionPage> {
       _isSending = true;
       _controller.clear();
     });
+    _scrollToBottom();
     final answer = await _service.answer(text);
     if (!mounted) return;
     setState(() {
@@ -46,6 +69,18 @@ class _CompanionPageState extends State<CompanionPage> {
       ));
       _isSending = false;
     });
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   @override
@@ -55,16 +90,29 @@ class _CompanionPageState extends State<CompanionPage> {
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(20),
-              itemCount: _messages.length + (_isSending ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index == _messages.length) {
-                  return const _MessageBubble(
-                    message: _ChatMessage.assistant(text: '正在整理相关记忆…'),
-                  );
-                }
-                return _MessageBubble(message: _messages[index]);
+            child: FutureBuilder<bool>(
+              future: _developerModeFuture,
+              builder: (context, snapshot) {
+                final developerMode = snapshot.data ?? false;
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(20),
+                  itemCount: _messages.length + (_isSending ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index == _messages.length) {
+                      return _MessageBubble(
+                        message: const _ChatMessage.assistant(
+                          text: '正在整理相关记忆…',
+                        ),
+                        developerMode: developerMode,
+                      );
+                    }
+                    return _MessageBubble(
+                      message: _messages[index],
+                      developerMode: developerMode,
+                    );
+                  },
+                );
               },
             ),
           ),
@@ -135,9 +183,13 @@ class _ChatMessage {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
+  const _MessageBubble({
+    required this.message,
+    required this.developerMode,
+  });
 
   final _ChatMessage message;
+  final bool developerMode;
 
   @override
   Widget build(BuildContext context) {
@@ -176,7 +228,9 @@ class _MessageBubble extends StatelessWidget {
                           message: source.reason,
                           child: Chip(
                             label: Text(source.score > 0
-                                ? '${source.title} ${source.score}'
+                                ? developerMode
+                                    ? '${source.title} ${source.score}'
+                                    : source.title
                                 : source.title),
                           ),
                         ),

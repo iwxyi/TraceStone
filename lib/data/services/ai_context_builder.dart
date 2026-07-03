@@ -1,29 +1,60 @@
+import '../models/ai_profile.dart';
 import '../models/ai_context_package.dart';
+import '../models/calendar_memory.dart';
 import '../models/ai_retrieval_trace.dart';
 import '../models/diary_entry.dart';
 import '../models/entry_summary.dart';
 import '../models/memory_retrieval_result.dart';
+import '../models/stone_task.dart';
 import '../repositories/ai_retrieval_trace_repository.dart';
 import '../repositories/diary_repository.dart';
 import '../repositories/entry_summary_repository.dart';
+import '../repositories/insight_repository.dart';
 import '../repositories/memory_repository.dart';
+import '../repositories/ai_profile_preference_repository.dart';
+import '../repositories/stone_task_repository.dart';
+import '../repositories/calendar_memory_repository.dart';
+import 'profile_projection_service.dart';
+import 'ai_search_service.dart';
 
 class AiContextBuilder {
   const AiContextBuilder({
     DiaryRepository? diaryRepository,
     EntrySummaryRepository? summaryRepository,
     MemoryRepository? memoryRepository,
+    InsightRepository? insightRepository,
+    StoneTaskRepository? stoneTaskRepository,
+    CalendarMemoryRepository? calendarMemoryRepository,
+    AiProfilePreferenceRepository? profilePreferenceRepository,
+    ProfileProjectionService? profileProjectionService,
+    AiSearchService? searchService,
     AiRetrievalTraceRepository? retrievalTraceRepository,
   })  : _diaryRepository = diaryRepository ?? const DiaryRepository(),
         _summaryRepository =
             summaryRepository ?? const EntrySummaryRepository(),
         _memoryRepository = memoryRepository ?? const MemoryRepository(),
+        _insightRepository = insightRepository ?? const InsightRepository(),
+        _stoneTaskRepository =
+            stoneTaskRepository ?? const StoneTaskRepository(),
+        _calendarMemoryRepository =
+            calendarMemoryRepository ?? const CalendarMemoryRepository(),
+        _profilePreferenceRepository = profilePreferenceRepository ??
+            const AiProfilePreferenceRepository(),
+        _profileProjectionService =
+            profileProjectionService ?? const ProfileProjectionService(),
+        _searchService = searchService ?? const AiSearchService(),
         _retrievalTraceRepository =
             retrievalTraceRepository ?? const AiRetrievalTraceRepository();
 
   final DiaryRepository _diaryRepository;
   final EntrySummaryRepository _summaryRepository;
   final MemoryRepository _memoryRepository;
+  final InsightRepository _insightRepository;
+  final StoneTaskRepository _stoneTaskRepository;
+  final CalendarMemoryRepository _calendarMemoryRepository;
+  final AiProfilePreferenceRepository _profilePreferenceRepository;
+  final ProfileProjectionService _profileProjectionService;
+  final AiSearchService _searchService;
   final AiRetrievalTraceRepository _retrievalTraceRepository;
 
   Future<AiContextPackage> buildForTodayInsight(DiaryEntry entry) async {
@@ -32,17 +63,33 @@ class AiContextBuilder {
     final segments = await _summaryRepository.listSegments(entry.id);
     final relatedMemories =
         await _memoryRepository.findRelatedWithReasons(entry: entry);
+    final calendarMatches = await _calendarMatches(entry);
+    final projection = await _profileProjection();
+    final profileFacts = _topProfileFacts(projection.profileFacts);
+    final relationshipProfiles = _relatedRelationshipProfiles(
+      projection.relationshipProfiles,
+      entry.content,
+    );
+    final stoneTasks = await _activeStoneTasks();
     final package = AiContextPackage(
       scenario: AiContextScenario.todayInsight,
       currentEntry: entry,
       currentSummary: summary,
       currentSegments: segments,
       recentEntries: recentEntries,
+      calendarMatches: calendarMatches,
       relatedMemories: relatedMemories,
+      profileFacts: profileFacts,
+      relationshipProfiles: relationshipProfiles,
+      stoneTasks: stoneTasks,
     );
     final trace = _traceFromResults(
       entry.id,
       relatedMemories,
+      calendarMatches: calendarMatches,
+      profileFacts: profileFacts,
+      relationshipProfiles: relationshipProfiles,
+      stoneTasks: stoneTasks,
       scenario: package.scenario.name,
       contextSummary: package.debugSummary,
       sourceCount: package.sourceCount,
@@ -54,7 +101,11 @@ class AiContextBuilder {
       currentSummary: package.currentSummary,
       currentSegments: package.currentSegments,
       recentEntries: package.recentEntries,
+      calendarMatches: package.calendarMatches,
       relatedMemories: package.relatedMemories,
+      profileFacts: package.profileFacts,
+      relationshipProfiles: package.relationshipProfiles,
+      stoneTasks: package.stoneTasks,
       retrievalTrace: trace,
     );
   }
@@ -72,15 +123,36 @@ class AiContextBuilder {
     );
     final relatedMemories =
         await _memoryRepository.findRelatedWithReasons(entry: entry, limit: 12);
+    final searchMatches = await _searchService.search(query);
+    final projection = await _profileProjection();
+    final profileFacts =
+        _topProfileFacts(_matchingProfileFacts(projection.profileFacts, query));
+    final relationshipProfiles = _relatedRelationshipProfiles(
+      projection.relationshipProfiles,
+      query,
+    );
+    final stoneTasks = await _matchingStoneTasks(query);
     return AiContextPackage(
       scenario: AiContextScenario.search,
       query: query,
+      searchMatches: searchMatches,
       relatedMemories: relatedMemories,
+      profileFacts: profileFacts,
+      relationshipProfiles: relationshipProfiles,
+      stoneTasks: stoneTasks,
       retrievalTrace: _traceFromResults(
         'search-query',
         relatedMemories,
+        searchMatches: searchMatches,
+        profileFacts: profileFacts,
+        relationshipProfiles: relationshipProfiles,
+        stoneTasks: stoneTasks,
         scenario: AiContextScenario.search.name,
-        sourceCount: relatedMemories.length,
+        sourceCount: relatedMemories.length +
+            searchMatches.length +
+            profileFacts.length +
+            relationshipProfiles.length +
+            stoneTasks.length,
       ),
     );
   }
@@ -90,7 +162,11 @@ class AiContextBuilder {
     return AiContextPackage(
       scenario: AiContextScenario.question,
       query: question,
+      searchMatches: package.searchMatches,
       relatedMemories: package.relatedMemories,
+      profileFacts: package.profileFacts,
+      relationshipProfiles: package.relationshipProfiles,
+      stoneTasks: package.stoneTasks,
       retrievalTrace: package.retrievalTrace,
     );
   }
@@ -135,6 +211,11 @@ class AiContextBuilder {
             entry: queryEntry,
             limit: 12,
           );
+    final projection = await _profileProjection();
+    final profileFacts = _topProfileFacts(projection.profileFacts);
+    final relationshipProfiles =
+        projection.relationshipProfiles.take(5).toList(growable: false);
+    final stoneTasks = await _activeStoneTasks(limit: 8);
     final package = AiContextPackage(
       scenario: AiContextScenario.periodSummary,
       periodStart: start,
@@ -142,12 +223,18 @@ class AiContextBuilder {
       periodEntries: periodEntries,
       periodSummaries: summaries,
       relatedMemories: relatedMemories,
+      profileFacts: profileFacts,
+      relationshipProfiles: relationshipProfiles,
+      stoneTasks: stoneTasks,
     );
     final traceId =
         'period:${start.toIso8601String()}:${end.toIso8601String()}';
     final trace = _traceFromResults(
       traceId,
       relatedMemories,
+      profileFacts: profileFacts,
+      relationshipProfiles: relationshipProfiles,
+      stoneTasks: stoneTasks,
       scenario: package.scenario.name,
       contextSummary: package.debugSummary,
       sourceCount: package.sourceCount,
@@ -160,8 +247,88 @@ class AiContextBuilder {
       periodEntries: package.periodEntries,
       periodSummaries: package.periodSummaries,
       relatedMemories: package.relatedMemories,
+      profileFacts: package.profileFacts,
+      relationshipProfiles: package.relationshipProfiles,
+      stoneTasks: package.stoneTasks,
       retrievalTrace: trace,
     );
+  }
+
+  Future<ProfileProjection> _profileProjection() async {
+    final insights = await _insightRepository.listInsights();
+    final projection = _profileProjectionService.build(insights);
+    return ProfileProjection(
+      profileFacts: await _profilePreferenceRepository.applyToProfileFacts(
+        projection.profileFacts,
+      ),
+      relationshipProfiles:
+          await _profilePreferenceRepository.applyToRelationshipProfiles(
+        projection.relationshipProfiles,
+      ),
+    );
+  }
+
+  List<ProfileFact> _topProfileFacts(List<ProfileFact> facts) {
+    return facts
+        .where((fact) =>
+            fact.status != ProfileFactStatus.weak || fact.userConfirmed)
+        .take(6)
+        .toList(growable: false);
+  }
+
+  List<ProfileFact> _matchingProfileFacts(
+    List<ProfileFact> facts,
+    String query,
+  ) {
+    final queryTokens = _tokens(query);
+    if (queryTokens.isEmpty) return facts;
+    return facts.where((fact) {
+      final textTokens = _tokens('${fact.field} ${fact.value}');
+      return queryTokens.any(textTokens.contains);
+    }).toList(growable: false);
+  }
+
+  List<RelationshipProfile> _relatedRelationshipProfiles(
+    List<RelationshipProfile> profiles,
+    String text,
+  ) {
+    final tokens = _tokens(text);
+    final matched = profiles.where((profile) {
+      final nameMatches =
+          profile.names.any((name) => name.isNotEmpty && text.contains(name));
+      if (nameMatches) return true;
+      final profileTokens = _tokens([
+        profile.personName,
+        profile.relationship ?? '',
+        ...profile.patterns,
+        ...profile.emotions,
+      ].join(' '));
+      return tokens.any(profileTokens.contains);
+    }).toList();
+    if (matched.isEmpty) {
+      return profiles.take(3).toList(growable: false);
+    }
+    return matched.take(5).toList(growable: false);
+  }
+
+  Future<List<StoneTask>> _activeStoneTasks({int limit = 5}) async {
+    final tasks = await _stoneTaskRepository.listTasks();
+    return tasks
+        .where((task) => task.status == StoneTaskStatus.active)
+        .take(limit)
+        .toList(growable: false);
+  }
+
+  Future<List<StoneTask>> _matchingStoneTasks(String query) async {
+    final tasks = await _stoneTaskRepository.listTasks();
+    final queryTokens = _tokens(query);
+    if (queryTokens.isEmpty) return _activeStoneTasks();
+    final matches = tasks.where((task) {
+      final tokens = _tokens('${task.title} ${task.description}');
+      return queryTokens.any(tokens.contains);
+    }).toList();
+    if (matches.isEmpty) return _activeStoneTasks(limit: 3);
+    return matches.take(5).toList(growable: false);
   }
 
   Future<List<DiaryEntry>> _recentEntries(DiaryEntry entry) async {
@@ -172,9 +339,135 @@ class AiContextBuilder {
         .toList(growable: false);
   }
 
+  Future<List<AiCalendarMatch>> _calendarMatches(DiaryEntry entry) async {
+    final entries = await _diaryRepository.listEntries();
+    final calendarMemories = await _calendarMemoryRepository.listMemories();
+    final matches = <AiCalendarMatch>[];
+    final currentFestival = _fixedSolarFestival(entry.date);
+    final currentMemory = _matchingCalendarMemory(entry.date, calendarMemories);
+    for (final item in entries) {
+      if (item.id == entry.id) continue;
+      if (!item.date.isBefore(entry.date)) continue;
+      final monthMatches = item.date.month == entry.date.month;
+      if (!monthMatches) continue;
+      final dayOffset = item.date.day - entry.date.day;
+      final absoluteOffset = dayOffset.abs();
+      if (absoluteOffset > 1) continue;
+      final yearDistance = entry.date.year - item.date.year;
+      if (yearDistance <= 0) continue;
+      final itemFestival = _fixedSolarFestival(item.date);
+      final sameFestival =
+          currentFestival != null && currentFestival == itemFestival;
+      final itemMemory = _matchingCalendarMemory(item.date, calendarMemories);
+      final sameMemory = currentMemory != null &&
+          itemMemory != null &&
+          currentMemory.id == itemMemory.id;
+      final label = sameMemory
+          ? currentMemory.title
+          : sameFestival
+              ? currentFestival
+              : null;
+      final calendarType = sameMemory ? currentMemory.type.name : 'solar';
+      final reason = _calendarReason(
+        yearDistance: yearDistance,
+        dayOffset: dayOffset,
+        festival: label,
+      );
+      matches.add(AiCalendarMatch(
+        entry: item,
+        reason: reason,
+        score: sameMemory
+            ? 11
+            : sameFestival
+                ? 10
+                : absoluteOffset == 0
+                    ? 8
+                    : 5,
+        dayOffset: dayOffset,
+        label: label,
+        calendarType: calendarType,
+      ));
+    }
+    matches.sort((a, b) {
+      final byScore = b.score.compareTo(a.score);
+      if (byScore != 0) return byScore;
+      final byOffset = a.dayOffset.abs().compareTo(b.dayOffset.abs());
+      if (byOffset != 0) return byOffset;
+      return b.entry.date.compareTo(a.entry.date);
+    });
+    return matches.take(8).toList(growable: false);
+  }
+
+  CalendarMemory? _matchingCalendarMemory(
+    DateTime date,
+    List<CalendarMemory> memories,
+  ) {
+    for (final memory in memories) {
+      if (!memory.enabled || memory.type != CalendarMemoryType.solar) continue;
+      if (memory.month == date.month && memory.day == date.day) return memory;
+    }
+    return null;
+  }
+
+  String _calendarReason({
+    required int yearDistance,
+    required int dayOffset,
+    String? festival,
+  }) {
+    final offset = dayOffset.abs();
+    if (festival != null && offset == 0) {
+      return '$yearDistance 年前的$festival';
+    }
+    if (festival != null) {
+      return '$yearDistance 年前$festival附近（${dayOffset > 0 ? '+' : ''}$dayOffset 天）';
+    }
+    return offset == 0
+        ? '$yearDistance 年前的今天'
+        : '$yearDistance 年前今日附近（${dayOffset > 0 ? '+' : ''}$dayOffset 天）';
+  }
+
+  String? _fixedSolarFestival(DateTime date) {
+    const festivals = {
+      '1-1': '元旦',
+      '2-14': '情人节',
+      '3-8': '妇女节',
+      '5-1': '劳动节',
+      '6-1': '儿童节',
+      '9-10': '教师节',
+      '10-1': '国庆节',
+      '12-24': '平安夜',
+      '12-25': '圣诞节',
+      '12-31': '跨年',
+    };
+    return festivals['${date.month}-${date.day}'];
+  }
+
+  Set<String> _tokens(String text) {
+    final cleaned = text
+        .replaceAll(
+            RegExp(r'[\s\n\r\t，。！？；：、“”‘’（）《》【】,.!?;:#>*_`\[\](){}/\\-]+'), ' ')
+        .trim();
+    final tokens = <String>{};
+    for (final part in cleaned.split(' ')) {
+      final value = part.trim();
+      if (value.length >= 2) tokens.add(value);
+      if (value.length >= 4) {
+        for (var i = 0; i <= value.length - 2; i++) {
+          tokens.add(value.substring(i, i + 2));
+        }
+      }
+    }
+    return tokens;
+  }
+
   AiRetrievalTrace _traceFromResults(
     String entryId,
     List<MemoryRetrievalResult> results, {
+    List<AiCalendarMatch> calendarMatches = const [],
+    List<AiSearchMatch> searchMatches = const [],
+    List<ProfileFact> profileFacts = const [],
+    List<RelationshipProfile> relationshipProfiles = const [],
+    List<StoneTask> stoneTasks = const [],
     String? scenario,
     String? contextSummary,
     int sourceCount = 0,
@@ -196,7 +489,87 @@ class AiContextBuilder {
             reasons: result.reasons,
             matchedTokens: result.matchedTokens,
           ),
+        for (final match in calendarMatches)
+          AiRetrievalTraceItem(
+            sourceType: 'calendar',
+            sourceId: match.entry.id,
+            title: match.reason,
+            summary: match.entry.excerpt,
+            score: match.score,
+            reasons: [
+              match.reason,
+              if (match.label != null) '阳历节日：${match.label}',
+            ],
+            matchedTokens: [
+              if (match.label != null) match.label!,
+            ],
+          ),
+        for (final match in searchMatches)
+          AiRetrievalTraceItem(
+            sourceType: match.sourceType,
+            sourceId: match.sourceId,
+            title: match.title,
+            summary: match.summary,
+            score: match.score,
+            reasons: match.reasons,
+            matchedTokens: match.matchedTokens,
+          ),
+        for (final fact in profileFacts)
+          AiRetrievalTraceItem(
+            sourceType: 'profile',
+            sourceId: fact.id,
+            title: fact.field,
+            summary: fact.value,
+            score: _profileStatusScore(fact.status),
+            reasons: [
+              '${fact.evidenceCount} 条证据',
+              '${fact.distinctDays} 天',
+              '置信度 ${fact.confidence.toStringAsFixed(2)}',
+            ],
+            matchedTokens: const [],
+          ),
+        for (final profile in relationshipProfiles)
+          AiRetrievalTraceItem(
+            sourceType: 'relationship',
+            sourceId: profile.personName,
+            title: profile.personName,
+            summary: [
+              if (profile.relationship?.isNotEmpty ?? false)
+                profile.relationship,
+              ...profile.patterns.take(2),
+            ].whereType<String>().join('；'),
+            score: _profileStatusScore(profile.status),
+            reasons: [
+              '${profile.interactionCount} 次互动',
+              '${profile.distinctDays} 天',
+              '置信度 ${profile.confidence.toStringAsFixed(2)}',
+            ],
+            matchedTokens: const [],
+          ),
+        for (final task in stoneTasks)
+          AiRetrievalTraceItem(
+            sourceType: 'stone',
+            sourceId: task.id,
+            title: task.title,
+            summary: task.description,
+            score: task.status == StoneTaskStatus.active ? 6 : 3,
+            reasons: [
+              task.status == StoneTaskStatus.active ? '进行中的塑石行动' : '历史塑石行动',
+            ],
+            matchedTokens: task.tags,
+          ),
       ],
     );
+  }
+
+  int _profileStatusScore(ProfileFactStatus status) {
+    switch (status) {
+      case ProfileFactStatus.stable:
+        return 8;
+      case ProfileFactStatus.emerging:
+        return 5;
+      case ProfileFactStatus.weak:
+        return 2;
+    }
   }
 }

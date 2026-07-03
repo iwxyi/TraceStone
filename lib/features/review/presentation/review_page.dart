@@ -26,7 +26,6 @@ class ReviewPage extends StatefulWidget {
 class _ReviewPageState extends State<ReviewPage> {
   final _repository = const DiaryRepository();
   int _selectedIndex = 2;
-  String? _pinnedTimelineMonth;
 
   @override
   void initState() {
@@ -109,11 +108,6 @@ class _ReviewPageState extends State<ReviewPage> {
   String get _appBarTitle =>
       _isSelectionMode ? '已选择 ${_selectedIds.length} 篇' : '回顾';
 
-  void _updatePinnedTimelineMonth(String label) {
-    if (_pinnedTimelineMonth == label) return;
-    setState(() => _pinnedTimelineMonth = label);
-  }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -164,71 +158,68 @@ class _ReviewPageState extends State<ReviewPage> {
           ],
         ],
       ),
-      body: CustomScrollView(
-        slivers: [
-          if (_selectedIndex == 2)
-            SliverPersistentHeader(
-              pinned: true,
-              delegate: _TimelinePinnedMonthHeaderDelegate(
-                label: _pinnedTimelineMonth ?? '',
+      body: FutureBuilder<List<DiaryEntry>>(
+        future: _entriesFuture,
+        builder: (context, snapshot) {
+          final entries = snapshot.data ?? [];
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (entries.isEmpty) {
+            return const Padding(
+              padding: EdgeInsets.all(20),
+              child: _EmptyReviewCard(),
+            );
+          }
+          if (_selectedIndex == 2) {
+            return _DayTimeline(
+              entries: entries,
+              onOpenEntry: _openEntry,
+              onLongSelectEntry: _startSelection,
+              selectedIds: _selectedIds,
+            );
+          }
+
+          final availableYears = entries
+              .map((e) => e.date.year)
+              .toSet()
+              .toList()
+            ..sort((a, b) => b.compareTo(a));
+          _selectedYear ??= availableYears.first;
+          return CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                sliver: SliverToBoxAdapter(
+                  child: _selectedIndex == 0
+                      ? _YearList(
+                          entries: entries,
+                          selectedYear: _selectedYear!,
+                          onSelectYear: (year) =>
+                              setState(() => _selectedYear = year),
+                          onOpenEntry: _openEntry,
+                          onLongSelectEntry: _startSelection,
+                          selectedIds: _selectedIds,
+                        )
+                      : _MonthCalendar(
+                          entries: entries,
+                          selectedMonth: _selectedMonth,
+                          selectedDay: _selectedDay,
+                          onChangeMonth: (month) => setState(() {
+                            _selectedMonth = month;
+                            _selectedDay = DateTime(month.year, month.month, 1);
+                          }),
+                          onSelectDay: (day) =>
+                              setState(() => _selectedDay = day),
+                          onOpenEntry: _openEntry,
+                          onLongSelectEntry: _startSelection,
+                          selectedIds: _selectedIds,
+                        ),
+                ),
               ),
-            ),
-          SliverPadding(
-            padding:
-                EdgeInsets.fromLTRB(20, _selectedIndex == 2 ? 12 : 20, 20, 20),
-            sliver: SliverToBoxAdapter(
-              child: FutureBuilder<List<DiaryEntry>>(
-                future: _entriesFuture,
-                builder: (context, snapshot) {
-                  final entries = snapshot.data ?? [];
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (entries.isEmpty) {
-                    return const _EmptyReviewCard();
-                  }
-                  final availableYears = entries
-                      .map((e) => e.date.year)
-                      .toSet()
-                      .toList()
-                    ..sort((a, b) => b.compareTo(a));
-                  _selectedYear ??= availableYears.first;
-                  return switch (_selectedIndex) {
-                    0 => _YearList(
-                        entries: entries,
-                        selectedYear: _selectedYear!,
-                        onSelectYear: (year) =>
-                            setState(() => _selectedYear = year),
-                        onOpenEntry: _openEntry,
-                        onLongSelectEntry: _startSelection,
-                        selectedIds: _selectedIds,
-                      ),
-                    1 => _MonthCalendar(
-                        entries: entries,
-                        selectedMonth: _selectedMonth,
-                        selectedDay: _selectedDay,
-                        onChangeMonth: (month) => setState(() {
-                          _selectedMonth = month;
-                          _selectedDay = DateTime(month.year, month.month, 1);
-                        }),
-                        onSelectDay: (day) =>
-                            setState(() => _selectedDay = day),
-                        onOpenEntry: _openEntry,
-                        onLongSelectEntry: _startSelection,
-                        selectedIds: _selectedIds,
-                      ),
-                    _ => _DayTimeline(
-                        entries: entries,
-                        onPinnedMonthChanged: _updatePinnedTimelineMonth,
-                        onOpenEntry: _openEntry,
-                        onLongSelectEntry: _startSelection,
-                        selectedIds: _selectedIds),
-                  };
-                },
-              ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -260,50 +251,6 @@ class _ReviewViewSwitcher extends StatelessWidget {
       selected: {selectedIndex},
       onSelectionChanged: (value) => onChanged(value.first),
     );
-  }
-}
-
-class _TimelinePinnedMonthHeaderDelegate
-    extends SliverPersistentHeaderDelegate {
-  const _TimelinePinnedMonthHeaderDelegate({required this.label});
-
-  final String label;
-
-  @override
-  double get minExtent => 42;
-
-  @override
-  double get maxExtent => 42;
-
-  @override
-  Widget build(
-      BuildContext context, double shrinkOffset, bool overlapsContent) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: Container(
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-              color: overlapsContent
-                  ? colorScheme.outlineVariant
-                  : Colors.transparent,
-            ),
-          ),
-        ),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-      ),
-    );
-  }
-
-  @override
-  bool shouldRebuild(covariant _TimelinePinnedMonthHeaderDelegate oldDelegate) {
-    return oldDelegate.label != label;
   }
 }
 
@@ -1775,6 +1722,26 @@ class _PeriodSummaryCard extends StatelessWidget {
                     ],
                   ),
                 ],
+                if (summary.relationshipHighlights.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text('关系变化', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  for (final line in summary.relationshipHighlights.take(3))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(line),
+                    ),
+                ],
+                if (summary.stoneHighlights.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text('塑石进展', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  for (final line in summary.stoneHighlights.take(4))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(line),
+                    ),
+                ],
               ],
             ),
           ),
@@ -1787,13 +1754,11 @@ class _PeriodSummaryCard extends StatelessWidget {
 class _DayTimeline extends StatefulWidget {
   const _DayTimeline(
       {required this.entries,
-      required this.onPinnedMonthChanged,
       required this.onOpenEntry,
       required this.onLongSelectEntry,
       required this.selectedIds});
 
   final List<DiaryEntry> entries;
-  final ValueChanged<String> onPinnedMonthChanged;
   final ValueChanged<String> onOpenEntry;
   final ValueChanged<String> onLongSelectEntry;
   final Set<String> selectedIds;
@@ -1809,15 +1774,14 @@ class _DayTimelineState extends State<_DayTimeline> {
 
   final Set<int> _collapsedYears = <int>{};
   final Set<String> _collapsedMonths = <String>{};
-  final Map<String, GlobalKey> _monthKeys = <String, GlobalKey>{};
-  ScrollPosition? _scrollPosition;
+  final ScrollController _scrollController = ScrollController();
   int _visibleMonthCount = _initialMonthCount;
-  String? _pinnedMonthKey;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _attachScrollPosition();
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
   }
 
   @override
@@ -1831,27 +1795,16 @@ class _DayTimelineState extends State<_DayTimeline> {
 
   @override
   void dispose() {
-    _scrollPosition?.removeListener(_handleScroll);
+    _scrollController.removeListener(_handleScroll);
+    _scrollController.dispose();
     super.dispose();
   }
 
-  void _attachScrollPosition() {
-    final scrollable = Scrollable.maybeOf(context);
-    final position = scrollable?.position;
-    if (position == null || identical(position, _scrollPosition)) return;
-    _scrollPosition?.removeListener(_handleScroll);
-    _scrollPosition = position;
-    _scrollPosition?.addListener(_handleScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
-  }
-
   void _handleScroll() {
-    final position = _scrollPosition;
-    if (position == null || !position.hasPixels) return;
-    if (position.extentAfter < _loadAheadExtent) {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.extentAfter < _loadAheadExtent) {
       _loadMoreMonths();
     }
-    _updatePinnedMonth();
   }
 
   void _loadMoreMonths() {
@@ -1866,19 +1819,17 @@ class _DayTimelineState extends State<_DayTimeline> {
 
   void _ensureFilled() {
     if (!mounted) return;
-    final position = _scrollPosition;
     final bucketCount = _monthBuckets.length;
     if (bucketCount == 0 || _visibleMonthCount >= bucketCount) return;
 
+    final canPreload = !_scrollController.hasClients ||
+        !_scrollController.position.hasContentDimensions ||
+        _scrollController.position.extentAfter < _loadAheadExtent;
     final needsMoreVisibleContent =
         _loadedBuckets.every((bucket) => _collapsedYears.contains(bucket.year));
-    final canPreload = position == null ||
-        !position.hasContentDimensions ||
-        position.extentAfter < _loadAheadExtent;
     if (needsMoreVisibleContent || canPreload) {
       _loadMoreMonths();
     }
-    _updatePinnedMonth();
   }
 
   List<_TimelineMonthBucket> get _monthBuckets {
@@ -1923,93 +1874,109 @@ class _DayTimelineState extends State<_DayTimeline> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
   }
 
-  void _updatePinnedMonth() {
-    final visibleBuckets = _loadedBuckets
-        .where((bucket) => !_collapsedYears.contains(bucket.year))
-        .toList();
-    if (visibleBuckets.isEmpty) return;
-
-    var pinned = visibleBuckets.first;
-    for (final bucket in visibleBuckets) {
-      final keyContext = _monthKeys[bucket.key]?.currentContext;
-      final renderObject = keyContext?.findRenderObject();
-      if (renderObject is! RenderBox || !renderObject.attached) continue;
-      final top = renderObject.localToGlobal(Offset.zero).dy;
-      if (top <= 150) {
-        pinned = bucket;
-      } else {
-        break;
-      }
-    }
-
-    if (_pinnedMonthKey == pinned.key) return;
-    _pinnedMonthKey = pinned.key;
-    widget.onPinnedMonthChanged(pinned.label);
-  }
-
   @override
   Widget build(BuildContext context) {
     final buckets = _monthBuckets;
     final loadedBuckets = buckets.take(_visibleMonthCount).toList();
-    final firstLoadedMonthInYear = <int, String>{};
     final lastLoadedMonthInYear = <int, String>{};
     for (final bucket in loadedBuckets) {
-      firstLoadedMonthInYear.putIfAbsent(bucket.year, () => bucket.key);
       lastLoadedMonthInYear[bucket.year] = bucket.key;
     }
     final hasMore = _visibleMonthCount < buckets.length;
     var lastYear = -1;
-    final children = <Widget>[];
+    final slivers = <Widget>[
+      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+    ];
 
     for (final bucket in loadedBuckets) {
-      _monthKeys.putIfAbsent(bucket.key, GlobalKey.new);
-      if (bucket.year != lastYear) {
-        children.add(_TimelineYearHeader(
-          year: bucket.year,
-          entryCount: buckets
-              .where((item) => item.year == bucket.year)
-              .fold<int>(0, (total, item) => total + item.entryCount),
-          collapsed: _collapsedYears.contains(bucket.year),
-          onTap: () => _toggleYear(bucket.year),
-        ));
-        lastYear = bucket.year;
-      }
-
+      final startsNewYear = bucket.year != lastYear;
       if (!_collapsedYears.contains(bucket.year)) {
-        children.add(KeyedSubtree(
-          key: _monthKeys[bucket.key],
-          child: _TimelineMonthGroup(
-            bucket: bucket,
-            isFirstInYear: firstLoadedMonthInYear[bucket.year] == bucket.key,
-            isLastInYear: lastLoadedMonthInYear[bucket.year] == bucket.key,
-            collapsed: _collapsedMonths.contains(bucket.key),
-            onToggleMonth: () => _toggleMonth(bucket.key),
-            onOpenEntry: widget.onOpenEntry,
-            onLongSelectEntry: widget.onLongSelectEntry,
-            selectedIds: widget.selectedIds,
-          ),
-        ));
-      }
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updatePinnedMonth());
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ...children,
-        if (hasMore)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 18),
-            child: Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
+        final monthCollapsed = _collapsedMonths.contains(bucket.key);
+        final groupSlivers = <Widget>[
+          _TimelineStickyHeaderSliver(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _TimelineMonthHeader(
+                yearLabel: '${bucket.year}年',
+                monthLabel: bucket.monthLabel,
+                entryCount: bucket.entryCount,
+                yearCollapsed: false,
+                monthCollapsed: monthCollapsed,
+                indentLeft: false,
+                onToggleYear: () => _toggleYear(bucket.year),
+                onToggleMonth: () => _toggleMonth(bucket.key),
               ),
             ),
           ),
-      ],
+        ];
+        if (!monthCollapsed) {
+          groupSlivers.add(SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final day = bucket.dayGroups[index];
+                  return _TimelineDayGroup(
+                    day: day,
+                    hasLineBefore: index == 0 && !startsNewYear,
+                    hasLineAfter:
+                        lastLoadedMonthInYear[bucket.year] != bucket.key ||
+                            index < bucket.dayGroups.length - 1,
+                    onOpenEntry: widget.onOpenEntry,
+                    onLongSelectEntry: widget.onLongSelectEntry,
+                    selectedIds: widget.selectedIds,
+                  );
+                },
+                childCount: bucket.dayGroups.length,
+              ),
+            ),
+          ));
+        }
+        slivers.add(SliverMainAxisGroup(slivers: groupSlivers));
+      } else if (startsNewYear) {
+        slivers.add(SliverMainAxisGroup(slivers: [
+          _TimelineStickyHeaderSliver(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _TimelineMonthHeader(
+                yearLabel: '${bucket.year}年',
+                monthLabel: '全年',
+                entryCount: buckets
+                    .where((item) => item.year == bucket.year)
+                    .fold<int>(0, (total, item) => total + item.entryCount),
+                yearCollapsed: true,
+                monthCollapsed: true,
+                indentLeft: false,
+                onToggleYear: () => _toggleYear(bucket.year),
+                onToggleMonth: () => _toggleYear(bucket.year),
+              ),
+            ),
+          ),
+        ]));
+      }
+      lastYear = bucket.year;
+    }
+
+    if (hasMore) {
+      slivers.add(
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(
+              child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+          ),
+        ),
+      );
+    }
+    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 20)));
+
+    return CustomScrollView(
+      controller: _scrollController,
+      slivers: slivers,
     );
   }
 }
@@ -2038,6 +2005,9 @@ class _TimelineMonthBucket {
 
   int get entryCount => entries.length;
   String get label => '$year年$month月';
+  String get yearMonthLabel => '$year年 · $month月';
+  String get monthLabel => '$month月';
+  String get contextLabel => '$year · $month月';
 }
 
 class _TimelineDayBucket {
@@ -2055,140 +2025,85 @@ class _TimelineDayBucket {
 String _monthKey(DateTime date) =>
     '${date.year}-${date.month.toString().padLeft(2, '0')}';
 
-class _TimelineYearHeader extends StatelessWidget {
-  const _TimelineYearHeader(
-      {required this.year,
-      required this.entryCount,
-      required this.collapsed,
-      required this.onTap});
+class _TimelineStickyHeaderSliver extends StatelessWidget {
+  const _TimelineStickyHeaderSliver({required this.child});
 
-  final int year;
-  final int entryCount;
-  final bool collapsed;
-  final VoidCallback onTap;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            children: [
-              AnimatedRotation(
-                turns: collapsed ? -0.25 : 0,
-                duration: const Duration(milliseconds: 160),
-                curve: Curves.easeOutCubic,
-                child: const Icon(Icons.keyboard_arrow_down),
-              ),
-              const SizedBox(width: 6),
-              Text('$year年', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(width: 8),
-              Text(
-                '$entryCount篇',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return SliverPersistentHeader(
+      pinned: true,
+      delegate: _TimelineStickyHeaderDelegate(child: child),
     );
   }
 }
 
-class _TimelineMonthGroup extends StatelessWidget {
-  const _TimelineMonthGroup(
-      {required this.bucket,
-      required this.isFirstInYear,
-      required this.isLastInYear,
-      required this.collapsed,
-      required this.onToggleMonth,
-      required this.onOpenEntry,
-      required this.onLongSelectEntry,
-      required this.selectedIds});
+class _TimelineStickyHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _TimelineStickyHeaderDelegate({required this.child});
 
-  final _TimelineMonthBucket bucket;
-  final bool isFirstInYear;
-  final bool isLastInYear;
-  final bool collapsed;
-  final VoidCallback onToggleMonth;
-  final ValueChanged<String> onOpenEntry;
-  final ValueChanged<String> onLongSelectEntry;
-  final Set<String> selectedIds;
+  final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    final child = collapsed
-        ? _TimelineMonthHeader(
-            key: ValueKey('${bucket.key}-collapsed'),
-            label: bucket.label,
-            entryCount: bucket.entryCount,
-            collapsed: true,
-            indentLeft: true,
-            onTap: onToggleMonth,
-          )
-        : Column(
-            key: ValueKey('${bucket.key}-expanded'),
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var i = 0; i < bucket.dayGroups.length; i++)
-                _TimelineDayGroup(
-                  day: bucket.dayGroups[i],
-                  monthLabel: i == 0 ? bucket.label : null,
-                  monthEntryCount: i == 0 ? bucket.entryCount : null,
-                  hasLineBefore: i == 0 && !isFirstInYear,
-                  hasLineAfter:
-                      !isLastInYear || i < bucket.dayGroups.length - 1,
-                  onToggleMonth: onToggleMonth,
-                  onOpenEntry: onOpenEntry,
-                  onLongSelectEntry: onLongSelectEntry,
-                  selectedIds: selectedIds,
-                ),
-            ],
-          );
+  double get minExtent => _TimelineMonthHeader.height;
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      reverseDuration: const Duration(milliseconds: 140),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) {
-        return SizeTransition(
-          sizeFactor: animation,
-          alignment: Alignment.topCenter,
-          child: FadeTransition(opacity: animation, child: child),
-        );
-      },
-      child: child,
+  @override
+  double get maxExtent => _TimelineMonthHeader.height;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.scaffoldBackgroundColor.withValues(alpha: 0.97),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: overlapsContent
+                  ? theme.colorScheme.outlineVariant.withValues(alpha: 0.7)
+                  : Colors.transparent,
+            ),
+          ),
+        ),
+        child: child,
+      ),
     );
+  }
+
+  @override
+  bool shouldRebuild(covariant _TimelineStickyHeaderDelegate oldDelegate) {
+    return oldDelegate.child != child;
   }
 }
 
 class _TimelineMonthHeader extends StatelessWidget {
   const _TimelineMonthHeader(
-      {super.key,
-      required this.label,
+      {required this.yearLabel,
+      required this.monthLabel,
       required this.entryCount,
-      required this.collapsed,
+      required this.yearCollapsed,
+      required this.monthCollapsed,
       required this.indentLeft,
-      required this.onTap});
+      required this.onToggleYear,
+      required this.onToggleMonth});
 
   static const height = 46.0;
   static const _contentHeight = 36.0;
 
-  final String label;
+  final String? yearLabel;
+  final String monthLabel;
   final int entryCount;
-  final bool collapsed;
+  final bool yearCollapsed;
+  final bool monthCollapsed;
   final bool indentLeft;
-  final VoidCallback onTap;
+  final VoidCallback onToggleYear;
+  final VoidCallback onToggleMonth;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     return Padding(
       padding: EdgeInsets.only(left: indentLeft ? 56 : 0),
       child: SizedBox(
@@ -2197,30 +2112,79 @@ class _TimelineMonthHeader extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 10),
           child: SizedBox(
             height: _contentHeight,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: onTap,
-              child: Row(
-                children: [
-                  AnimatedRotation(
-                    turns: collapsed ? -0.25 : 0,
-                    duration: const Duration(milliseconds: 160),
-                    curve: Curves.easeOutCubic,
-                    child: const Icon(Icons.keyboard_arrow_down, size: 22),
+            child: Row(
+              children: [
+                if (yearLabel != null) ...[
+                  _TimelineHeaderButton(
+                    label: yearLabel!,
+                    collapsed: yearCollapsed,
+                    onTap: onToggleYear,
+                    style: theme.textTheme.titleMedium,
                   ),
-                  const SizedBox(width: 4),
-                  Text(label, style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$entryCount篇',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    child: Text(
+                      '/',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.outline,
+                      ),
+                    ),
                   ),
                 ],
-              ),
+                _TimelineHeaderButton(
+                  label: monthLabel,
+                  collapsed: monthCollapsed,
+                  onTap: onToggleMonth,
+                  style: theme.textTheme.titleMedium,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '$entryCount篇',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineHeaderButton extends StatelessWidget {
+  const _TimelineHeaderButton({
+    required this.label,
+    required this.collapsed,
+    required this.onTap,
+    required this.style,
+  });
+
+  final String label;
+  final bool collapsed;
+  final VoidCallback onTap;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(2, 5, 5, 5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedRotation(
+              turns: collapsed ? -0.25 : 0,
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              child: const Icon(Icons.keyboard_arrow_down, size: 20),
+            ),
+            const SizedBox(width: 2),
+            Text(label, style: style),
+          ],
         ),
       ),
     );
@@ -2230,21 +2194,15 @@ class _TimelineMonthHeader extends StatelessWidget {
 class _TimelineDayGroup extends StatelessWidget {
   const _TimelineDayGroup(
       {required this.day,
-      required this.monthLabel,
-      required this.monthEntryCount,
       required this.hasLineBefore,
       required this.hasLineAfter,
-      required this.onToggleMonth,
       required this.onOpenEntry,
       required this.onLongSelectEntry,
       required this.selectedIds});
 
   final _TimelineDayBucket day;
-  final String? monthLabel;
-  final int? monthEntryCount;
   final bool hasLineBefore;
   final bool hasLineAfter;
-  final VoidCallback onToggleMonth;
   final ValueChanged<String> onOpenEntry;
   final ValueChanged<String> onLongSelectEntry;
   final Set<String> selectedIds;
@@ -2262,7 +2220,7 @@ class _TimelineDayGroup extends StatelessWidget {
           _TimelineDateRail(
             day: date.day,
             weekday: weekday,
-            topInset: monthLabel == null ? 0 : _TimelineMonthHeader.height,
+            topInset: 0,
             hasLineBefore: hasLineBefore,
             hasLineAfter: hasLineAfter,
             selected: true,
@@ -2272,14 +2230,6 @@ class _TimelineDayGroup extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (monthLabel != null)
-                  _TimelineMonthHeader(
-                    label: monthLabel!,
-                    entryCount: monthEntryCount ?? 0,
-                    collapsed: false,
-                    indentLeft: false,
-                    onTap: onToggleMonth,
-                  ),
                 for (final entry in day.entries) ...[
                   _TimelineEntry(
                     entry: entry,
