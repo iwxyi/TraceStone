@@ -970,30 +970,44 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 
 开发者模式的目标是调试和验证，不追求轻量。只要不泄露密钥、不额外上传数据，可以显示较重的信息，包括完整来源链、阶段产物、重试日志和模型元数据。
 
-## 15. 当前代码差距
+## 15. 当前代码状态
 
-当前实现已经具备：
+当前实现已经具备了 AI 模块的第一版骨架，并且不再只是“单篇日记点评”：
 
-- `DiaryAnalysisService.analyzeEntry`
-- 最近日记输入
-- `MemoryRepository.findRelated`
-- `DiaryInsight`
-- `MemoryEntry`
+| 能力 | 当前实现 |
+| --- | --- |
+| 今日洞察 | `DiaryAnalysisService.analyzeEntry` 生成结构化 `DiaryInsight` |
+| 日记摘要 | `EntrySummary` / `EntrySummaryRepository` / `EntrySummaryService` |
+| 日记分段 | `DiarySegment`，支持 Markdown 标题、分割线和段落切分 |
+| 证据结构 | `InsightEvidence`，facts/signals/hypotheses/suggestions 均可带 evidence |
+| 输出分层 | `DiaryInsight` 已包含事实、信号、推测、建议、反证、画像候选、关系候选 |
+| 长期记忆 | `MemoryEntry` 支持 evidence、importance、confidence、referenceCount、archived |
+| 画像候选 | `ProfileFact` / `ProfileProjectionService` / `AiProfilePreferenceRepository` |
+| 关系档案 | `RelationshipProfile`，支持互动摘要、情绪、模式和证据 |
+| 多级向量 | `AiEmbedding`，覆盖 entry、summary、segment、memory |
+| 混合检索 | `AiSearchService` 融合向量、关键词、主题、人物、情绪、生命周期信号 |
+| 上下文组装 | `AiContextBuilder` 服务今日洞察、问答、周期总结、搜索 |
+| 多年今日 | 已支持阳历同日、附近日期、固定节日和自定义纪念日上下文 |
+| 周期总结 | `PeriodSummaryService` 支持月/年等周期摘要与来源追踪 |
+| 后台队列 | `AiAnalysisQueueRunner` / `AiAnalysisQueueRepository` 支持 pending/running/incomplete/failed/completed |
+| 可恢复 Pipeline | 摘要、分段、向量、检索、洞察、记忆更新分阶段落库 |
+| 失败降级 | 摘要失败用正文预览，向量失败保留结构化摘要，AI 未配置不消耗重试 |
+| 开发者模式 | 设置开关控制来源、分数、prompt trace、retrieval trace、队列、embedding 元数据 |
+| 删除生命周期 | 日记进回收站，90 天后清理；永久删除清理摘要、向量、队列、调试记录和相关衍生数据 |
+| 记忆管理 | 支持归档、恢复、修正和删除长期记忆 |
 
-主要差距：
+主要剩余差距：
 
-1. 记忆检索仍是关键词重合，不是向量检索。
-2. 没有日记分段模型。
-3. 没有用户画像模型。
-4. 没有关系档案模型。
-5. 没有阳历/农历“多年今日”检索。
-6. `DiaryInsight` 输出协议还比较薄。
-7. 记忆更新没有置信度、证据链和分层。
-8. 没有证据引用结构。
-9. 没有事实/信号/推测/建议分层。
-10. 没有记忆生命周期和降权机制。
-11. 没有反证机制。
-12. 没有分阶段 Pipeline。
+1. 当前 embedding 仍是本地 hashing 方案，适合验证管线，不等于最终高质量中文语义模型。
+2. 还没有接入 ObjectBox Vector Search 或其它成熟向量索引；当前适合中小规模数据。
+3. 分段主要是规则实现，还没有 AI 语义分段来处理隐式多事件日记。
+4. 农历日期、农历节日、农历生日还没有完整计算和索引。
+5. 画像和关系档案已有候选与投影，但还需要更完整的用户确认、合并、冲突解释流程。
+6. `ProfileFact`、`RelationshipProfile`、塑石行动还没有独立 embedding。
+7. 当前 AI Pipeline 仍以单个 job 串起多个阶段，未来可拆成更细粒度、可单独重跑的子任务。
+8. 批量导入几千篇日记时，还需要更明确的分批入队、暂停/继续和耗时估算 UI。
+9. 历史摘要目前以本地规则摘要为主，未来需要可选 AI 摘要和用户可编辑摘要。
+10. 隐私、备份、导出策略还需要覆盖 summary/vector/debug 数据的加密与同步边界。
 
 ## 16. 推荐落地顺序
 
