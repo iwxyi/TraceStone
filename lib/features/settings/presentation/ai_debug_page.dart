@@ -23,6 +23,7 @@ import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../../data/services/ai_embedding_text_builder.dart';
 import '../../../data/services/embedding_service.dart';
+import '../../../data/utils/ai_source_formatter.dart';
 
 class AiDebugPage extends StatefulWidget {
   const AiDebugPage({super.key});
@@ -1274,7 +1275,7 @@ class _JobArtifacts {
           .join(', '),
       embeddingLines: [
         for (final embedding in embeddings)
-          '${embedding.sourceType.name}:${embedding.sourceId} entry=${embedding.entryId} '
+          '${formatAiSourceId(embedding.sourceType.name, embedding.sourceId)} entry=${embedding.entryId} '
               '${embedding.dimensions}d hash=${embedding.textHash} '
               'generatedAt=${embedding.generatedAt.toIso8601String()}',
       ],
@@ -1338,7 +1339,7 @@ class _JobArtifacts {
           .length,
       retrievalLines: [
         for (final item in trace?.items ?? [])
-          '${item.sourceType}:${item.sourceId} score=${item.score} ${item.title} ${item.reasons.join('；')}${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}${item.rerankSignals.isEmpty ? '' : ' signals=${_signalLine(item.rerankSignals)}'}',
+          '${formatAiSourceId(item.sourceType, item.sourceId)} score=${item.score} ${item.title} ${item.reasons.join('；')}${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}${item.rerankSignals.isEmpty ? '' : ' signals=${_signalLine(item.rerankSignals)}'}',
       ],
       summaryMeta: summary == null
           ? ''
@@ -1463,7 +1464,7 @@ class _RecentRetrievalTraceItem {
       summary: summary,
       lines: [
         for (final item in trace.items)
-          '${item.sourceType}:${item.sourceId} score=${item.score} '
+          '${formatAiSourceId(item.sourceType, item.sourceId)} score=${item.score} '
               '${item.title} ${item.reasons.join('；')}'
               '${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}'
               '${item.rerankSignals.isEmpty ? '' : ' signals=${_signalLine(item.rerankSignals)}'}',

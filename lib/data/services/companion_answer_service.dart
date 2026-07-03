@@ -6,6 +6,7 @@ import '../models/ai_profile.dart';
 import '../models/companion_answer.dart';
 import '../models/stone_task.dart';
 import '../repositories/ai_prompt_trace_repository.dart';
+import '../utils/ai_source_formatter.dart';
 import 'ai_client_service.dart';
 import 'ai_context_builder.dart';
 
@@ -102,12 +103,12 @@ $question
 相关记忆：
 ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map((result) {
             final memory = result.memory;
-            return '- source_id=memory:${memory.id}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${result.reasons.join('；')}${result.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(result.rerankSignals)}'}';
+            return '- source_id=${formatAiSourceId('memory', memory.id)}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${result.reasons.join('；')}${result.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(result.rerankSignals)}'}';
           }).join('\n')}
 
 相关搜索命中（可能包含日记摘要、片段、全文预览或长期记忆）：
 ${searchMatches.isEmpty ? '无' : searchMatches.map((match) {
-            return '- source_id=${match.sourceType}:${match.sourceId}｜entry=${match.entryId}｜score ${match.score}｜${match.title}｜${match.summary}｜${match.reasons.join('；')}${match.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(match.rerankSignals)}'}';
+            return '- source_id=${formatAiSourceId(match.sourceType, match.sourceId)}｜entry=${match.entryId}｜score ${match.score}｜${match.title}｜${match.summary}｜${match.reasons.join('；')}${match.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(match.rerankSignals)}'}';
           }).join('\n')}
 
 稳定画像：
@@ -129,7 +130,7 @@ ${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.as
 
 塑石行动：
 ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
-            return '- source_id=stone:${task.id}｜${task.title}｜${task.description}';
+            return '- source_id=${formatAiSourceId('stone', task.id)}｜${task.title}｜${task.description}';
           }).join('\n')}
 
 要求：
@@ -329,7 +330,7 @@ class _CompanionSourceFilter {
     final sources = _allowedSources(context);
     final byId = <String, _AllowedCompanionSource>{};
     for (final source in sources) {
-      byId['${source.sourceType}:${source.sourceId}'] = source;
+      byId[formatAiSourceId(source.sourceType, source.sourceId)] = source;
       byId.putIfAbsent(source.sourceId, () => source);
     }
     return byId;

@@ -8,6 +8,7 @@ import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/profile_projection_service.dart';
+import '../../../data/utils/ai_source_formatter.dart';
 
 class RelationshipsPage extends StatefulWidget {
   const RelationshipsPage({super.key});
@@ -420,7 +421,7 @@ class _RelationshipCard extends StatelessWidget {
     final quote = evidence.quote ?? '';
     final relevance = evidence.relevance ?? '';
     return [
-      '${evidence.type}${evidence.id.isEmpty ? '' : ':${evidence.id}'}',
+      formatInsightEvidenceId(evidence),
       if (summary.isNotEmpty) summary,
       if (quote.isNotEmpty) quote,
       if (relevance.isNotEmpty) relevance,

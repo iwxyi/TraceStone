@@ -46,6 +46,7 @@ import 'package:trace_stone/data/services/embedding_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/data/services/profile_projection_service.dart';
+import 'package:trace_stone/data/utils/ai_source_formatter.dart';
 
 Future<void> _throwStartupCleanupError() async {
   throw StateError('cleanup failed');
@@ -82,6 +83,20 @@ void main() {
   });
 
   group('AiPromptTrace', () {
+    test('AI source formatter avoids duplicate typed prefixes', () {
+      expect(formatAiSourceId('memory', 'memory:walk'), 'memory:walk');
+      expect(formatAiSourceId('stone', 'stone:walk'), 'stone:walk');
+      expect(formatAiSourceId('entry_summary', 'entry-1'),
+          'entry_summary:entry-1');
+      expect(
+        formatInsightEvidenceId(const InsightEvidence(
+          type: 'current_entry',
+          id: 'current_entry:entry-1',
+        )),
+        'current_entry:entry-1',
+      );
+    });
+
     test('round trips full prompts and remains legacy compatible', () {
       final date = DateTime(2026, 7, 3);
       final trace = AiPromptTrace(
@@ -3523,7 +3538,7 @@ void main() {
       expect(
           summary.contextSourceLines.join('\n'), contains('importance=0.82'));
       expect(summary.contextSourceLines.join('\n'),
-          contains('memory:memory:period-source'));
+          contains('memory:period-source'));
       expect(summary.contextSourceLines.join('\n'), contains('signals='));
     });
 

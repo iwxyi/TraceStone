@@ -4,6 +4,7 @@ import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/companion_answer.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/services/companion_answer_service.dart';
+import '../../../data/utils/ai_source_formatter.dart';
 
 class CompanionPage extends StatefulWidget {
   const CompanionPage({
@@ -245,7 +246,7 @@ class _MessageBubble extends StatelessWidget {
     if (!developerMode) return source.title;
     final id = (source.sourceType?.isNotEmpty ?? false) &&
             (source.sourceId?.isNotEmpty ?? false)
-        ? ' ${source.sourceType}:${source.sourceId}'
+        ? ' ${formatAiSourceId(source.sourceType!, source.sourceId!)}'
         : '';
     final score = source.score > 0 ? ' ${source.score}' : '';
     return '${source.title}$id$score';

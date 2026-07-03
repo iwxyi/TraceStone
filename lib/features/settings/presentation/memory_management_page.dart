@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../data/models/memory_entry.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
+import '../../../data/utils/ai_source_formatter.dart';
 
 class MemoryManagementPage extends StatefulWidget {
   const MemoryManagementPage({super.key});
@@ -239,7 +240,8 @@ class _MemoryCard extends StatelessWidget {
               const SizedBox(height: 12),
               Text('调试信息', style: theme.textTheme.labelLarge),
               const SizedBox(height: 4),
-              Text('memory:${memory.id}', style: theme.textTheme.bodySmall),
+              Text(formatAiSourceId('memory', memory.id),
+                  style: theme.textTheme.bodySmall),
               Text('sourceEntry:${memory.sourceEntryId}',
                   style: theme.textTheme.bodySmall),
               Text('updatedAt:${memory.updatedAt.toIso8601String()}',

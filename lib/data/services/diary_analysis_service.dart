@@ -15,6 +15,7 @@ import '../repositories/ai_prompt_trace_repository.dart';
 import '../repositories/ai_feedback_repository.dart';
 import '../repositories/insight_repository.dart';
 import '../repositories/memory_repository.dart';
+import '../utils/ai_source_formatter.dart';
 import 'ai_client_service.dart';
 import 'ai_context_builder.dart';
 
@@ -201,10 +202,10 @@ $feedbackBlock
   }
 
   String _segmentLine(DiarySegment segment) =>
-      '- segment:${segment.id}｜entry:${segment.entryId}｜s${segment.index + 1}｜${segment.summary}｜${segment.topics.join('、')}';
+      '- ${formatAiSourceId('segment', segment.id)}｜entry:${segment.entryId}｜s${segment.index + 1}｜${segment.summary}｜${segment.topics.join('、')}';
 
   String _entryLine(DiaryEntry entry) =>
-      '- entry:${entry.id}｜${_dateLabel(entry.date)}｜${entry.title ?? entry.excerpt}｜${entry.excerpt}';
+      '- ${formatAiSourceId('entry', entry.id)}｜${_dateLabel(entry.date)}｜${entry.title ?? entry.excerpt}｜${entry.excerpt}';
 
   String _recentEntryLine(AiContextPackage context, DiaryEntry entry) {
     final summary = context.recentSummaries
@@ -216,12 +217,12 @@ $feedbackBlock
       summary.brief,
       ...summary.keyPoints.take(3),
     ].map((part) => part.trim()).where((part) => part.isNotEmpty).join('；');
-    return '- entry_summary:${summary.entryId}｜entry:${entry.id}｜${_dateLabel(summary.date)}｜$title｜$body';
+    return '- ${formatAiSourceId('entry_summary', summary.entryId)}｜entry:${entry.id}｜${_dateLabel(summary.date)}｜$title｜$body';
   }
 
   String _memoryLine(MemoryRetrievalResult result) {
     final memory = result.memory;
-    return '- memory:${memory.id}｜sourceEntry:${memory.sourceEntryId}｜evidenceEntries:${memory.allSourceEntryIds.join(',')}｜${_dateLabel(memory.date)}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${memory.emotion}｜${[
+    return '- ${formatAiSourceId('memory', memory.id)}｜sourceEntry:${memory.sourceEntryId}｜evidenceEntries:${memory.allSourceEntryIds.join(',')}｜${_dateLabel(memory.date)}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${memory.emotion}｜${[
       ...memory.keywords,
       ...memory.people,
       ...memory.tags
@@ -241,14 +242,13 @@ $feedbackBlock
       ].join('、')}';
 
   String _stoneLine(StoneTask task) =>
-      '- stone:${task.id}｜sourceEntry:${task.sourceEntryId}｜${task.title}｜${task.description}｜${task.tags.join('、')}';
+      '- ${formatAiSourceId('stone', task.id)}｜sourceEntry:${task.sourceEntryId}｜${task.title}｜${task.description}｜${task.tags.join('、')}';
 
   String _evidenceRefs(List<InsightEvidence> evidence) {
     if (evidence.isEmpty) return '无';
     return evidence
         .take(4)
-        .map((item) =>
-            [item.type, item.id].where((value) => value.isNotEmpty).join(':'))
+        .map(formatInsightEvidenceId)
         .where((value) => value.isNotEmpty)
         .join('、');
   }
@@ -437,7 +437,8 @@ $feedbackBlock
     final withoutPrefix = _stripKnownSourcePrefix(trimmed);
     for (final result in context.relatedMemories) {
       final memory = result.memory;
-      if (trimmed == memory.id || trimmed == 'memory:${memory.id}') {
+      if (trimmed == memory.id ||
+          trimmed == formatAiSourceId('memory', memory.id)) {
         return memory.sourceEntryId.isNotEmpty
             ? memory.sourceEntryId
             : memory.allSourceEntryIds.firstOrNull;
@@ -457,6 +458,10 @@ $feedbackBlock
       'entry:',
       'calendar:',
       'segment:',
+      'memory:',
+      'stone:',
+      'profile:',
+      'relationship:',
     ];
     for (final prefix in prefixes) {
       if (value.startsWith(prefix)) return value.substring(prefix.length);
@@ -499,32 +504,33 @@ $feedbackBlock
     final ids = <String>{
       if (context.currentEntry != null) context.currentEntry!.id,
       if (context.currentEntry != null)
-        'current_entry:${context.currentEntry!.id}',
+        formatAiSourceId('current_entry', context.currentEntry!.id),
       if (context.currentSummary != null) ...[
         context.currentSummary!.entryId,
-        'entry_summary:${context.currentSummary!.entryId}',
+        formatAiSourceId('entry_summary', context.currentSummary!.entryId),
       ],
       for (final segment in context.currentSegments) ...[
         segment.id,
-        'segment:${segment.id}',
+        formatAiSourceId('segment', segment.id),
         segment.entryId,
       ],
       for (final entry in context.recentEntries) ...[
         entry.id,
-        'entry:${entry.id}',
+        formatAiSourceId('entry', entry.id),
       ],
       for (final summary in context.recentSummaries) ...[
         summary.entryId,
-        'entry_summary:${summary.entryId}',
+        formatAiSourceId('entry_summary', summary.entryId),
       ],
       for (final match in context.calendarMatches) ...[
         match.entry.id,
-        'calendar:${match.entry.id}',
-        if (match.summary != null) 'entry_summary:${match.summary!.entryId}',
+        formatAiSourceId('calendar', match.entry.id),
+        if (match.summary != null)
+          formatAiSourceId('entry_summary', match.summary!.entryId),
       ],
       for (final result in context.relatedMemories) ...[
         result.memory.id,
-        'memory:${result.memory.id}',
+        formatAiSourceId('memory', result.memory.id),
         result.memory.sourceEntryId,
         ...result.memory.allSourceEntryIds,
       ],

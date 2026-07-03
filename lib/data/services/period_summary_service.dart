@@ -5,6 +5,7 @@ import '../models/stone_task.dart';
 import '../repositories/insight_repository.dart';
 import '../repositories/period_summary_repository.dart';
 import '../repositories/stone_task_repository.dart';
+import '../utils/ai_source_formatter.dart';
 import 'ai_context_builder.dart';
 import 'entry_summary_service.dart';
 
@@ -213,13 +214,13 @@ class PeriodSummaryService {
     final lines = <String>[
       for (final entry in context.periodEntries.take(12))
         [
-          'period_entry:${entry.id}',
+          formatAiSourceId('period_entry', entry.id),
           entry.date.toIso8601String().split('T').first,
           entry.title ?? entry.excerpt,
         ].join(' | '),
       for (final summary in context.periodSummaries.take(12))
         [
-          'entry_summary:${summary.entryId}',
+          formatAiSourceId('entry_summary', summary.entryId),
           summary.date.toIso8601String().split('T').first,
           if (summary.title.isNotEmpty) summary.title else summary.brief,
           if (summary.brief.isNotEmpty) 'brief=${_compact(summary.brief)}',
@@ -229,7 +230,7 @@ class PeriodSummaryService {
         ].join(' | '),
       for (final result in context.relatedMemories.take(8))
         [
-          'memory:${result.memory.id}',
+          formatAiSourceId('memory', result.memory.id),
           result.memory.summary,
           'score=${result.score}',
           if (result.reasons.isNotEmpty)
@@ -239,13 +240,13 @@ class PeriodSummaryService {
         ].join(' | '),
       for (final fact in context.profileFacts.take(6))
         [
-          'profile:${fact.id}',
+          formatAiSourceId('profile', fact.id),
           '${fact.field}=${fact.value}',
           'confidence=${fact.confidence.toStringAsFixed(2)}',
         ].join(' | '),
       for (final relationship in context.relationshipProfiles.take(6))
         [
-          'relationship:${relationship.personName}',
+          formatAiSourceId('relationship', relationship.personName),
           if (relationship.relationship?.isNotEmpty ?? false)
             relationship.relationship,
           if (relationship.patterns.isNotEmpty)
@@ -254,7 +255,7 @@ class PeriodSummaryService {
         ].join(' | '),
       for (final task in context.stoneTasks.take(6))
         [
-          'stone:${task.id}',
+          formatAiSourceId('stone', task.id),
           task.title,
           task.status.name,
         ].join(' | '),

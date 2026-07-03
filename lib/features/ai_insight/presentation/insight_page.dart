@@ -7,6 +7,7 @@ import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
+import '../../../data/utils/ai_source_formatter.dart';
 import 'ai_feedback_bar.dart';
 
 class InsightPage extends StatefulWidget {
@@ -510,7 +511,7 @@ class _EvidenceList extends StatelessWidget {
 
   String _evidenceLine(InsightEvidence evidence) {
     final parts = [
-      [evidence.type, evidence.id].where((item) => item.isNotEmpty).join(':'),
+      formatInsightEvidenceId(evidence),
       if (evidence.date != null) _dateLabel(evidence.date!),
       if (evidence.summary?.isNotEmpty ?? false) evidence.summary!,
       if (evidence.quote?.isNotEmpty ?? false) '“${evidence.quote}”',

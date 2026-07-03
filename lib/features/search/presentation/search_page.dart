@@ -8,6 +8,7 @@ import '../../../data/models/memory_retrieval_result.dart';
 import '../../../data/models/stone_task.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/services/ai_context_builder.dart';
+import '../../../data/utils/ai_source_formatter.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
@@ -328,7 +329,7 @@ class _SearchDebugContextText {
       ]),
       _section('Search Matches', [
         for (final match in package.searchMatches)
-          '${match.sourceType}:${match.sourceId} entry=${match.entryId} '
+          '${formatAiSourceId(match.sourceType, match.sourceId)} entry=${match.entryId} '
               'score=${match.score} ${match.title} | ${match.summary} | '
               '${match.reasons.join('；')}'
               '${match.rerankSignals.isEmpty ? '' : ' | signals=${_signalLine(match.rerankSignals)}'}',
@@ -378,7 +379,7 @@ class _SearchDebugContextText {
               'sources=${package.retrievalTrace!.sourceCount} '
               'generatedAt=${package.retrievalTrace!.generatedAt.toIso8601String()}',
           for (final item in package.retrievalTrace!.items)
-            '${item.sourceType}:${item.sourceId} score=${item.score} '
+            '${formatAiSourceId(item.sourceType, item.sourceId)} score=${item.score} '
                 '${item.title} | ${item.reasons.join('；')}'
                 '${item.rerankSignals.isEmpty ? '' : ' | signals=${_signalLine(item.rerankSignals)}'}',
         ]),
@@ -400,7 +401,7 @@ class _SearchDebugContextText {
 
   String _evidenceLine(InsightEvidence evidence) {
     return [
-      '${evidence.type}:${evidence.id}',
+      formatInsightEvidenceId(evidence),
       if (evidence.date != null)
         evidence.date!.toIso8601String().split('T').first,
       if (evidence.summary?.isNotEmpty ?? false) evidence.summary!,
@@ -466,7 +467,7 @@ class _SearchMatchCard extends StatelessWidget {
       body: result.summary,
       reasons: result.reasons,
       sourceLine: [
-        '${result.sourceType}:${result.sourceId}',
+        formatAiSourceId(result.sourceType, result.sourceId),
         if (result.entryId.isNotEmpty) 'entry=${result.entryId}',
         if (result.matchedTokens.isNotEmpty)
           'matched=${result.matchedTokens.take(8).join(',')}',
@@ -538,7 +539,7 @@ class _MemoryResultCard extends StatelessWidget {
       body: memory.summary,
       reasons: result.reasons,
       sourceLine: [
-        'memory:${memory.id}',
+        formatAiSourceId('memory', memory.id),
         if (memory.sourceEntryId.isNotEmpty)
           'sourceEntry=${memory.sourceEntryId}',
         if (memory.allSourceEntryIds.isNotEmpty)
@@ -583,9 +584,9 @@ class _ProfileResultCard extends StatelessWidget {
         if (fact.userConfirmed) '用户确认',
       ],
       sourceLine: [
-        'profile:${fact.id}',
+        formatAiSourceId('profile', fact.id),
         if (fact.evidence.isNotEmpty)
-          'evidence=${fact.evidence.take(6).map((item) => '${item.type}:${item.id}').join(',')}',
+          'evidence=${fact.evidence.take(6).map(formatInsightEvidenceId).join(',')}',
       ].join(' | '),
       developerMode: developerMode,
     );
@@ -633,9 +634,9 @@ class _RelationshipResultCard extends StatelessWidget {
         if (profile.userConfirmed) '用户确认',
       ],
       sourceLine: [
-        'relationship:${profile.personName}',
+        formatAiSourceId('relationship', profile.personName),
         if (profile.evidence.isNotEmpty)
-          'evidence=${profile.evidence.take(6).map((item) => '${item.type}:${item.id}').join(',')}',
+          'evidence=${profile.evidence.take(6).map(formatInsightEvidenceId).join(',')}',
       ].join(' | '),
       developerMode: developerMode,
     );
@@ -668,7 +669,7 @@ class _StoneResultCard extends StatelessWidget {
         if (task.checkIns.isNotEmpty) '进展 ${task.checkIns.length} 次',
       ],
       sourceLine: [
-        'stone:${task.id}',
+        formatAiSourceId('stone', task.id),
         if (task.sourceEntryId.isNotEmpty) 'sourceEntry=${task.sourceEntryId}',
         if (task.checkIns.isNotEmpty)
           'checkIns=${task.checkIns.take(3).map((item) => item.id).join(',')}',
