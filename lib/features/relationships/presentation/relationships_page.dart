@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../companion/presentation/companion_page.dart';
 import '../../../data/models/ai_profile.dart';
 import '../../../data/models/ai_profile_preference.dart';
+import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
@@ -372,6 +373,26 @@ class _RelationshipCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (developerMode && profile.evidence.isNotEmpty) ...[
+                  const Divider(),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('证据来源',
+                        style: Theme.of(context).textTheme.labelLarge),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final evidence in profile.evidence.take(5))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _evidenceLine(evidence),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ),
+                ],
               ],
             ),
           ],
@@ -392,6 +413,18 @@ class _RelationshipCard extends StatelessWidget {
       case ProfileFactStatus.weak:
         return '候选';
     }
+  }
+
+  static String _evidenceLine(InsightEvidence evidence) {
+    final summary = evidence.summary ?? '';
+    final quote = evidence.quote ?? '';
+    final relevance = evidence.relevance ?? '';
+    return [
+      '${evidence.type}${evidence.id.isEmpty ? '' : ':${evidence.id}'}',
+      if (summary.isNotEmpty) summary,
+      if (quote.isNotEmpty) quote,
+      if (relevance.isNotEmpty) relevance,
+    ].join(' | ');
   }
 }
 

@@ -107,17 +107,36 @@ class _CustomAiPageState extends State<CustomAiPage> {
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _useOfficialAi = prefs.getBool(_useOfficialKey) ?? true;
-      _selectedPlatform = prefs.getString(_platformKey) ?? _selectedPlatform;
+      _useOfficialAi = _safeGetBool(prefs, _useOfficialKey) ?? true;
+      _selectedPlatform =
+          _safeGetString(prefs, _platformKey) ?? _selectedPlatform;
       _baseUrlController.text =
-          prefs.getString(_baseUrlKey) ?? _baseUrlController.text;
-      _apiKeyController.text = prefs.getString(_apiKeyKey) ?? '';
-      _modelController.text = prefs.getString(_modelKey) ??
+          _safeGetString(prefs, _baseUrlKey) ?? _baseUrlController.text;
+      _apiKeyController.text = _safeGetString(prefs, _apiKeyKey) ?? '';
+      _modelController.text = _safeGetString(prefs, _modelKey) ??
           (_defaultModels[_selectedPlatform] ?? '');
-      _privacyAccepted = prefs.getBool(_privacyAcceptedKey) ?? false;
+      _privacyAccepted = _safeGetBool(prefs, _privacyAcceptedKey) ?? false;
     });
     if (_canAutoFetch) {
       await _fetchModels();
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  bool? _safeGetBool(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is bool ? value : null;
+    } on Object {
+      return null;
     }
   }
 

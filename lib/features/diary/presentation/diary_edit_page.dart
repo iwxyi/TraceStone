@@ -111,13 +111,14 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
-      _headingLevel = (prefs.getInt('diary.headingLevel') ?? 2).clamp(1, 6);
-      final listIndex = (prefs.getInt('diary.listStyle') ?? 0)
+      _headingLevel =
+          (_safeGetInt(prefs, 'diary.headingLevel') ?? 2).clamp(1, 6);
+      final listIndex = (_safeGetInt(prefs, 'diary.listStyle') ?? 0)
           .clamp(0, _ListStyle.values.length - 1);
       _listStyle = _ListStyle.values[listIndex];
-      _autoSave = prefs.getBool('diary.autoSave') ?? true;
-      _useCustomAiFix = prefs.getBool('diary.aiFix.useCustom') ?? false;
-      _customAiFixRule = prefs.getString('diary.aiFix.customRule') ?? '';
+      _autoSave = _safeGetBool(prefs, 'diary.autoSave') ?? true;
+      _useCustomAiFix = _safeGetBool(prefs, 'diary.aiFix.useCustom') ?? false;
+      _customAiFixRule = _safeGetString(prefs, 'diary.aiFix.customRule') ?? '';
     });
   }
 
@@ -858,7 +859,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
 
   Future<List<LocationWeather>> _recentLocations() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getStringList(_recentLocationsKey) ?? [];
+    final saved = _safeGetStringList(prefs, _recentLocationsKey) ?? [];
     return saved.map(_locationFromStorage).take(5).toList();
   }
 
@@ -868,7 +869,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       return;
     }
     final prefs = await SharedPreferences.getInstance();
-    final current = prefs.getStringList(_recentLocationsKey) ?? [];
+    final current = _safeGetStringList(prefs, _recentLocationsKey) ?? [];
     final next = <String>[_locationToStorage(value)];
     for (final item in current) {
       final stored = _locationFromStorage(item);
@@ -877,6 +878,44 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       if (next.length >= 10) break;
     }
     await prefs.setStringList(_recentLocationsKey, next);
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  int? _safeGetInt(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is int ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  bool? _safeGetBool(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is bool ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      if (value is List<String>) return List<String>.from(value);
+      if (value is List) return value.whereType<String>().toList();
+      return null;
+    } on Object {
+      return null;
+    }
   }
 
   String _locationToStorage(LocationWeather value) => [

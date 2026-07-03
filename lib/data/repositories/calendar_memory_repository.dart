@@ -13,7 +13,7 @@ class CalendarMemoryRepository {
   Future<void> saveMemory(CalendarMemory memory) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('$_prefix${memory.id}', jsonEncode(memory.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(memory.id)) {
       index.add(memory.id);
       await prefs.setStringList(_indexKey, index);

@@ -372,6 +372,20 @@ void main() {
       expect(prefs.get('diary.insights.status.array'), isNull);
       expect(prefs.get('diary.insights.status.list'), ['bad']);
     });
+
+    test('save recovers when insight index has a wrong type', () async {
+      SharedPreferences.setMockInitialValues({
+        'diary.insights.index': 'legacy-bad-index',
+      });
+      const repository = InsightRepository();
+      final date = DateTime(2026, 7, 3);
+
+      await repository.saveInsight(_insight(entryId: 'saved', date: date));
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('diary.insights.index'), ['saved']);
+      expect((await repository.listInsights()).single.entryId, 'saved');
+    });
   });
 
   group('AiAnalysisQueueRepository', () {
@@ -406,10 +420,39 @@ void main() {
         'createdAt': date.toIso8601String(),
         'updatedAt': date.toIso8601String(),
       });
+      final malformed = AiAnalysisJob.fromJson({
+        'id': 'malformed',
+        'entryId': 'entry',
+        'pipelineVersion': 'old',
+        'state': <String>['pending'],
+        'currentStage': 12,
+        'createdAt': <String>['bad'],
+        'updatedAt': null,
+        'completedStages': 'queued',
+        'stageLogs': [
+          'bad',
+          {
+            'stage': 'embedding',
+            'startedAt': date.toIso8601String(),
+            'message': 'ok',
+            'retryCount': 'bad',
+          },
+        ],
+        'retryCount': 'bad',
+        'lastError': <String>['bad'],
+      });
 
       expect(restored.stageLogs.single.stage, AiAnalysisStage.embedding);
       expect(restored.stageLogs.single.outputSummary, 'completed=segmenting');
       expect(legacy.stageLogs, isEmpty);
+      expect(malformed.pipelineVersion, 1);
+      expect(malformed.state, AiAnalysisJobState.pending);
+      expect(malformed.currentStage, AiAnalysisStage.queued);
+      expect(malformed.completedStages, isEmpty);
+      expect(malformed.stageLogs.single.stage, AiAnalysisStage.embedding);
+      expect(malformed.stageLogs.single.retryCount, 0);
+      expect(malformed.retryCount, 0);
+      expect(malformed.lastError, isNull);
     });
 
     test('snapshot exposes queue progress counts', () {
@@ -529,6 +572,28 @@ void main() {
       expect(prefs.get('ai.analysis.jobs.broken'), isNull);
       expect(prefs.get('ai.analysis.jobs.array'), isNull);
       expect(prefs.get('ai.analysis.jobs.list'), ['bad']);
+    });
+
+    test('save operations recover when the queue index has a wrong type',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.analysis.jobs.index': 'legacy-bad-index',
+      });
+      const repository = AiAnalysisQueueRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'queued-entry',
+        date: date,
+        content: '保存后需要进入 AI 队列。',
+      );
+
+      await repository.enqueueEntry(entry);
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('ai.analysis.jobs.index'), ['queued-entry']);
+      expect((await repository.listJobs()).single.id, 'queued-entry');
+      await repository.deleteJob('queued-entry');
+      expect(prefs.getStringList('ai.analysis.jobs.index'), isEmpty);
     });
 
     test('runner resumes incomplete jobs without rewriting existing embeddings',
@@ -991,6 +1056,27 @@ void main() {
       expect(prefs.get('stone.tasks.array'), isNull);
       expect(prefs.get('stone.tasks.list'), ['bad']);
     });
+
+    test('save recovers when task index has a wrong type', () async {
+      SharedPreferences.setMockInitialValues({
+        'stone.tasks.index': 'legacy-bad-index',
+      });
+      const repository = StoneTaskRepository();
+      final date = DateTime(2026, 7, 3);
+
+      await repository.saveTask(StoneTask(
+        id: 'stone:saved',
+        sourceEntryId: 'entry',
+        title: '散步 10 分钟',
+        description: '晚饭后即可。',
+        createdAt: date,
+        updatedAt: date,
+      ));
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('stone.tasks.index'), ['stone:saved']);
+      expect((await repository.listTasks()).single.id, 'stone:saved');
+    });
   });
 
   group('CalendarMemoryRepository', () {
@@ -1050,6 +1136,28 @@ void main() {
       expect(prefs.get('calendar.memories.broken'), isNull);
       expect(prefs.get('calendar.memories.array'), isNull);
       expect(prefs.get('calendar.memories.list'), ['bad']);
+    });
+
+    test('save recovers when calendar memory index has a wrong type', () async {
+      SharedPreferences.setMockInitialValues({
+        'calendar.memories.index': 'legacy-bad-index',
+      });
+      const repository = CalendarMemoryRepository();
+      final date = DateTime(2026, 7, 3);
+
+      await repository.saveMemory(CalendarMemory(
+        id: 'saved-anniversary',
+        title: '旅行纪念日',
+        month: 7,
+        day: 3,
+        createdAt: date,
+        updatedAt: date,
+      ));
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('calendar.memories.index'),
+          ['saved-anniversary']);
+      expect((await repository.listMemories()).single.id, 'saved-anniversary');
     });
   });
 
@@ -1699,6 +1807,46 @@ void main() {
       expect(matches.first.entryId, high.id);
       expect(matches.first.reasons.join(' '), contains('摘要重要度'));
     });
+
+    test('uses structured people topic and emotion signals for rerank',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      final date = DateTime(2026, 7, 3);
+      final plain = _entry(
+        id: 'plain-search-summary',
+        date: date,
+        content: '散步以后焦虑下降。',
+      );
+      final structured = _entry(
+        id: 'structured-search-summary',
+        date: date,
+        content: '和妈妈散步以后焦虑下降。',
+      );
+      await diaryRepository.saveEntry(plain);
+      await diaryRepository.saveEntry(structured);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: plain,
+        brief: '散步以后焦虑下降',
+        importance: 0.5,
+      ));
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: structured,
+        brief: '散步以后焦虑下降',
+        importance: 0.5,
+        topics: const ['散步'],
+        people: const ['妈妈'],
+        emotion: '焦虑',
+      ));
+
+      final matches = await const AiSearchService().search('妈妈 散步 焦虑');
+
+      expect(matches.first.entryId, structured.id);
+      expect(matches.first.reasons.join(' '), contains('人物匹配'));
+      expect(matches.first.reasons.join(' '), contains('主题匹配'));
+      expect(matches.first.reasons.join(' '), contains('情绪匹配'));
+    });
   });
 
   group('PeriodSummaryService', () {
@@ -1718,6 +1866,7 @@ void main() {
         representativeEntryIds: const ['entry'],
         generator: 'test',
         contextDebugSummary: 'periodSummary sources=3',
+        contextSourceLines: const ['entry_summary:e1 | 2026-07-03 | 散步'],
       );
       final restored = PeriodSummary.fromJson(summary.toJson());
       final legacy = PeriodSummary.fromJson({
@@ -1726,10 +1875,25 @@ void main() {
         'startDate': date.toIso8601String(),
         'endDate': date.toIso8601String(),
         'generatedAt': date.toIso8601String(),
+        'entryCount': <String>['bad'],
+        'contextSourceLines': 'bad',
+      });
+      final malformed = PeriodSummary.fromJson({
+        'id': 12,
+        'type': <String>['month'],
+        'startDate': <String>['bad'],
+        'endDate': null,
+        'generatedAt': 3,
+        'themes': 'bad',
+        'contextDebugSummary': <String>['bad'],
       });
 
       expect(restored.contextDebugSummary, 'periodSummary sources=3');
+      expect(restored.contextSourceLines.single, contains('entry_summary:e1'));
       expect(legacy.contextDebugSummary, '');
+      expect(legacy.contextSourceLines, isEmpty);
+      expect(malformed.id, '');
+      expect(malformed.contextDebugSummary, '');
     });
 
     test('period summary repository ignores invalid stored values', () async {
@@ -1813,6 +1977,33 @@ void main() {
       expect(summary.representativeEntryIds, isNot(contains('june-entry')));
       expect(summary.contextDebugSummary, contains('periodSummary'));
       expect(summary.contextDebugSummary, contains('sources='));
+    });
+
+    test('period summary stores context source lines for developer tracing',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      final entry = _entry(
+        id: 'period-source-entry',
+        date: DateTime(2026, 7, 3),
+        content: '晚上散步以后焦虑下降。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: entry,
+        brief: '晚上散步以后焦虑下降',
+        importance: 0.82,
+        topics: const ['散步', '情绪调节'],
+      ));
+
+      final summary = await const PeriodSummaryService()
+          .buildMonthSummary(DateTime(2026, 7), [entry]);
+
+      expect(summary.contextSourceLines.join('\n'), contains('entry_summary'));
+      expect(summary.contextSourceLines.join('\n'), contains(entry.id));
+      expect(
+          summary.contextSourceLines.join('\n'), contains('importance=0.82'));
     });
 
     test('includes relationship and stone progress highlights', () async {
@@ -2022,6 +2213,118 @@ void main() {
         package.retrievalTrace?.items.single.matchedTokens,
         contains('外婆生日'),
       );
+    });
+
+    test('matches custom solar anniversaries within a nearby window', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const calendarRepository = CalendarMemoryRepository();
+      final now = DateTime(2026, 7, 5);
+      await calendarRepository.saveMemory(CalendarMemory(
+        id: 'anniversary-trip',
+        title: '第一次旅行纪念日',
+        month: 7,
+        day: 3,
+        createdAt: now,
+        updatedAt: now,
+      ));
+      final current = _entry(
+        id: 'anniversary-window-current',
+        date: now,
+        content: '这几天又想起第一次旅行。',
+      );
+      final nearPast = _entry(
+        id: 'anniversary-window-past',
+        date: DateTime(2025, 7, 2),
+        content: '去年旅行纪念日前一天也写了这件事。',
+      );
+      final ordinaryToday = _entry(
+        id: 'ordinary-today-past',
+        date: DateTime(2025, 7, 5),
+        content: '去年今天只是普通记录。',
+      );
+      final outsideWindow = _entry(
+        id: 'anniversary-outside-window',
+        date: DateTime(2024, 7, 8),
+        content: '这条离纪念日太远。',
+      );
+      for (final entry in [
+        current,
+        nearPast,
+        ordinaryToday,
+        outsideWindow,
+      ]) {
+        await diaryRepository.saveEntry(entry);
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(current);
+      final ids = package.calendarMatches.map((match) => match.entry.id);
+      final anniversary = package.calendarMatches
+          .firstWhere((match) => match.entry.id == 'anniversary-window-past');
+
+      expect(ids, contains('anniversary-window-past'));
+      expect(ids, contains('ordinary-today-past'));
+      expect(ids, isNot(contains('anniversary-outside-window')));
+      expect(anniversary.label, '第一次旅行纪念日');
+      expect(anniversary.score, 11);
+      expect(anniversary.dayOffset, -1);
+      expect(anniversary.reason, contains('第一次旅行纪念日附近'));
+      expect(
+        package.retrievalTrace?.items
+            .firstWhere((item) => item.sourceId == 'anniversary-window-past')
+            .matchedTokens,
+        contains('第一次旅行纪念日'),
+      );
+    });
+
+    test('does not treat disabled or lunar memories as solar matches',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const calendarRepository = CalendarMemoryRepository();
+      final now = DateTime(2026, 7, 3);
+      await calendarRepository.saveMemory(CalendarMemory(
+        id: 'disabled-memory',
+        title: '禁用纪念日',
+        month: 7,
+        day: 3,
+        createdAt: now,
+        updatedAt: now,
+        enabled: false,
+      ));
+      await calendarRepository.saveMemory(CalendarMemory(
+        id: 'lunar-memory',
+        title: '农历生日',
+        month: 7,
+        day: 3,
+        createdAt: now,
+        updatedAt: now,
+        type: CalendarMemoryType.lunar,
+      ));
+      final current = _entry(
+        id: 'calendar-filter-current',
+        date: now,
+        content: '今天想起一些日期。',
+      );
+      final past = _entry(
+        id: 'calendar-filter-past',
+        date: DateTime(2025, 7, 3),
+        content: '去年今天也想起一些日期。',
+      );
+      for (final entry in [current, past]) {
+        await diaryRepository.saveEntry(entry);
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(current);
+      final match = package.calendarMatches.single;
+
+      expect(match.label, isNull);
+      expect(match.calendarType, 'solar');
+      expect(match.reason, contains('年前的今天'));
+      expect(match.reason, isNot(contains('农历生日')));
+      expect(match.reason, isNot(contains('禁用纪念日')));
     });
 
     test('includes profile relationship and stone context', () async {
@@ -2255,6 +2558,30 @@ void main() {
       expect(prefs.get('memory.entries.broken'), isNull);
       expect(prefs.get('memory.entries.array'), isNull);
       expect(prefs.get('memory.entries.list'), ['bad']);
+    });
+
+    test('save recovers when memory index has a wrong type', () async {
+      SharedPreferences.setMockInitialValues({
+        'memory.entries.index': 'legacy-bad-index',
+      });
+      const repository = MemoryRepository();
+      final date = DateTime(2026, 7, 3);
+
+      await repository.saveMemory(MemoryEntry(
+        id: 'saved-memory',
+        sourceEntryId: 'entry',
+        date: date,
+        createdAt: date,
+        summary: '散步以后状态恢复。',
+        keywords: const ['散步'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['运动'],
+      ));
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('memory.entries.index'), ['saved-memory']);
+      expect((await repository.listMemories()).single.id, 'saved-memory');
     });
 
     test('saves memory embeddings and keeps them stable on reference updates',
@@ -2502,6 +2829,9 @@ EntrySummary _summaryForTest({
   required DiaryEntry entry,
   required String brief,
   required double importance,
+  List<String> topics = const [],
+  List<String> people = const [],
+  String emotion = '',
 }) {
   return EntrySummary(
     entryId: entry.id,
@@ -2511,10 +2841,10 @@ EntrySummary _summaryForTest({
     title: entry.title ?? brief,
     brief: brief,
     keyPoints: [brief],
-    topics: const [],
-    people: const [],
+    topics: topics,
+    people: people,
     places: const [],
-    emotion: '',
+    emotion: emotion,
     importance: importance,
     importantQuotes: const [],
     generator: 'test',

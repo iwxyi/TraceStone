@@ -27,7 +27,7 @@ class AiAnalysisQueueRepository {
       updatedAt: now,
     );
     await prefs.setString('$_prefix${job.id}', jsonEncode(job.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(job.id)) {
       index.add(job.id);
       await prefs.setStringList(_indexKey, index);
@@ -39,7 +39,7 @@ class AiAnalysisQueueRepository {
   Future<void> saveJob(AiAnalysisJob job) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('$_prefix${job.id}', jsonEncode(job.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(job.id)) {
       index.add(job.id);
       await prefs.setStringList(_indexKey, index);
@@ -58,7 +58,12 @@ class AiAnalysisQueueRepository {
         await prefs.remove(key);
         return null;
       }
-      return AiAnalysisJob.fromJson(decoded);
+      final job = AiAnalysisJob.fromJson(decoded);
+      if (job.id.isEmpty) {
+        await prefs.remove(key);
+        return null;
+      }
+      return job;
     } on Object {
       await prefs.remove(key);
       return null;
@@ -68,7 +73,7 @@ class AiAnalysisQueueRepository {
   Future<void> deleteJob(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$id');
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     index.remove(id);
     await prefs.setStringList(_indexKey, index);
     AiAnalysisQueueBus.bump();
@@ -88,7 +93,12 @@ class AiAnalysisQueueRepository {
           await prefs.remove(key);
           continue;
         }
-        jobs.add(AiAnalysisJob.fromJson(decoded));
+        final job = AiAnalysisJob.fromJson(decoded);
+        if (job.id.isEmpty) {
+          await prefs.remove(key);
+          continue;
+        }
+        jobs.add(job);
       } on Object {
         await prefs.remove(key);
       }

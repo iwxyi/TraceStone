@@ -17,7 +17,7 @@ class InsightRepository {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         '$_prefix${insight.entryId}', jsonEncode(insight.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(insight.entryId)) {
       index.add(insight.entryId);
       await prefs.setStringList(_indexKey, index);

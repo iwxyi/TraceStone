@@ -13,7 +13,7 @@ class StoneTaskRepository {
   Future<void> saveTask(StoneTask task) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('$_prefix${task.id}', jsonEncode(task.toJson()));
-    final index = prefs.getStringList(_indexKey) ?? [];
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
     if (!index.contains(task.id)) {
       index.add(task.id);
       await prefs.setStringList(_indexKey, index);

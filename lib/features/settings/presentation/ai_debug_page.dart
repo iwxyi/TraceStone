@@ -1386,6 +1386,7 @@ class _RecentPeriodSummaryItem {
           'emotions=${summary.emotions.join('、')}',
         if (summary.representativeEntryIds.isNotEmpty)
           'representative=${summary.representativeEntryIds.join(',')}',
+        for (final line in summary.contextSourceLines.take(12)) 'source=$line',
         for (final line in summary.relationshipHighlights.take(2))
           'relationship=$line',
         for (final line in summary.stoneHighlights.take(2)) 'stone=$line',

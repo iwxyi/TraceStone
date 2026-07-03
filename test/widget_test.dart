@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/app/trace_stone_app.dart';
+import 'package:trace_stone/data/models/ai_analysis_job.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
@@ -20,6 +21,7 @@ import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/features/ai_insight/presentation/insight_page.dart';
 import 'package:trace_stone/features/companion/presentation/companion_page.dart';
+import 'package:trace_stone/features/diary/presentation/diary_edit_page.dart';
 import 'package:trace_stone/features/diary/presentation/today_page.dart';
 import 'package:trace_stone/features/relationships/presentation/relationships_page.dart';
 import 'package:trace_stone/features/settings/presentation/calendar_memory_page.dart';
@@ -38,6 +40,16 @@ void main() {
     expect(find.text('回顾'), findsOneWidget);
     expect(find.text('洞察'), findsOneWidget);
     expect(find.text('我的'), findsOneWidget);
+  });
+
+  testWidgets('review page ignores invalid stored tab preference',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'review.selectedIndex': <String>['bad'],
+    });
+    await tester.pumpWidget(const TraceStoneApp());
+
+    expect(find.text('回顾'), findsOneWidget);
   });
 
   testWidgets('shows profile candidates on profile tab', (tester) async {
@@ -156,6 +168,34 @@ void main() {
         findsOneWidget);
   });
 
+  testWidgets('today queue card shows resumable batch progress',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const queueRepository = AiAnalysisQueueRepository();
+    final date = DateTime(2026, 7, 3);
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'queued-home-entry',
+      entryId: 'queued-home-entry',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.incomplete,
+      currentStage: AiAnalysisStage.embedding,
+      createdAt: date,
+      updatedAt: date,
+      completedStages: const [
+        AiAnalysisStage.preparing,
+        AiAnalysisStage.segmenting,
+      ],
+      lastError: '上次整理被中断，等待继续',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pump();
+
+    expect(find.text('继续整理记忆'), findsOneWidget);
+    expect(find.textContaining('正在整理 1/1 篇'), findsOneWidget);
+    expect(find.textContaining('已完成 2/7 个阶段'), findsOneWidget);
+  });
+
   testWidgets('insight page exports insight package in developer mode',
       (tester) async {
     final date = DateTime(2026, 7, 3);
@@ -269,6 +309,43 @@ void main() {
     expect(find.text('已确认'), findsOneWidget);
   });
 
+  testWidgets('profile page shows evidence sources in developer mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    final date = DateTime(2026, 7, 3);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-evidence',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.62,
+        ),
+      ],
+    ));
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('证据来源'), findsOneWidget);
+    expect(
+        find.textContaining('current_entry:profile-evidence'), findsOneWidget);
+  });
+
   testWidgets('corrects long term memory summary', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);
@@ -300,6 +377,35 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('散步有时能帮助缓解压力。'), findsOneWidget);
+  });
+
+  testWidgets('memory page shows source entries in developer mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    final date = DateTime(2026, 7, 3);
+    await const MemoryRepository().saveMemory(MemoryEntry(
+      id: 'memory-source-widget',
+      sourceEntryId: 'first-entry',
+      evidenceEntryIds: const ['first-entry', 'second-entry'],
+      date: date,
+      createdAt: date,
+      summary: '散步有时能帮助缓解压力。',
+      keywords: const ['散步'],
+      emotion: '',
+      people: const [],
+      tags: const ['运动'],
+    ));
+
+    await tester.pumpWidget(
+      const MaterialApp(home: MemoryManagementPage()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('证据来源'), findsOneWidget);
+    expect(find.text('entry:first-entry'), findsOneWidget);
+    expect(find.text('entry:second-entry'), findsOneWidget);
   });
 
   testWidgets('shows shaping stone candidates', (tester) async {
@@ -465,6 +571,61 @@ void main() {
     expect(find.text('已保存 AI 设置'), findsOneWidget);
   });
 
+  testWidgets('custom ai settings ignore invalid stored preference types',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'ai.useOfficial': <String>['bad'],
+      'ai.platform': <String>['OpenAI'],
+      'ai.baseUrl': <String>['https://bad.example'],
+      'ai.apiKey': <String>['bad-key'],
+      'ai.model': <String>['bad-model'],
+      'ai.customPrivacyAccepted': <String>['bad'],
+    });
+
+    await tester.pumpWidget(
+      const MaterialApp(home: CustomAiPage()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('自定义 AI'), findsOneWidget);
+    expect(find.text('使用官方 AI'), findsOneWidget);
+    expect(find.text('gpt-4.1-mini'), findsOneWidget);
+  });
+
+  testWidgets('diary editor ignores invalid stored preference types',
+      (tester) async {
+    final date = DateTime(2026, 7, 3);
+    SharedPreferences.setMockInitialValues({
+      'diary.headingLevel': <String>['bad'],
+      'diary.listStyle': <String>['bad'],
+      'diary.autoSave': <String>['bad'],
+      'diary.aiFix.useCustom': <String>['bad'],
+      'diary.aiFix.customRule': <String>['bad'],
+      'diary.recentLocations': 'bad',
+    });
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'editor-invalid-prefs',
+      date: date,
+      createdAt: date,
+      content: '已有日记内容',
+      location: '家',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+      onGenerateRoute: (_) => MaterialPageRoute(
+        settings: const RouteSettings(arguments: 'editor-invalid-prefs'),
+        builder: (_) => const DiaryEditPage(),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('日记'), findsWidgets);
+    expect(find.textContaining('已有日记内容'), findsOneWidget);
+  });
+
   testWidgets('relationships page filters and asks about a person',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -578,6 +739,47 @@ void main() {
 
     expect(find.text('家人'), findsOneWidget);
     expect(find.text('已确认'), findsOneWidget);
+  });
+
+  testWidgets('relationships page shows evidence sources in developer mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    final date = DateTime(2026, 7, 3);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'relationship-evidence',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const ['妈妈'],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      relationshipUpdates: const [
+        RelationshipUpdateCandidate(
+          personName: '妈妈',
+          relationship: 'family',
+          summary: '晚饭后沟通更平和',
+          confidence: 0.64,
+        ),
+      ],
+    ));
+
+    await tester.pumpWidget(
+      const MaterialApp(home: RelationshipsPage()),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('候选记录'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('证据来源'), findsOneWidget);
+    expect(find.textContaining('current_entry:relationship-evidence'),
+        findsOneWidget);
   });
 
   testWidgets('search hides debug scores outside developer mode',
@@ -765,6 +967,7 @@ void main() {
     expect(copiedText, contains('## Recent Period Summaries'));
     expect(copiedText, contains('### 月度总结 2026-07'));
     expect(copiedText, contains('context=periodSummary'));
+    expect(copiedText, contains('source=entry_summary:search-entry'));
 
     await tester.drag(find.byType(ListView), const Offset(0, 520));
     await tester.pumpAndSettle();

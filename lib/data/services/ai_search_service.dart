@@ -67,8 +67,14 @@ class AiSearchService {
       final source = await _sourceForEmbedding(embedding);
       if (source == null) continue;
       final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
+      final structuredScore = _structuredScore(queryTokens, source);
       final importanceBonus = _importanceBonus(source.importance);
-      final score = (similarity * 12).round() + keywordScore + importanceBonus;
+      final recencyBonus = _recencyBonus(source.date);
+      final score = (similarity * 12).round() +
+          keywordScore +
+          structuredScore +
+          importanceBonus +
+          recencyBonus;
       candidates.add(AiSearchMatch(
         sourceType: source.sourceType,
         sourceId: source.sourceId,
@@ -79,10 +85,13 @@ class AiSearchService {
         reasons: [
           '向量相似度 ${similarity.toStringAsFixed(2)}',
           if (keywordScore > 0) '关键词校准 +$keywordScore',
+          ..._structuredReasons(queryTokens, source),
           if (importanceBonus > 0)
             '摘要重要度 ${source.importance.toStringAsFixed(2)}',
+          if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
         ],
-        matchedTokens: _matchedTokens(queryTokens, _tokens(source.text)),
+        matchedTokens:
+            _matchedTokens(queryTokens, _tokens(_searchableText(source))),
       ));
     }
     return candidates;
@@ -112,6 +121,10 @@ class AiSearchService {
           title: entry.title ?? summary.brief,
           summary: summary.brief,
           importance: summary.importance,
+          date: entry.date,
+          topics: summary.topics,
+          people: summary.people,
+          emotion: summary.emotion,
           text: text,
         );
         if (match != null) matches.add(match);
@@ -124,6 +137,7 @@ class AiSearchService {
           title: entry.title ?? entry.excerpt,
           summary: entry.excerpt,
           importance: 0,
+          date: entry.date,
           text: entry.bodyPreview,
         );
         if (match != null) matches.add(match);
@@ -139,6 +153,9 @@ class AiSearchService {
           title: segment.summary,
           summary: segment.text,
           importance: 0,
+          date: entry.date,
+          topics: segment.topics,
+          people: segment.people,
           text: [
             segment.summary,
             segment.text,
@@ -166,6 +183,10 @@ class AiSearchService {
           title: entry.title ?? summary.brief,
           summary: summary.brief,
           importance: summary.importance,
+          date: entry.date,
+          topics: summary.topics,
+          people: summary.people,
+          emotion: summary.emotion,
           text: [
             summary.title,
             summary.brief,
@@ -189,6 +210,9 @@ class AiSearchService {
           title: segment.summary,
           summary: segment.text,
           importance: 0,
+          date: entry.date,
+          topics: segment.topics,
+          people: segment.people,
           text: [
             segment.summary,
             segment.text,
@@ -204,6 +228,7 @@ class AiSearchService {
           title: entry.title ?? entry.excerpt,
           summary: entry.excerpt,
           importance: 0,
+          date: entry.date,
           text: entry.bodyPreview,
         );
       case AiEmbeddingSourceType.memory:
@@ -219,13 +244,35 @@ class AiSearchService {
     required String title,
     required String summary,
     required double importance,
+    required DateTime date,
+    List<String> topics = const [],
+    List<String> people = const [],
+    String emotion = '',
     required String text,
   }) {
-    final sourceTokens = _tokens(text);
+    final source = _SearchSource(
+      sourceType: sourceType,
+      sourceId: sourceId,
+      entryId: entryId,
+      title: title,
+      summary: summary,
+      importance: importance,
+      date: date,
+      topics: topics,
+      people: people,
+      emotion: emotion,
+      text: text,
+    );
+    final sourceTokens = _tokens(_searchableText(source));
     final matchedTokens = _matchedTokens(queryTokens, sourceTokens);
     if (matchedTokens.isEmpty) return null;
     final importanceBonus = _importanceBonus(importance);
-    final score = _keywordScore(queryTokens, sourceTokens) + importanceBonus;
+    final structuredScore = _structuredScore(queryTokens, source);
+    final recencyBonus = _recencyBonus(date);
+    final score = _keywordScore(queryTokens, sourceTokens) +
+        structuredScore +
+        importanceBonus +
+        recencyBonus;
     return AiSearchMatch(
       sourceType: sourceType,
       sourceId: sourceId,
@@ -235,7 +282,9 @@ class AiSearchService {
       score: score,
       reasons: [
         '关键词重合：${matchedTokens.take(6).join('、')}',
+        ..._structuredReasons(queryTokens, source),
         if (importanceBonus > 0) '摘要重要度 ${importance.toStringAsFixed(2)}',
+        if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
       ],
       matchedTokens: matchedTokens.take(12).toList(),
     );
@@ -269,6 +318,46 @@ class AiSearchService {
     return 0;
   }
 
+  int _structuredScore(Set<String> queryTokens, _SearchSource source) {
+    var score = 0;
+    if (_matchedTokens(queryTokens, _tokens(source.people.join(' ')))
+        .isNotEmpty) {
+      score += 3;
+    }
+    if (_matchedTokens(queryTokens, _tokens(source.topics.join(' ')))
+        .isNotEmpty) {
+      score += 2;
+    }
+    if (_matchedTokens(queryTokens, _tokens(source.emotion)).isNotEmpty) {
+      score += 1;
+    }
+    return score;
+  }
+
+  List<String> _structuredReasons(
+    Set<String> queryTokens,
+    _SearchSource source,
+  ) {
+    final people =
+        _matchedTokens(queryTokens, _tokens(source.people.join(' ')));
+    final topics =
+        _matchedTokens(queryTokens, _tokens(source.topics.join(' ')));
+    final emotions = _matchedTokens(queryTokens, _tokens(source.emotion));
+    return [
+      if (people.isNotEmpty) '人物匹配：${people.take(3).join('、')}',
+      if (topics.isNotEmpty) '主题匹配：${topics.take(3).join('、')}',
+      if (emotions.isNotEmpty) '情绪匹配：${emotions.take(3).join('、')}',
+    ];
+  }
+
+  int _recencyBonus(DateTime date) {
+    final age = DateTime.now().difference(date).inDays;
+    if (age < 0) return 0;
+    if (age <= 30) return 2;
+    if (age <= 180) return 1;
+    return 0;
+  }
+
   List<String> _matchedTokens(
     Set<String> queryTokens,
     Set<String> sourceTokens,
@@ -293,6 +382,15 @@ class AiSearchService {
     }
     return tokens;
   }
+
+  String _searchableText(_SearchSource source) {
+    return [
+      source.text,
+      ...source.topics,
+      ...source.people,
+      source.emotion,
+    ].join(' ');
+  }
 }
 
 class _SearchSource {
@@ -303,6 +401,10 @@ class _SearchSource {
     required this.title,
     required this.summary,
     required this.importance,
+    required this.date,
+    this.topics = const [],
+    this.people = const [],
+    this.emotion = '',
     required this.text,
   });
 
@@ -312,5 +414,9 @@ class _SearchSource {
   final String title;
   final String summary;
   final double importance;
+  final DateTime date;
+  final List<String> topics;
+  final List<String> people;
+  final String emotion;
   final String text;
 }

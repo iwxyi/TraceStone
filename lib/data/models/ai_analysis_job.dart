@@ -108,14 +108,20 @@ class AiAnalysisJob {
 
   static AiAnalysisJob fromJson(Map<String, dynamic> json) {
     final now = DateTime.now();
-    final stateName =
-        json['state'] as String? ?? AiAnalysisJobState.pending.name;
-    final stageName =
-        json['currentStage'] as String? ?? AiAnalysisStage.queued.name;
+    final stateName = json['state'] is String
+        ? json['state'] as String
+        : AiAnalysisJobState.pending.name;
+    final stageName = json['currentStage'] is String
+        ? json['currentStage'] as String
+        : AiAnalysisStage.queued.name;
+    final pipelineVersion = json['pipelineVersion'];
+    final completedStages = json['completedStages'];
+    final stageLogs = json['stageLogs'];
+    final retryCount = json['retryCount'];
     return AiAnalysisJob(
-      id: json['id'] as String? ?? '',
-      entryId: json['entryId'] as String? ?? '',
-      pipelineVersion: json['pipelineVersion'] as int? ?? 1,
+      id: json['id'] is String ? json['id'] as String : '',
+      entryId: json['entryId'] is String ? json['entryId'] as String : '',
+      pipelineVersion: pipelineVersion is num ? pipelineVersion.toInt() : 1,
       state: AiAnalysisJobState.values.firstWhere(
         (item) => item.name == stateName,
         orElse: () => AiAnalysisJobState.pending,
@@ -124,21 +130,27 @@ class AiAnalysisJob {
         (item) => item.name == stageName,
         orElse: () => AiAnalysisStage.queued,
       ),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? now,
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? now,
-      completedStages: (json['completedStages'] as List<dynamic>? ?? [])
+      createdAt: json['createdAt'] is String
+          ? DateTime.tryParse(json['createdAt'] as String) ?? now
+          : now,
+      updatedAt: json['updatedAt'] is String
+          ? DateTime.tryParse(json['updatedAt'] as String) ?? now
+          : now,
+      completedStages: (completedStages is List ? completedStages : const [])
           .map((item) => item.toString())
           .map((name) => AiAnalysisStage.values.firstWhere(
                 (item) => item.name == name,
                 orElse: () => AiAnalysisStage.queued,
               ))
           .toList(),
-      stageLogs: (json['stageLogs'] as List<dynamic>? ?? [])
-          .map((item) => AiAnalysisStageLog.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      stageLogs: (stageLogs is List ? stageLogs : const [])
+          .whereType<Map>()
+          .map((item) =>
+              AiAnalysisStageLog.fromJson(Map<String, dynamic>.from(item)))
           .toList(),
-      retryCount: json['retryCount'] as int? ?? 0,
-      lastError: json['lastError'] as String?,
+      retryCount: retryCount is num ? retryCount.toInt() : 0,
+      lastError:
+          json['lastError'] is String ? json['lastError'] as String : null,
     );
   }
 }
@@ -174,18 +186,26 @@ class AiAnalysisStageLog {
 
   static AiAnalysisStageLog fromJson(Map<String, dynamic> json) {
     final now = DateTime.now();
-    final stageName = json['stage'] as String? ?? AiAnalysisStage.queued.name;
+    final stageName = json['stage'] is String
+        ? json['stage'] as String
+        : AiAnalysisStage.queued.name;
+    final retryCount = json['retryCount'];
     return AiAnalysisStageLog(
       stage: AiAnalysisStage.values.firstWhere(
         (item) => item.name == stageName,
         orElse: () => AiAnalysisStage.queued,
       ),
-      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? '') ?? now,
-      message: json['message'] as String? ?? '',
-      inputSummary: json['inputSummary'] as String? ?? '',
-      outputSummary: json['outputSummary'] as String? ?? '',
-      error: json['error'] as String?,
-      retryCount: json['retryCount'] as int? ?? 0,
+      startedAt: json['startedAt'] is String
+          ? DateTime.tryParse(json['startedAt'] as String) ?? now
+          : now,
+      message: json['message'] is String ? json['message'] as String : '',
+      inputSummary:
+          json['inputSummary'] is String ? json['inputSummary'] as String : '',
+      outputSummary: json['outputSummary'] is String
+          ? json['outputSummary'] as String
+          : '',
+      error: json['error'] is String ? json['error'] as String : null,
+      retryCount: retryCount is num ? retryCount.toInt() : 0,
     );
   }
 }

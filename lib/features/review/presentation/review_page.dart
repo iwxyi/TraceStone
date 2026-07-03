@@ -36,7 +36,7 @@ class _ReviewPageState extends State<ReviewPage> {
 
   Future<void> _loadViewPreference() async {
     final prefs = await SharedPreferences.getInstance();
-    final selectedIndex = prefs.getInt('review.selectedIndex');
+    final selectedIndex = _safeGetInt(prefs, 'review.selectedIndex');
     if (selectedIndex == null || !mounted) return;
     setState(() => _selectedIndex = selectedIndex.clamp(0, 2));
   }
@@ -44,6 +44,15 @@ class _ReviewPageState extends State<ReviewPage> {
   Future<void> _saveViewPreference(int index) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('review.selectedIndex', index);
+  }
+
+  int? _safeGetInt(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is int ? value : null;
+    } on Object {
+      return null;
+    }
   }
 
   @override

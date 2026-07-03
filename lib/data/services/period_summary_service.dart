@@ -1,3 +1,4 @@
+import '../models/ai_context_package.dart';
 import '../models/diary_entry.dart';
 import '../models/period_summary.dart';
 import '../models/stone_task.dart';
@@ -48,6 +49,7 @@ class PeriodSummaryService {
           .expand((summary) => summary.topics)
           .toList(growable: false),
       contextDebugSummary: context.debugSummary,
+      contextSourceLines: _periodContextSourceLines(context),
       relatedMemoryThemes: context.relatedMemories
           .expand((result) => [
                 ...result.memory.tags,
@@ -78,6 +80,7 @@ class PeriodSummaryService {
           .expand((summary) => summary.topics)
           .toList(growable: false),
       contextDebugSummary: context.debugSummary,
+      contextSourceLines: _periodContextSourceLines(context),
       relatedMemoryThemes: context.relatedMemories
           .expand((result) => [
                 ...result.memory.tags,
@@ -96,6 +99,7 @@ class PeriodSummaryService {
     required Set<String> contextEntryIds,
     required List<String> contextThemes,
     required String contextDebugSummary,
+    required List<String> contextSourceLines,
     required List<String> relatedMemoryThemes,
   }) async {
     final themes = <String, int>{};
@@ -176,9 +180,54 @@ class PeriodSummaryService {
           _uniqueTake(relationshipHighlights, limit: 5).toList(),
       stoneHighlights: stoneHighlights,
       contextDebugSummary: contextDebugSummary,
+      contextSourceLines: contextSourceLines,
     );
     await _periodSummaryRepository.saveSummary(summary);
     return summary;
+  }
+
+  List<String> _periodContextSourceLines(AiContextPackage context) {
+    final lines = <String>[
+      for (final summary in context.periodSummaries.take(12))
+        [
+          'entry_summary:${summary.entryId}',
+          summary.date.toIso8601String().split('T').first,
+          if (summary.title.isNotEmpty) summary.title else summary.brief,
+          if (summary.topics.isNotEmpty)
+            'topics=${summary.topics.take(4).join('、')}',
+          'importance=${summary.importance.toStringAsFixed(2)}',
+        ].join(' | '),
+      for (final result in context.relatedMemories.take(8))
+        [
+          'memory:${result.memory.id}',
+          result.memory.summary,
+          'score=${result.score}',
+          if (result.reasons.isNotEmpty)
+            'reasons=${result.reasons.take(3).join('；')}',
+        ].join(' | '),
+      for (final fact in context.profileFacts.take(6))
+        [
+          'profile:${fact.id}',
+          '${fact.field}=${fact.value}',
+          'confidence=${fact.confidence.toStringAsFixed(2)}',
+        ].join(' | '),
+      for (final relationship in context.relationshipProfiles.take(6))
+        [
+          'relationship:${relationship.personName}',
+          if (relationship.relationship?.isNotEmpty ?? false)
+            relationship.relationship,
+          if (relationship.patterns.isNotEmpty)
+            relationship.patterns.take(2).join('；'),
+          'confidence=${relationship.confidence.toStringAsFixed(2)}',
+        ].join(' | '),
+      for (final task in context.stoneTasks.take(6))
+        [
+          'stone:${task.id}',
+          task.title,
+          task.status.name,
+        ].join(' | '),
+    ];
+    return _uniqueTake(lines, limit: 32).toList(growable: false);
   }
 
   Future<List<String>> _stoneHighlights(DateTime start, DateTime end) async {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../data/models/memory_entry.dart';
+import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
 
 class MemoryManagementPage extends StatefulWidget {
@@ -12,7 +13,10 @@ class MemoryManagementPage extends StatefulWidget {
 
 class _MemoryManagementPageState extends State<MemoryManagementPage> {
   final _repository = const MemoryRepository();
+  final _developerSettings = const DeveloperSettingsRepository();
   late Future<List<MemoryEntry>> _memoriesFuture = _repository.listMemories();
+  late final Future<bool> _developerModeFuture =
+      _developerSettings.isDeveloperModeEnabled();
 
   void _refresh() {
     setState(() {
@@ -80,22 +84,29 @@ class _MemoryManagementPageState extends State<MemoryManagementPage> {
           }
           final memories = snapshot.data ?? const <MemoryEntry>[];
           if (memories.isEmpty) return const _EmptyMemoryState();
-          return RefreshIndicator(
-            onRefresh: () async => _refresh(),
-            child: ListView.separated(
-              padding: const EdgeInsets.all(20),
-              itemCount: memories.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                final memory = memories[index];
-                return _MemoryCard(
-                  memory: memory,
-                  onDelete: () => _delete(memory),
-                  onToggleArchive: () => _toggleArchive(memory),
-                  onCorrect: () => _correct(memory),
-                );
-              },
-            ),
+          return FutureBuilder<bool>(
+            future: _developerModeFuture,
+            builder: (context, developerSnapshot) {
+              final developerMode = developerSnapshot.data ?? false;
+              return RefreshIndicator(
+                onRefresh: () async => _refresh(),
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(20),
+                  itemCount: memories.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (context, index) {
+                    final memory = memories[index];
+                    return _MemoryCard(
+                      memory: memory,
+                      developerMode: developerMode,
+                      onDelete: () => _delete(memory),
+                      onToggleArchive: () => _toggleArchive(memory),
+                      onCorrect: () => _correct(memory),
+                    );
+                  },
+                ),
+              );
+            },
           );
         },
       ),
@@ -129,12 +140,14 @@ class _EmptyMemoryState extends StatelessWidget {
 class _MemoryCard extends StatelessWidget {
   const _MemoryCard({
     required this.memory,
+    required this.developerMode,
     required this.onDelete,
     required this.onToggleArchive,
     required this.onCorrect,
   });
 
   final MemoryEntry memory;
+  final bool developerMode;
   final VoidCallback onDelete;
   final VoidCallback onToggleArchive;
   final VoidCallback onCorrect;
@@ -229,6 +242,16 @@ class _MemoryCard extends StatelessWidget {
                   for (final chip in chips.take(12)) Chip(label: Text(chip)),
                 ],
               ),
+            ],
+            if (developerMode && memory.allSourceEntryIds.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('证据来源', style: theme.textTheme.labelLarge),
+              const SizedBox(height: 4),
+              for (final id in memory.allSourceEntryIds.take(8))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Text('entry:$id', style: theme.textTheme.bodySmall),
+                ),
             ],
           ],
         ),

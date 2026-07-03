@@ -28,6 +28,8 @@ class TodayPage extends StatefulWidget {
 }
 
 class _TodayPageState extends State<TodayPage> {
+  static const _homeQueueBatchSize = 5;
+
   final repository = const DiaryRepository();
   final insightRepository = const InsightRepository();
   final queueRepository = const AiAnalysisQueueRepository();
@@ -85,7 +87,7 @@ class _TodayPageState extends State<TodayPage> {
   }
 
   Future<void> _runQueuedAnalysis() async {
-    await queueRunner.processNext();
+    await queueRunner.processUntilIdle(maxJobs: _homeQueueBatchSize);
     if (!mounted) return;
     setState(() {
       _entriesFuture = repository.getEntriesForDate(DateTime.now());
@@ -301,8 +303,9 @@ class _AiQueueCard extends StatelessWidget {
     final batchProgress = job == null || totalActive <= 0
         ? ''
         : '正在整理 ${snapshot.activeOrdinal}/$totalActive 篇';
-    final progress =
-        job == null ? 0.0 : (job.completedStages.length / 7).clamp(0.0, 1.0);
+    final progress = job == null
+        ? 0.0
+        : (job.completedStages.length / _pipelineStageCount).clamp(0.0, 1.0);
 
     return _HomeCard(
       child: Column(
@@ -341,7 +344,7 @@ class _AiQueueCard extends StatelessWidget {
           if (job != null && job.completedStages.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
-              '已完成 ${job.completedStages.length}/7 个阶段',
+              '已完成 ${job.completedStages.length}/$_pipelineStageCount 个阶段',
               style: theme.textTheme.bodySmall,
             ),
           ],
@@ -364,6 +367,11 @@ class _AiQueueCard extends StatelessWidget {
       ),
     );
   }
+
+  int get _pipelineStageCount => AiAnalysisStage.values
+      .where((stage) =>
+          stage != AiAnalysisStage.queued && stage != AiAnalysisStage.completed)
+      .length;
 }
 
 class _TodayAnalysisCard extends StatelessWidget {

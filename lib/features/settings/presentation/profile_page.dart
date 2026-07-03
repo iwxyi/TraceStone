@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../data/models/ai_profile.dart';
 import '../../../data/models/ai_profile_preference.dart';
+import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
@@ -310,8 +311,33 @@ class _ProfileFactTile extends StatelessWidget {
               Chip(label: Text('置信度 ${fact.confidence.toStringAsFixed(2)}')),
           ],
         ),
+        if (developerMode && fact.evidence.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('证据来源', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 4),
+          for (final evidence in fact.evidence.take(5))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Text(
+                _evidenceLine(evidence),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+        ],
       ],
     );
+  }
+
+  String _evidenceLine(InsightEvidence evidence) {
+    final summary = evidence.summary ?? '';
+    final quote = evidence.quote ?? '';
+    final relevance = evidence.relevance ?? '';
+    return [
+      '${evidence.type}${evidence.id.isEmpty ? '' : ':${evidence.id}'}',
+      if (summary.isNotEmpty) summary,
+      if (quote.isNotEmpty) quote,
+      if (relevance.isNotEmpty) relevance,
+    ].join(' | ');
   }
 
   static String _statusText(ProfileFactStatus status) {

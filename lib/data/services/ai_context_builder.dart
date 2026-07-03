@@ -374,29 +374,52 @@ class AiContextBuilder {
     for (final item in entries) {
       if (item.id == entry.id) continue;
       if (!item.date.isBefore(entry.date)) continue;
-      final monthMatches = item.date.month == entry.date.month;
-      if (!monthMatches) continue;
-      final dayOffset = item.date.day - entry.date.day;
-      final absoluteOffset = dayOffset.abs();
-      if (absoluteOffset > 1) continue;
       final yearDistance = entry.date.year - item.date.year;
       if (yearDistance <= 0) continue;
+      final dayOffset = _dayOffsetFromMonthDay(
+        item.date,
+        month: entry.date.month,
+        day: entry.date.day,
+      );
+      final absoluteOffset = dayOffset?.abs();
       final itemFestival = _fixedSolarFestival(item.date);
       final sameFestival =
           currentFestival != null && currentFestival == itemFestival;
       final itemMemory = _matchingCalendarMemory(item.date, calendarMemories);
       final sameMemory = currentMemory != null &&
           itemMemory != null &&
-          currentMemory.id == itemMemory.id;
+          currentMemory.memory.id == itemMemory.memory.id;
+      final festivalNearby = currentFestival != null &&
+          dayOffset != null &&
+          absoluteOffset != null &&
+          absoluteOffset <= 1;
+      final solarTodayNearby =
+          dayOffset != null && absoluteOffset != null && absoluteOffset <= 1;
+      if (!sameMemory &&
+          !sameFestival &&
+          !festivalNearby &&
+          !solarTodayNearby) {
+        continue;
+      }
       final label = sameMemory
-          ? currentMemory.title
+          ? currentMemory.memory.title
           : sameFestival
               ? currentFestival
+              : festivalNearby
+                  ? currentFestival
+                  : null;
+      final effectiveOffset = sameMemory
+          ? itemMemory.dayOffset
+          : dayOffset ?? item.date.difference(entry.date).inDays;
+      final absoluteEffectiveOffset = effectiveOffset.abs();
+      final calendarType = sameMemory
+          ? currentMemory.memory.type.name
+          : festivalNearby || sameFestival
+              ? 'solar_festival'
               : null;
-      final calendarType = sameMemory ? currentMemory.type.name : 'solar';
       final reason = _calendarReason(
         yearDistance: yearDistance,
-        dayOffset: dayOffset,
+        dayOffset: effectiveOffset,
         festival: label,
       );
       matches.add(AiCalendarMatch(
@@ -406,12 +429,14 @@ class AiContextBuilder {
             ? 11
             : sameFestival
                 ? 10
-                : absoluteOffset == 0
-                    ? 8
-                    : 5,
-        dayOffset: dayOffset,
+                : festivalNearby
+                    ? 9
+                    : absoluteEffectiveOffset == 0
+                        ? 8
+                        : 5,
+        dayOffset: effectiveOffset,
         label: label,
-        calendarType: calendarType,
+        calendarType: calendarType ?? 'solar',
       ));
     }
     matches.sort((a, b) {
@@ -424,15 +449,34 @@ class AiContextBuilder {
     return matches.take(8).toList(growable: false);
   }
 
-  CalendarMemory? _matchingCalendarMemory(
+  _CalendarMemoryMatch? _matchingCalendarMemory(
     DateTime date,
     List<CalendarMemory> memories,
   ) {
+    const anniversaryWindowDays = 3;
     for (final memory in memories) {
       if (!memory.enabled || memory.type != CalendarMemoryType.solar) continue;
-      if (memory.month == date.month && memory.day == date.day) return memory;
+      final dayOffset = _dayOffsetFromMonthDay(
+        date,
+        month: memory.month,
+        day: memory.day,
+      );
+      if (dayOffset == null) continue;
+      if (dayOffset.abs() <= anniversaryWindowDays) {
+        return _CalendarMemoryMatch(memory: memory, dayOffset: dayOffset);
+      }
     }
     return null;
+  }
+
+  int? _dayOffsetFromMonthDay(
+    DateTime date, {
+    required int month,
+    required int day,
+  }) {
+    final anchor = DateTime(date.year, month, day);
+    if (anchor.month != month || anchor.day != day) return null;
+    return date.difference(anchor).inDays;
   }
 
   String _calendarReason({
@@ -609,4 +653,14 @@ class AiContextBuilder {
         return 2;
     }
   }
+}
+
+class _CalendarMemoryMatch {
+  const _CalendarMemoryMatch({
+    required this.memory,
+    required this.dayOffset,
+  });
+
+  final CalendarMemory memory;
+  final int dayOffset;
 }

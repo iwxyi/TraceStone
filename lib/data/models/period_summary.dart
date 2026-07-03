@@ -16,6 +16,7 @@ class PeriodSummary {
     this.relationshipHighlights = const [],
     this.stoneHighlights = const [],
     this.contextDebugSummary = '',
+    this.contextSourceLines = const [],
   });
 
   final String id;
@@ -32,6 +33,7 @@ class PeriodSummary {
   final List<String> relationshipHighlights;
   final List<String> stoneHighlights;
   final String contextDebugSummary;
+  final List<String> contextSourceLines;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -48,36 +50,47 @@ class PeriodSummary {
         'relationshipHighlights': relationshipHighlights,
         'stoneHighlights': stoneHighlights,
         'contextDebugSummary': contextDebugSummary,
+        'contextSourceLines': contextSourceLines,
       };
 
   static PeriodSummary fromJson(Map<String, dynamic> json) {
-    final typeName = json['type'] as String? ?? PeriodSummaryType.month.name;
+    final typeName = json['type'] is String
+        ? json['type'] as String
+        : PeriodSummaryType.month.name;
+    final entryCount = json['entryCount'];
     return PeriodSummary(
-      id: json['id'] as String? ?? '',
+      id: json['id'] is String ? json['id'] as String : '',
       type: PeriodSummaryType.values.firstWhere(
         (item) => item.name == typeName,
         orElse: () => PeriodSummaryType.month,
       ),
-      startDate: DateTime.tryParse(json['startDate'] as String? ?? '') ??
-          DateTime.now(),
-      endDate:
-          DateTime.tryParse(json['endDate'] as String? ?? '') ?? DateTime.now(),
-      generatedAt: DateTime.tryParse(json['generatedAt'] as String? ?? '') ??
-          DateTime.now(),
-      entryCount: json['entryCount'] as int? ?? 0,
-      brief: json['brief'] as String? ?? '',
+      startDate: json['startDate'] is String
+          ? DateTime.tryParse(json['startDate'] as String) ?? DateTime.now()
+          : DateTime.now(),
+      endDate: json['endDate'] is String
+          ? DateTime.tryParse(json['endDate'] as String) ?? DateTime.now()
+          : DateTime.now(),
+      generatedAt: json['generatedAt'] is String
+          ? DateTime.tryParse(json['generatedAt'] as String) ?? DateTime.now()
+          : DateTime.now(),
+      entryCount: entryCount is num ? entryCount.toInt() : 0,
+      brief: json['brief'] is String ? json['brief'] as String : '',
       themes: _stringList(json['themes']),
       emotions: _stringList(json['emotions']),
       representativeEntryIds: _stringList(json['representativeEntryIds']),
-      generator: json['generator'] as String? ?? 'unknown',
+      generator:
+          json['generator'] is String ? json['generator'] as String : 'unknown',
       relationshipHighlights: _stringList(json['relationshipHighlights']),
       stoneHighlights: _stringList(json['stoneHighlights']),
-      contextDebugSummary: json['contextDebugSummary'] as String? ?? '',
+      contextDebugSummary: json['contextDebugSummary'] is String
+          ? json['contextDebugSummary'] as String
+          : '',
+      contextSourceLines: _stringList(json['contextSourceLines']),
     );
   }
 
   static List<String> _stringList(Object? value) =>
-      (value as List<dynamic>? ?? [])
+      (value is List ? value : const [])
           .map((item) => item.toString().trim())
           .where((item) => item.isNotEmpty)
           .toList();
