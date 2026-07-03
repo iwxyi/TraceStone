@@ -47,6 +47,10 @@ import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/data/services/profile_projection_service.dart';
 
+Future<void> _throwStartupCleanupError() async {
+  throw StateError('cleanup failed');
+}
+
 void main() {
   group('AppStartupService', () {
     test('runs blocking cleanup before app and resumes AI queue after start',
@@ -66,6 +70,14 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(events, ['purge', 'resume']);
+    });
+
+    test('does not block launch when trash cleanup fails', () async {
+      const service = AppStartupService(
+        purgeExpiredTrash: _throwStartupCleanupError,
+      );
+
+      await service.runBeforeApp();
     });
   });
 

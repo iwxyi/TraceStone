@@ -16,12 +16,16 @@ class AppStartupService {
   final StartupTask? _resumeAiQueue;
 
   Future<void> runBeforeApp() async {
-    final task = _purgeExpiredTrash;
-    if (task != null) {
-      await task();
-      return;
+    try {
+      final task = _purgeExpiredTrash;
+      if (task != null) {
+        await task();
+        return;
+      }
+      await const DiaryRepository().purgeExpiredTrash();
+    } on Object {
+      // Trash cleanup repairs best-effort local data and must not block launch.
     }
-    await const DiaryRepository().purgeExpiredTrash();
   }
 
   void runAfterAppStart() {
