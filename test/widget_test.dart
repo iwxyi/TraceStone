@@ -457,6 +457,40 @@ void main() {
     expect(find.text('散步有时能帮助缓解压力。'), findsOneWidget);
   });
 
+  testWidgets('memory page keeps lifecycle metrics out of normal mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    await const MemoryRepository().saveMemory(MemoryEntry(
+      id: 'memory-normal-lifecycle',
+      sourceEntryId: 'normal-entry',
+      evidenceEntryIds: const ['normal-entry', 'older-entry'],
+      date: date,
+      createdAt: date,
+      summary: '散步有时能帮助缓解压力。',
+      keywords: const ['散步'],
+      emotion: '',
+      people: const [],
+      tags: const ['运动'],
+      importance: 0.72,
+      confidence: 0.16,
+      referenceCount: 3,
+      decay: 0.4,
+    ));
+
+    await tester.pumpWidget(
+      const MaterialApp(home: MemoryManagementPage()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('来自 2 篇日记'), findsOneWidget);
+    expect(find.text('低置信'), findsOneWidget);
+    expect(find.textContaining('重要度'), findsNothing);
+    expect(find.textContaining('置信度'), findsNothing);
+    expect(find.textContaining('引用'), findsNothing);
+    expect(find.textContaining('衰减'), findsNothing);
+  });
+
   testWidgets('memory page shows source entries in developer mode',
       (tester) async {
     SharedPreferences.setMockInitialValues({

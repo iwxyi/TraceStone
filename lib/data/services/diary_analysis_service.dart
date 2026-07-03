@@ -133,10 +133,10 @@ ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map(_memoryL
 ${context.calendarMatches.isEmpty ? '无' : context.calendarMatches.map(_calendarLine).join('\n')}
 
 稳定画像候选：
-${context.profileFacts.isEmpty ? '无' : context.profileFacts.map(_profileLine).join('\n')}
+${context.profileFacts.isEmpty ? '无' : context.profileFacts.asMap().entries.map((entry) => _profileLine(entry.key, entry.value)).join('\n')}
 
 关系档案：
-${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.map(_relationshipLine).join('\n')}
+${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.asMap().entries.map((entry) => _relationshipLine(entry.key, entry.value)).join('\n')}
 
 进行中的塑石行动：
 ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('\n')}
@@ -208,11 +208,11 @@ $feedbackBlock
   String _calendarLine(AiCalendarMatch match) =>
       '- calendar:${match.calendarType}:${match.label ?? _dateLabel(match.entry.date)}｜entry:${match.entry.id}｜${_dateLabel(match.entry.date)}｜${match.reason}${match.label == null ? '' : '｜${match.calendarType}:${match.label}'}｜${match.entry.title ?? match.entry.excerpt}｜${match.entry.excerpt}';
 
-  String _profileLine(ProfileFact profile) =>
-      '- profile:${profile.id}｜${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜证据来源：${_evidenceRefs(profile.evidence)}｜置信度 ${profile.confidence.toStringAsFixed(2)}';
+  String _profileLine(int index, ProfileFact profile) =>
+      '- ${_profilePromptId(index)}｜${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜证据来源：${_evidenceRefs(profile.evidence)}｜置信度 ${profile.confidence.toStringAsFixed(2)}';
 
-  String _relationshipLine(RelationshipProfile profile) =>
-      '- relationship:${profile.personName}｜${profile.personName}｜${profile.relationship ?? '未知关系'}｜${profile.interactionCount} 次互动｜证据来源：${_evidenceRefs(profile.evidence)}｜${[
+  String _relationshipLine(int index, RelationshipProfile profile) =>
+      '- ${_relationshipPromptId(index)}｜${profile.personName}｜${profile.relationship ?? '未知关系'}｜${profile.interactionCount} 次互动｜证据来源：${_evidenceRefs(profile.evidence)}｜${[
         ...profile.emotions.take(2),
         ...profile.patterns.take(2),
       ].join('、')}';
@@ -438,11 +438,19 @@ $feedbackBlock
         ...result.memory.allSourceEntryIds,
       ],
       for (final fact in context.profileFacts) ...[
-        fact.id,
         for (final evidence in fact.evidence) evidence.id,
       ],
+      for (final entry in context.profileFacts.asMap().entries) ...[
+        _profilePromptId(entry.key),
+      ],
+      for (final entry in context.relationshipProfiles.asMap().entries) ...[
+        _relationshipPromptId(entry.key),
+        entry.value.personName,
+        for (final evidence in entry.value.evidence) evidence.id,
+        for (final interaction in entry.value.recentInteractions)
+          interaction.entryId,
+      ],
       for (final profile in context.relationshipProfiles) ...[
-        profile.personName,
         for (final evidence in profile.evidence) evidence.id,
         for (final interaction in profile.recentInteractions)
           interaction.entryId,
@@ -457,6 +465,10 @@ $feedbackBlock
     ids.removeWhere((id) => id.trim().isEmpty);
     return ids;
   }
+
+  String _profilePromptId(int index) => 'profile:p${index + 1}';
+
+  String _relationshipPromptId(int index) => 'relationship:r${index + 1}';
 
   List<InsightClaim> _fallbackSuggestion(
     Map<String, dynamic> stone,

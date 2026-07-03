@@ -55,6 +55,9 @@ class PeriodSummaryService {
           .toList(growable: false),
       contextDebugSummary: context.debugSummary,
       contextSourceLines: _periodContextSourceLines(context),
+      visibleRelationshipNames: context.relationshipProfiles
+          .map((profile) => profile.personName)
+          .toSet(),
       relatedMemoryThemes: context.relatedMemories
           .expand((result) => [
                 ...result.memory.tags,
@@ -86,6 +89,9 @@ class PeriodSummaryService {
           .toList(growable: false),
       contextDebugSummary: context.debugSummary,
       contextSourceLines: _periodContextSourceLines(context),
+      visibleRelationshipNames: context.relationshipProfiles
+          .map((profile) => profile.personName)
+          .toSet(),
       relatedMemoryThemes: context.relatedMemories
           .expand((result) => [
                 ...result.memory.tags,
@@ -105,6 +111,7 @@ class PeriodSummaryService {
     required List<String> contextThemes,
     required String contextDebugSummary,
     required List<String> contextSourceLines,
+    required Set<String> visibleRelationshipNames,
     required List<String> relatedMemoryThemes,
   }) async {
     final themes = <String, int>{};
@@ -141,6 +148,7 @@ class PeriodSummaryService {
           themes[keyword] = (themes[keyword] ?? 0) + 1;
         }
         for (final update in insight.relationshipUpdates.take(3)) {
+          if (!visibleRelationshipNames.contains(update.personName)) continue;
           final line = [
             if (update.personName.isNotEmpty) update.personName,
             if (update.summary.isNotEmpty) update.summary,

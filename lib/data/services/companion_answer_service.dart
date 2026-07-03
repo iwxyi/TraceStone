@@ -77,6 +77,7 @@ class CompanionAnswerService {
   }
 
   String _buildPrompt(String question, AiContextPackage context) {
+    final searchMatches = _promptSearchMatches(context);
     return '''用户问题：
 $question
 
@@ -87,18 +88,22 @@ ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map((result)
           }).join('\n')}
 
 相关搜索命中（可能包含日记摘要、片段、全文预览或长期记忆）：
-${context.searchMatches.isEmpty ? '无' : context.searchMatches.map((match) {
+${searchMatches.isEmpty ? '无' : searchMatches.map((match) {
             return '- source_id=${match.sourceType}:${match.sourceId}｜entry=${match.entryId}｜score ${match.score}｜${match.title}｜${match.summary}｜${match.reasons.join('；')}${match.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(match.rerankSignals)}'}';
           }).join('\n')}
 
 稳定画像：
-${context.profileFacts.isEmpty ? '无' : context.profileFacts.map((profile) {
-            return '- source_id=profile:${profile.id}｜${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜置信度 ${profile.confidence.toStringAsFixed(2)}';
+${context.profileFacts.isEmpty ? '无' : context.profileFacts.asMap().entries.map((entry) {
+            final sourceId = _profileSourceId(entry.key);
+            final profile = entry.value;
+            return '- source_id=$sourceId｜${profile.field}｜${profile.value}｜${profile.evidenceCount} 条证据｜置信度 ${profile.confidence.toStringAsFixed(2)}';
           }).join('\n')}
 
 关系档案：
-${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.map((profile) {
-            return '- source_id=relationship:${profile.personName}｜${profile.personName}｜${profile.relationship ?? '未知关系'}｜${profile.interactionCount} 次互动｜${[
+${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.asMap().entries.map((entry) {
+            final sourceId = _relationshipSourceId(entry.key);
+            final profile = entry.value;
+            return '- source_id=$sourceId｜${profile.personName}｜${profile.relationship ?? '未知关系'}｜${profile.interactionCount} 次互动｜${[
               ...profile.emotions.take(2),
               ...profile.patterns.take(2),
             ].join('、')}';
@@ -129,6 +134,13 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
     return signals.entries
         .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
         .join(',');
+  }
+
+  List<AiSearchMatch> _promptSearchMatches(AiContextPackage context) {
+    return context.searchMatches
+        .where((match) =>
+            match.sourceType != 'profile' && match.sourceType != 'relationship')
+        .toList(growable: false);
   }
 
   CompanionAnswer _fallbackAnswer(String question, AiContextPackage context) {
@@ -194,7 +206,8 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
             reason: '${profile.evidenceCount} 条证据',
             score: (profile.confidence * 10).round(),
             sourceType: 'profile',
-            sourceId: profile.id,
+            sourceId:
+                _profileSourceId(profiles.indexOf(profile)).split(':').last,
           ),
         for (final relationship in relationships)
           CompanionAnswerSource(
@@ -202,7 +215,9 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
             reason: '${relationship.interactionCount} 次互动',
             score: (relationship.confidence * 10).round(),
             sourceType: 'relationship',
-            sourceId: relationship.personName,
+            sourceId: _relationshipSourceId(relationships.indexOf(relationship))
+                .split(':')
+                .last,
           ),
         for (final task in stones)
           CompanionAnswerSource(
@@ -242,6 +257,11 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
         ? normalized
         : '${normalized.substring(0, 600)}…';
   }
+
+  static String _profileSourceId(int index) => 'profile:p${index + 1}';
+
+  static String _relationshipSourceId(int index) =>
+      'relationship:r${index + 1}';
 }
 
 class _CompanionSourceFilter {
@@ -319,25 +339,26 @@ class _CompanionSourceFilter {
           score: result.score,
         ),
       for (final match in context.searchMatches)
-        _AllowedCompanionSource(
-          sourceType: match.sourceType,
-          sourceId: match.sourceId,
-          title: match.title,
-          score: match.score,
-        ),
-      for (final profile in context.profileFacts)
+        if (match.sourceType != 'profile' && match.sourceType != 'relationship')
+          _AllowedCompanionSource(
+            sourceType: match.sourceType,
+            sourceId: match.sourceId,
+            title: match.title,
+            score: match.score,
+          ),
+      for (final entry in context.profileFacts.asMap().entries)
         _AllowedCompanionSource(
           sourceType: 'profile',
-          sourceId: profile.id,
-          title: profile.field,
-          score: (profile.confidence * 10).round(),
+          sourceId: 'p${entry.key + 1}',
+          title: entry.value.field,
+          score: (entry.value.confidence * 10).round(),
         ),
-      for (final relationship in context.relationshipProfiles)
+      for (final entry in context.relationshipProfiles.asMap().entries)
         _AllowedCompanionSource(
           sourceType: 'relationship',
-          sourceId: relationship.personName,
-          title: relationship.personName,
-          score: (relationship.confidence * 10).round(),
+          sourceId: 'r${entry.key + 1}',
+          title: entry.value.personName,
+          score: (entry.value.confidence * 10).round(),
         ),
       for (final task in context.stoneTasks)
         _AllowedCompanionSource(

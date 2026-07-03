@@ -296,6 +296,9 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       const feedbackRepository = AiFeedbackRepository();
       const promptRepository = AiPromptTraceRepository();
+      const insightRepository = InsightRepository();
+      const preferenceRepository = AiProfilePreferenceRepository();
+      const projectionService = ProfileProjectionService();
       final client = _CapturingAiClientService();
       final entry = _entry(
         id: 'feedback-prompt-entry',
@@ -326,6 +329,66 @@ void main() {
         tags: const ['恢复'],
         evidenceEntryIds: const ['memory-entry-source', 'older-evidence'],
       ));
+      final visibleInsight = _insight(
+        entryId: 'today-visible-profile',
+        date: DateTime(2026, 6, 28),
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步后压力下降',
+          confidence: 0.7,
+        ),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '妈妈',
+          relationship: 'family',
+          summary: '晚饭后沟通更平和',
+          emotion: '平和',
+          confidence: 0.66,
+        ),
+      );
+      final hiddenInsight = _insight(
+        entryId: 'today-hidden-profile',
+        date: DateTime(2026, 6, 29),
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'private_pattern',
+          value: '隐藏的压力模式',
+          confidence: 0.75,
+        ),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '小王',
+          relationship: 'coworker',
+          summary: '隐藏的协作摩擦',
+          emotion: '紧张',
+          confidence: 0.72,
+        ),
+      );
+      await insightRepository.saveInsight(visibleInsight);
+      await insightRepository.saveInsight(hiddenInsight);
+      final projection =
+          projectionService.build([visibleInsight, hiddenInsight]);
+      final visibleFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'self_regulation');
+      final hiddenFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'private_pattern');
+      await preferenceRepository.setCorrectedValue(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: visibleFact.id,
+        correctedValue: '晚饭后散步更容易帮助我卸下压力',
+      );
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: hiddenFact.id,
+        hidden: true,
+      );
+      await preferenceRepository.setCorrectedValue(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: '妈妈',
+        correctedValue: '家人',
+      );
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: '小王',
+        hidden: true,
+      );
       await const StoneTaskRepository().saveTask(StoneTask(
         id: 'stone-walk-source',
         sourceEntryId: 'stone-entry-source',
@@ -359,6 +422,15 @@ void main() {
       expect(client.lastUserPrompt, contains('signals:'));
       expect(client.lastUserPrompt, contains('stone:stone-walk-source'));
       expect(client.lastUserPrompt, contains('sourceEntry:stone-entry-source'));
+      expect(client.lastUserPrompt, contains('profile:p1'));
+      expect(client.lastUserPrompt, contains('relationship:r1'));
+      expect(client.lastUserPrompt, contains('晚饭后散步更容易帮助我卸下压力'));
+      expect(client.lastUserPrompt, contains('妈妈｜家人'));
+      expect(client.lastUserPrompt, isNot(contains('散步后压力下降')));
+      expect(client.lastUserPrompt, isNot(contains('private_pattern')));
+      expect(client.lastUserPrompt, isNot(contains('隐藏的压力模式')));
+      expect(client.lastUserPrompt, isNot(contains('小王')));
+      expect(client.lastUserPrompt, isNot(contains('隐藏的协作摩擦')));
       expect(trace?.userPrompt, contains('不要把轻松判断成焦虑'));
       expect(trace?.contextSummary, contains('evidenceFiltered=3'));
       expect(trace?.contextSummary, contains('relatedSourceFiltered=1'));
@@ -2170,6 +2242,95 @@ void main() {
       expect(answer.sources.single.title, '运动');
       expect(trace?.contextSummary, contains('sourceFiltered=1'));
     });
+
+    test('question prompt respects hidden and corrected profile preferences',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const insightRepository = InsightRepository();
+      const preferenceRepository = AiProfilePreferenceRepository();
+      const projectionService = ProfileProjectionService();
+      final date = DateTime(2026, 7, 3);
+      final visibleInsight = _insight(
+        entryId: 'companion-visible-profile',
+        date: date,
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步后压力下降',
+          confidence: 0.7,
+        ),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '妈妈',
+          relationship: 'family',
+          summary: '晚饭后沟通更平和',
+          emotion: '平和',
+          confidence: 0.66,
+        ),
+      );
+      final hiddenInsight = _insight(
+        entryId: 'companion-hidden-profile',
+        date: date.add(const Duration(days: 1)),
+        profileCandidate: const ProfileUpdateCandidate(
+          field: 'private_pattern',
+          value: '隐藏的压力模式',
+          confidence: 0.75,
+        ),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '小王',
+          relationship: 'coworker',
+          summary: '隐藏的协作摩擦',
+          emotion: '紧张',
+          confidence: 0.72,
+        ),
+      );
+      await insightRepository.saveInsight(visibleInsight);
+      await insightRepository.saveInsight(hiddenInsight);
+      final projection =
+          projectionService.build([visibleInsight, hiddenInsight]);
+      final visibleFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'self_regulation');
+      final hiddenFact = projection.profileFacts
+          .firstWhere((fact) => fact.field == 'private_pattern');
+
+      await preferenceRepository.setCorrectedValue(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: visibleFact.id,
+        correctedValue: '晚饭后散步更容易帮助我卸下压力',
+      );
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: hiddenFact.id,
+        hidden: true,
+      );
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: '小王',
+        hidden: true,
+      );
+      await preferenceRepository.setCorrectedValue(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: '妈妈',
+        correctedValue: '家人',
+      );
+
+      final client = _CompanionAiClientService(jsonEncode({
+        'answer': '散步和晚饭后沟通都是可见线索。',
+        'follow_up': '',
+        'sources': [],
+      }));
+
+      await CompanionAnswerService(client: client).answer('散步 压力 妈妈 协作摩擦');
+      final prompt = client.lastUserPrompt ?? '';
+
+      expect(prompt, contains('晚饭后散步更容易帮助我卸下压力'));
+      expect(prompt, contains('source_id=profile:p1'));
+      expect(prompt, contains('source_id=relationship:r1'));
+      expect(prompt, contains('妈妈｜家人'));
+      expect(prompt, isNot(contains('散步后压力下降')));
+      expect(prompt, isNot(contains('隐藏的压力模式')));
+      expect(prompt, isNot(contains('private_pattern')));
+      expect(prompt, isNot(contains('小王')));
+      expect(prompt, isNot(contains('隐藏的协作摩擦')));
+    });
   });
 
   group('EntrySummaryService', () {
@@ -3073,6 +3234,7 @@ void main() {
     test('includes relationship and stone progress highlights', () async {
       SharedPreferences.setMockInitialValues({});
       const insightRepository = InsightRepository();
+      const preferenceRepository = AiProfilePreferenceRepository();
       const stoneRepository = StoneTaskRepository();
       final date = DateTime(2026, 7, 3);
       final entry = _entry(
@@ -3092,6 +3254,23 @@ void main() {
           confidence: 0.62,
         ),
       ));
+      await insightRepository.saveInsight(_insight(
+        entryId: 'period-hidden-relationship',
+        date: date.add(const Duration(days: 1)),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '小王',
+          relationship: '同事',
+          summary: '隐藏的协作摩擦',
+          emotion: '紧张',
+          pattern: '隐藏的互动模式',
+          confidence: 0.7,
+        ),
+      ));
+      await preferenceRepository.setHidden(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: '小王',
+        hidden: true,
+      );
       await stoneRepository.saveTask(StoneTask(
         id: 'stone:period',
         sourceEntryId: entry.id,
@@ -3112,6 +3291,9 @@ void main() {
 
       expect(summary.relationshipHighlights.join(' '), contains('妈妈'));
       expect(summary.relationshipHighlights.join(' '), contains('晚饭后沟通更平和'));
+      expect(summary.relationshipHighlights.join(' '), isNot(contains('小王')));
+      expect(
+          summary.relationshipHighlights.join(' '), isNot(contains('隐藏的协作摩擦')));
       expect(summary.stoneHighlights, contains('新增塑石行动 1 个'));
       expect(summary.stoneHighlights, contains('记录塑石进展 1 次'));
       expect(summary.stoneHighlights, contains('完成塑石行动 1 个'));

@@ -221,17 +221,9 @@ class _MemoryCard extends StatelessWidget {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [
-                _MetricChip(
-                    label: '重要度 ${memory.importance.toStringAsFixed(2)}'),
-                _MetricChip(
-                    label: '置信度 ${memory.confidence.toStringAsFixed(2)}'),
-                _MetricChip(label: '证据 ${memory.allSourceEntryIds.length} 篇'),
-                _MetricChip(label: '引用 ${memory.referenceCount}'),
-                if (memory.decay > 0)
-                  _MetricChip(label: '衰减 ${memory.decay.toStringAsFixed(2)}'),
-                if (memory.archived) const _MetricChip(label: '已归档'),
-              ],
+              children: developerMode
+                  ? _developerMetricChips(memory)
+                  : _userStatusChips(memory),
             ),
             if (chips.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -273,6 +265,32 @@ class _MemoryCard extends StatelessWidget {
   }
 
   String _dateLabel(DateTime date) => '${date.year}年${date.month}月${date.day}日';
+
+  List<Widget> _userStatusChips(MemoryEntry memory) {
+    return [
+      _MetricChip(label: '来自 ${memory.allSourceEntryIds.length} 篇日记'),
+      if (memory.archived)
+        const _MetricChip(label: '已归档')
+      else if (memory.confidence < 0.2)
+        const _MetricChip(label: '低置信')
+      else if (memory.confidence >= 0.7)
+        const _MetricChip(label: '较稳定')
+      else
+        const _MetricChip(label: '形成中'),
+    ];
+  }
+
+  List<Widget> _developerMetricChips(MemoryEntry memory) {
+    return [
+      _MetricChip(label: '重要度 ${memory.importance.toStringAsFixed(2)}'),
+      _MetricChip(label: '置信度 ${memory.confidence.toStringAsFixed(2)}'),
+      _MetricChip(label: '证据 ${memory.allSourceEntryIds.length} 篇'),
+      _MetricChip(label: '引用 ${memory.referenceCount}'),
+      if (memory.decay > 0)
+        _MetricChip(label: '衰减 ${memory.decay.toStringAsFixed(2)}'),
+      if (memory.archived) const _MetricChip(label: '已归档'),
+    ];
+  }
 }
 
 class _MetricChip extends StatelessWidget {
