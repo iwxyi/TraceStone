@@ -12,7 +12,15 @@ import '../services/embedding_service.dart';
 import 'ai_embedding_repository.dart';
 
 class MemoryRepository {
-  const MemoryRepository();
+  const MemoryRepository({
+    EmbeddingService? embeddingService,
+    AiEmbeddingRepository? embeddingRepository,
+  })  : _embeddingService = embeddingService ?? const EmbeddingService(),
+        _embeddingRepository =
+            embeddingRepository ?? const AiEmbeddingRepository();
+
+  final EmbeddingService _embeddingService;
+  final AiEmbeddingRepository _embeddingRepository;
 
   static const _indexKey = 'memory.entries.index';
   static const _prefix = 'memory.entries.';
@@ -25,7 +33,11 @@ class MemoryRepository {
       index.add(memory.id);
       await prefs.setStringList(_indexKey, index);
     }
-    await _saveEmbeddingIfNeeded(memory);
+    try {
+      await _saveEmbeddingIfNeeded(memory);
+    } on Object {
+      // Memory text is the durable artifact; embeddings can be rebuilt later.
+    }
   }
 
   Future<void> saveGeneratedMemory(MemoryEntry memory) async {
@@ -87,7 +99,7 @@ class MemoryRepository {
     final index = _safeGetStringList(prefs, _indexKey) ?? [];
     index.remove(id);
     await prefs.setStringList(_indexKey, index);
-    await const AiEmbeddingRepository().deleteBySource(
+    await _embeddingRepository.deleteBySource(
       sourceType: AiEmbeddingSourceType.memory,
       sourceId: id,
     );
@@ -119,7 +131,7 @@ class MemoryRepository {
           continue;
         }
         await prefs.remove('$_prefix$id');
-        await const AiEmbeddingRepository().deleteBySource(
+        await _embeddingRepository.deleteBySource(
           sourceType: AiEmbeddingSourceType.memory,
           sourceId: id,
         );
@@ -143,14 +155,20 @@ class MemoryRepository {
     int limit = 8,
   }) async {
     final memories = await listMemories();
-    final queryEmbedding = const EmbeddingService().embed(
-      '${entry.content} ${entry.location} ${entry.weather}',
-    );
-    final memoryEmbeddings = {
-      for (final embedding in await const AiEmbeddingRepository()
-          .listByType(AiEmbeddingSourceType.memory))
-        embedding.sourceId: embedding,
-    };
+    AiEmbeddingResult? queryEmbedding;
+    Map<String, AiEmbedding> memoryEmbeddings = const {};
+    try {
+      queryEmbedding = _embeddingService.embed(
+        '${entry.content} ${entry.location} ${entry.weather}',
+      );
+      memoryEmbeddings = {
+        for (final embedding in await _embeddingRepository
+            .listByType(AiEmbeddingSourceType.memory))
+          embedding.sourceId: embedding,
+      };
+    } on Object {
+      queryEmbedding = null;
+    }
     final queryTokens =
         _tokens('${entry.content} ${entry.location} ${entry.weather}');
     final scored = <MemoryRetrievalResult>[];
@@ -206,9 +224,11 @@ class MemoryRepository {
       var semanticSimilarity = 0.0;
       var semanticScore = 0;
       final memoryEmbedding = memoryEmbeddings[memory.id];
-      if (memoryEmbedding != null) {
-        final similarity = const EmbeddingService()
-            .cosineSimilarity(queryEmbedding.vector, memoryEmbedding.vector);
+      if (queryEmbedding != null && memoryEmbedding != null) {
+        final similarity = _embeddingService.cosineSimilarity(
+          queryEmbedding.vector,
+          memoryEmbedding.vector,
+        );
         if (similarity > 0.12) {
           semanticSimilarity = similarity;
           semanticScore = (similarity * 10).round();
@@ -398,8 +418,8 @@ class MemoryRepository {
       ...memory.people,
       ...memory.tags,
     ].join('\n');
-    final result = const EmbeddingService().embed(text);
-    final existing = await const AiEmbeddingRepository().getBySource(
+    final result = _embeddingService.embed(text);
+    final existing = await _embeddingRepository.getBySource(
       sourceType: AiEmbeddingSourceType.memory,
       sourceId: memory.id,
     );
@@ -409,7 +429,7 @@ class MemoryRepository {
         existing?.entryId == memory.sourceEntryId) {
       return;
     }
-    await const AiEmbeddingRepository().saveEmbedding(AiEmbedding(
+    await _embeddingRepository.saveEmbedding(AiEmbedding(
       id: '${AiEmbeddingSourceType.memory.name}:${memory.id}',
       sourceType: AiEmbeddingSourceType.memory,
       sourceId: memory.id,

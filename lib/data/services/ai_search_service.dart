@@ -72,13 +72,19 @@ class AiSearchService {
     String query,
     Set<String> queryTokens,
   ) async {
-    final queryEmbedding = _embeddingService.embed(query);
-    final embeddings = <AiEmbedding>[
-      ...await _embeddingRepository.listByType(AiEmbeddingSourceType.summary),
-      ...await _embeddingRepository.listByType(AiEmbeddingSourceType.segment),
-      ...await _embeddingRepository.listByType(AiEmbeddingSourceType.entry),
-      ...await _embeddingRepository.listByType(AiEmbeddingSourceType.memory),
-    ];
+    final AiEmbeddingResult queryEmbedding;
+    final List<AiEmbedding> embeddings;
+    try {
+      queryEmbedding = _embeddingService.embed(query);
+      embeddings = <AiEmbedding>[
+        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.summary),
+        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.segment),
+        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.entry),
+        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.memory),
+      ];
+    } on Object {
+      return const [];
+    }
     final memories = {
       for (final memory in await _memoryRepository.listMemories())
         memory.id: memory,

@@ -2987,6 +2987,35 @@ void main() {
       expect(matches.first.rerankSignals.keys, contains('keyword'));
     });
 
+    test('falls back to keyword search when embeddings are unavailable',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      final entry = _entry(
+        id: 'search-keyword-fallback',
+        date: DateTime(2026, 7, 3),
+        content: '晚上散步以后，焦虑明显下降。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: entry,
+        brief: '晚上散步以后焦虑明显下降',
+        importance: 0.5,
+        topics: const ['散步'],
+      ));
+
+      final matches = await const AiSearchService(
+        embeddingService: _ThrowingEmbeddingService(),
+      ).search('散步 焦虑');
+
+      expect(matches, isNotEmpty);
+      expect(matches.first.entryId, entry.id);
+      expect(matches.first.reasons.join(' '), contains('关键词重合'));
+      expect(matches.first.reasons.join(' '), isNot(contains('向量相似度')));
+      expect(matches.first.rerankSignals.keys, isNot(contains('semantic')));
+    });
+
     test('uses summary importance as a rerank signal', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
@@ -4649,6 +4678,43 @@ void main() {
       expect(result.rerankSignals['semantic'], isNotNull);
       expect(result.rerankSignals['lifecycle'], greaterThan(0));
       expect(result.rerankSignals['reference'], 2);
+    });
+
+    test('memory retrieval falls back when embeddings are unavailable',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = MemoryRepository(
+        embeddingService: _ThrowingEmbeddingService(),
+      );
+      final memoryDate = DateTime(2026, 7, 1);
+      await repository.saveMemory(MemoryEntry(
+        id: 'memory-keyword-fallback',
+        sourceEntryId: 'memory-keyword-source',
+        date: memoryDate,
+        createdAt: memoryDate,
+        summary: '散步以后焦虑下降，状态恢复。',
+        keywords: const ['散步', '焦虑', '恢复'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['情绪调节'],
+        importance: 0.82,
+        confidence: 0.76,
+      ));
+
+      final results = await repository.findRelatedWithReasons(
+        entry: _entry(
+          id: 'memory-keyword-query',
+          date: DateTime(2026, 7, 3),
+          content: '今天散步后焦虑下降了。',
+        ),
+      );
+      final result = results.single;
+
+      expect(result.memory.id, 'memory-keyword-fallback');
+      expect(result.reasons.join(' '), contains('关键词重合'));
+      expect(result.reasons.join(' '), isNot(contains('语义相似')));
+      expect(result.rerankSignals.keys, contains('keyword'));
+      expect(result.rerankSignals.keys, isNot(contains('semantic')));
     });
 
     test('feedback adjusts memory lifecycle', () async {
