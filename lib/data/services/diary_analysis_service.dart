@@ -469,12 +469,30 @@ $feedbackBlock
     Set<String> allowedSourceIds,
     _EvidenceFilterStats evidenceStats,
   ) {
-    final valid = evidence.where((item) {
-      if (item.id.isEmpty) return false;
-      return allowedSourceIds.contains(item.id);
-    }).toList(growable: false);
+    final valid = evidence
+        .where((item) {
+          if (item.id.isEmpty) return false;
+          return allowedSourceIds.contains(item.id);
+        })
+        .map(_normalizeEvidence)
+        .toList(growable: false);
     evidenceStats.filteredEvidenceSources += evidence.length - valid.length;
     return valid;
+  }
+
+  InsightEvidence _normalizeEvidence(InsightEvidence evidence) {
+    final prefix = evidence.type.isEmpty ? '' : '${evidence.type}:';
+    final id = prefix.isNotEmpty && evidence.id.startsWith(prefix)
+        ? evidence.id.substring(prefix.length)
+        : evidence.id;
+    return InsightEvidence(
+      type: evidence.type,
+      id: id,
+      date: evidence.date,
+      quote: evidence.quote,
+      summary: evidence.summary,
+      relevance: evidence.relevance,
+    );
   }
 
   Set<String> _allowedSourceIds(AiContextPackage context) {

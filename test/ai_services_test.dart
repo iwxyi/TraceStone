@@ -482,7 +482,7 @@ void main() {
       ]);
       expect(insight?.facts.single.evidence.map((item) => item.id), [
         'feedback-prompt-entry',
-        'entry_summary:recent-source-entry',
+        'recent-source-entry',
       ]);
       expect(insight?.hypotheses.single.evidence.map((item) => item.id),
           ['memory-walk-source']);
