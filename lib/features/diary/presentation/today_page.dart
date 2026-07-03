@@ -77,13 +77,8 @@ class _TodayPageState extends State<TodayPage> {
     });
     widget.onDiaryChanged?.call();
     if (result is DiaryEntry) {
-      unawaited(_enqueueAnalysis(result));
+      unawaited(_runQueuedAnalysis());
     }
-  }
-
-  Future<void> _enqueueAnalysis(DiaryEntry entry) async {
-    await queueRunner.enqueue(entry, start: false);
-    await _runQueuedAnalysis();
   }
 
   Future<void> _runQueuedAnalysis() async {
