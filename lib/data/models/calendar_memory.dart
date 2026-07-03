@@ -59,20 +59,39 @@ class CalendarMemory {
 
   static CalendarMemory fromJson(Map<String, dynamic> json) {
     final now = DateTime.now();
-    final typeName = json['type'] as String? ?? CalendarMemoryType.solar.name;
+    final typeName = _stringValue(json['type']).isEmpty
+        ? CalendarMemoryType.solar.name
+        : _stringValue(json['type']);
+    final type = CalendarMemoryType.values.firstWhere(
+      (item) => item.name == typeName,
+      orElse: () => CalendarMemoryType.solar,
+    );
+    final month = _intValue(json['month'], fallback: 1).clamp(1, 12).toInt();
+    final maxDay = type == CalendarMemoryType.lunar ? 30 : _daysInMonth(month);
     return CalendarMemory(
-      id: json['id'] as String? ?? '',
-      title: json['title'] as String? ?? '',
-      month: (json['month'] as num?)?.toInt() ?? 1,
-      day: (json['day'] as num?)?.toInt() ?? 1,
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? now,
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? now,
-      type: CalendarMemoryType.values.firstWhere(
-        (item) => item.name == typeName,
-        orElse: () => CalendarMemoryType.solar,
-      ),
-      note: json['note'] as String? ?? '',
+      id: _stringValue(json['id']),
+      title: _stringValue(json['title']),
+      month: month,
+      day: _intValue(json['day'], fallback: 1).clamp(1, maxDay).toInt(),
+      createdAt: DateTime.tryParse(_stringValue(json['createdAt'])) ?? now,
+      updatedAt: DateTime.tryParse(_stringValue(json['updatedAt'])) ?? now,
+      type: type,
+      note: _stringValue(json['note']),
       enabled: json['enabled'] != false,
     );
+  }
+
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static int _intValue(Object? value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static int _daysInMonth(int month) {
+    const days = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return days[month - 1];
   }
 }

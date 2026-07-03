@@ -1864,6 +1864,34 @@ void main() {
       expect(prefs.get('calendar.memories.list'), ['bad']);
     });
 
+    test('keeps malformed calendar memory fields with safe defaults', () async {
+      SharedPreferences.setMockInitialValues({
+        'calendar.memories.index': <String>['legacy'],
+        'calendar.memories.legacy': jsonEncode({
+          'id': 42,
+          'title': 99,
+          'month': '13',
+          'day': '32',
+          'createdAt': <String>['bad'],
+          'updatedAt': null,
+          'type': <String>['bad'],
+          'note': 88,
+          'enabled': 'yes',
+        }),
+      });
+      const repository = CalendarMemoryRepository();
+
+      final memory = (await repository.listMemories()).single;
+
+      expect(memory.id, '42');
+      expect(memory.title, '99');
+      expect(memory.month, 12);
+      expect(memory.day, 31);
+      expect(memory.type, CalendarMemoryType.solar);
+      expect(memory.note, '88');
+      expect(memory.enabled, isTrue);
+    });
+
     test('save recovers when calendar memory index has a wrong type', () async {
       SharedPreferences.setMockInitialValues({
         'calendar.memories.index': 'legacy-bad-index',
