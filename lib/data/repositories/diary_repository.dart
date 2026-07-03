@@ -270,7 +270,7 @@ class DiaryRepository {
     try {
       final value = prefs.get(key);
       return value is String ? value : null;
-    } on Object {
+    } catch (_) {
       return null;
     }
   }
@@ -281,7 +281,7 @@ class DiaryRepository {
       if (value is List<String>) return List<String>.from(value);
       if (value is List) return value.whereType<String>().toList();
       return null;
-    } on Object {
+    } catch (_) {
       return null;
     }
   }

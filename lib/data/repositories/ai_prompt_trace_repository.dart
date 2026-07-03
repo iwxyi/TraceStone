@@ -88,8 +88,12 @@ class AiPromptTraceRepository {
   }
 
   String? _safeGetString(SharedPreferences prefs, String key) {
-    final value = prefs.get(key);
-    return value is String ? value : null;
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _traceReferencesEntry(AiPromptTrace trace, String entryId) {

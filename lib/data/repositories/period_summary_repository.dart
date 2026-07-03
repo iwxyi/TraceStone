@@ -78,8 +78,12 @@ class PeriodSummaryRepository {
   static String yearId(int year) => 'year:$year';
 
   String? _safeGetString(SharedPreferences prefs, String key) {
-    final value = prefs.get(key);
-    return value is String ? value : null;
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _summaryReferencesEntry(PeriodSummary summary, String entryId) {
