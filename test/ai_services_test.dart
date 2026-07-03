@@ -470,6 +470,34 @@ void main() {
       expect(memories.map((memory) => memory.id), isNot(contains(entry.id)));
     });
 
+    test('analysis tolerates malformed AI response field shapes', () async {
+      SharedPreferences.setMockInitialValues({});
+      final entry = _entry(
+        id: 'malformed-ai-response-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天写一点散步后的恢复感。',
+      );
+      await const DiaryRepository().saveEntry(entry);
+
+      final insight = await DiaryAnalysisService(
+        client: const _MalformedAnalysisAiClientService(),
+      ).analyzeEntry(entry);
+      final saved = await const InsightRepository().getInsight(entry.id);
+
+      expect(insight.entryId, entry.id);
+      expect(saved, isNotNull);
+      expect(insight.reflection, '42');
+      expect(insight.emotion, 'true');
+      expect(insight.keywords, isEmpty);
+      expect(insight.relatedMemories.single.entryId, entry.id);
+      expect(insight.facts, isEmpty);
+      expect(insight.hypotheses.single.text, '散步可能帮助恢复。');
+      expect(insight.memorySummary, '123');
+      expect(insight.memoryTags, isEmpty);
+      expect(insight.stoneTitle, '7');
+      expect(insight.suggestions.single.text, '7：明天走 10 分钟');
+    });
+
     test('developer mode ignores invalid boolean values', () async {
       SharedPreferences.setMockInitialValues({
         'settings.developerMode': 'true',
@@ -5129,6 +5157,59 @@ class _NoMemoryUpdateAiClientService extends AiClientService {
       'profile_update_candidates': [],
       'relationship_updates': [],
       'contradictions': [],
+    });
+  }
+}
+
+class _MalformedAnalysisAiClientService extends AiClientService {
+  const _MalformedAnalysisAiClientService();
+
+  @override
+  Future<String> completeJson({
+    required String systemPrompt,
+    required String userPrompt,
+    required int maxTokens,
+  }) async {
+    return jsonEncode({
+      'reflection': 42,
+      'related_memories': [
+        'ignored',
+        {
+          'title': 7,
+          'reason': true,
+          'entry_id': 'malformed-ai-response-entry',
+        },
+      ],
+      'facts': 'bad',
+      'signals': {'bad': true},
+      'hypotheses': [
+        {
+          'text': '散步可能帮助恢复。',
+          'confidence': '0.61',
+          'evidence': 'bad',
+        },
+      ],
+      'suggestions': 'bad',
+      'emotion': true,
+      'keywords': '散步',
+      'people': {'bad': true},
+      'stone_suggestion': {
+        'title': 7,
+        'description': '明天走 10 分钟',
+      },
+      'memory_update': {
+        'summary': 123,
+        'tags': '散步',
+      },
+      'profile_update_candidates': {'bad': true},
+      'relationship_updates': 'bad',
+      'contradictions': [
+        'ignored',
+        {
+          'old_memory_id': 'memory:missing',
+          'new_evidence': '今天更放松',
+        },
+      ],
     });
   }
 }

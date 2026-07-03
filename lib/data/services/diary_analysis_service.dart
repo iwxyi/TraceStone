@@ -65,7 +65,8 @@ class DiaryAnalysisService {
       userPrompt: userPrompt,
       maxTokens: 1600,
     );
-    final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+    final decoded = jsonDecode(jsonText);
+    final parsed = _mapValue(decoded);
     final evidenceStats = _EvidenceFilterStats();
     final insight = _parseInsight(entry, parsed, context, evidenceStats);
     if (evidenceStats.hasFilteredSources) {
@@ -245,9 +246,8 @@ $feedbackBlock
     AiContextPackage context,
     _EvidenceFilterStats evidenceStats,
   ) {
-    final stone =
-        parsed['stone_suggestion'] as Map<String, dynamic>? ?? const {};
-    final memory = parsed['memory_update'] as Map<String, dynamic>? ?? const {};
+    final stone = _mapValue(parsed['stone_suggestion']);
+    final memory = _mapValue(parsed['memory_update']);
     final allowedSourceIds = _allowedSourceIds(context);
     final suggestions =
         _claimList(parsed['suggestions'], allowedSourceIds, evidenceStats);
@@ -255,10 +255,9 @@ $feedbackBlock
       entryId: entry.id,
       entryDate: entry.date,
       generatedAt: DateTime.now(),
-      reflection: (parsed['reflection'] as String? ?? '').trim(),
-      relatedMemories: (parsed['related_memories'] as List<dynamic>? ?? [])
-          .map((item) => RelatedMemoryInsight.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      reflection: _stringValue(parsed['reflection']).trim(),
+      relatedMemories: _listValue(parsed['related_memories'])
+          .map((item) => RelatedMemoryInsight.fromJson(_mapValue(item)))
           .map((item) => _sanitizeRelatedMemory(
                 item,
                 allowedSourceIds,
@@ -266,12 +265,12 @@ $feedbackBlock
               ))
           .where((item) => item.title.isNotEmpty || item.reason.isNotEmpty)
           .toList(),
-      emotion: (parsed['emotion'] as String? ?? '').trim(),
+      emotion: _stringValue(parsed['emotion']).trim(),
       keywords: _stringList(parsed['keywords']),
       people: _stringList(parsed['people']),
-      stoneTitle: (stone['title'] as String? ?? '').trim(),
-      stoneDescription: (stone['description'] as String? ?? '').trim(),
-      memorySummary: (memory['summary'] as String? ?? '').trim(),
+      stoneTitle: _stringValue(stone['title']).trim(),
+      stoneDescription: _stringValue(stone['description']).trim(),
+      memorySummary: _stringValue(memory['summary']).trim(),
       memoryTags: _stringList(memory['tags']),
       facts: _claimList(parsed['facts'], allowedSourceIds, evidenceStats),
       signals: _claimList(parsed['signals'], allowedSourceIds, evidenceStats),
@@ -303,9 +302,8 @@ $feedbackBlock
     Set<String> allowedSourceIds,
     _EvidenceFilterStats evidenceStats,
   ) {
-    return (value as List<dynamic>? ?? [])
-        .map((item) =>
-            InsightClaim.fromJson(item as Map<String, dynamic>? ?? const {}))
+    return _listValue(value)
+        .map((item) => InsightClaim.fromJson(_mapValue(item)))
         .map((item) => InsightClaim(
               text: item.text,
               confidence: item.confidence,
@@ -324,9 +322,8 @@ $feedbackBlock
     Set<String> allowedSourceIds,
     _EvidenceFilterStats evidenceStats,
   ) {
-    return (value as List<dynamic>? ?? [])
-        .map((item) => ProfileUpdateCandidate.fromJson(
-            item as Map<String, dynamic>? ?? const {}))
+    return _listValue(value)
+        .map((item) => ProfileUpdateCandidate.fromJson(_mapValue(item)))
         .map((item) => ProfileUpdateCandidate(
               field: item.field,
               value: item.value,
@@ -347,9 +344,8 @@ $feedbackBlock
     Set<String> allowedSourceIds,
     _EvidenceFilterStats evidenceStats,
   ) {
-    return (value as List<dynamic>? ?? [])
-        .map((item) => RelationshipUpdateCandidate.fromJson(
-            item as Map<String, dynamic>? ?? const {}))
+    return _listValue(value)
+        .map((item) => RelationshipUpdateCandidate.fromJson(_mapValue(item)))
         .map((item) => RelationshipUpdateCandidate(
               personName: item.personName,
               summary: item.summary,
@@ -372,9 +368,8 @@ $feedbackBlock
     Set<String> allowedSourceIds,
     _EvidenceFilterStats evidenceStats,
   ) {
-    return (value as List<dynamic>? ?? [])
-        .map((item) => InsightContradiction.fromJson(
-            item as Map<String, dynamic>? ?? const {}))
+    return _listValue(value)
+        .map((item) => InsightContradiction.fromJson(_mapValue(item)))
         .map((item) => InsightContradiction(
               oldMemoryId: item.oldMemoryId,
               newEvidence: item.newEvidence,
@@ -474,8 +469,8 @@ $feedbackBlock
     Map<String, dynamic> stone,
     DiaryEntry entry,
   ) {
-    final title = (stone['title'] as String? ?? '').trim();
-    final description = (stone['description'] as String? ?? '').trim();
+    final title = _stringValue(stone['title']).trim();
+    final description = _stringValue(stone['description']).trim();
     final text =
         [title, description].where((item) => item.isNotEmpty).join('：');
     if (text.isEmpty) return const [];
@@ -536,7 +531,20 @@ $feedbackBlock
         : '${normalized.substring(0, 600)}…';
   }
 
-  List<String> _stringList(Object? value) => (value as List<dynamic>? ?? [])
+  Map<String, dynamic> _mapValue(Object? value) {
+    if (value is! Map) return const {};
+    return {
+      for (final entry in value.entries)
+        if (entry.key is String) entry.key as String: entry.value,
+    };
+  }
+
+  List<dynamic> _listValue(Object? value) => value is List ? value : const [];
+
+  String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  List<String> _stringList(Object? value) => _listValue(value)
       .map((item) => item.toString().trim())
       .where((item) => item.isNotEmpty)
       .toList();
