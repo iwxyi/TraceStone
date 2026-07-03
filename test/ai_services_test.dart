@@ -1839,6 +1839,41 @@ void main() {
       expect(summary, isNotNull);
       expect(embeddings, isNotEmpty);
     });
+
+    test('runner fails retryable AI errors after preserving local artifacts',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const insightRepository = InsightRepository();
+      final entry = _entry(
+        id: 'retryable-ai-error',
+        date: DateTime(2026, 7, 3),
+        content: '今天写了一篇会遇到模型请求错误的日记。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueEntry(entry);
+      final runner = AiAnalysisQueueRunner(
+        analysisService: const _RetryableAiErrorAnalysisService(),
+      );
+
+      await runner.processNext();
+      await runner.processNext();
+      await runner.processNext();
+
+      final job = await queueRepository.getJob(entry.id);
+      final status = await insightRepository.getStatus(entry.id);
+
+      expect(job?.state, AiAnalysisJobState.failed);
+      expect(job?.retryCount, 3);
+      expect(job?.currentStage, AiAnalysisStage.generatingInsight);
+      expect(job?.lastError, contains('AI 请求失败'));
+      expect(job?.summaryId, entry.id);
+      expect(job?.segmentIds, isNotEmpty);
+      expect(job?.stageLogs.last.message, '阶段失败');
+      expect(status?.state, DiaryAnalysisState.failed);
+      expect(status?.message, contains('AI 请求失败'));
+    });
   });
 
   group('StoneTaskRepository', () {
@@ -5357,6 +5392,15 @@ class _ThrowingDiaryAnalysisService extends DiaryAnalysisService {
   @override
   Future<DiaryInsight> analyzeEntry(DiaryEntry entry) async {
     throw StateError('simulated insight failure');
+  }
+}
+
+class _RetryableAiErrorAnalysisService extends DiaryAnalysisService {
+  const _RetryableAiErrorAnalysisService();
+
+  @override
+  Future<DiaryInsight> analyzeEntry(DiaryEntry entry) async {
+    throw const AiClientException('AI 请求失败：500');
   }
 }
 

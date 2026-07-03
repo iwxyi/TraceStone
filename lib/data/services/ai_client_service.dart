@@ -21,10 +21,16 @@ class AiClientService {
     final model = (_safeGetString(prefs, _modelKey) ?? '').trim();
 
     if (useOfficial) {
-      throw const AiClientException('当前未开启自定义 AI');
+      throw const AiClientException(
+        '当前未开启自定义 AI',
+        retryable: false,
+      );
     }
     if (baseUrl.isEmpty || apiKey.isEmpty || model.isEmpty) {
-      throw const AiClientException('请先完成自定义 AI 配置');
+      throw const AiClientException(
+        '请先完成自定义 AI 配置',
+        retryable: false,
+      );
     }
 
     return AiClientConfig(
@@ -158,9 +164,13 @@ class AiClientConfig {
 }
 
 class AiClientException implements Exception {
-  const AiClientException(this.message);
+  const AiClientException(
+    this.message, {
+    this.retryable = true,
+  });
 
   final String message;
+  final bool retryable;
 
   @override
   String toString() => message;

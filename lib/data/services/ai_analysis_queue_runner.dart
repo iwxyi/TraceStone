@@ -432,7 +432,11 @@ class AiAnalysisQueueRunner {
         clearLastError: true,
       );
     } on AiClientException catch (error) {
-      await _deferJobForAi(job, error.message);
+      if (error.retryable) {
+        await _handleUnexpectedStageError(job, error, now);
+      } else {
+        await _deferJobForAi(job, error.message);
+      }
     } on Object catch (error) {
       await _handleUnexpectedStageError(job, error, now);
     }
