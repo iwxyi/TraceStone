@@ -40,6 +40,17 @@ class AiPromptTraceRepository {
   Future<void> deleteForEntry(String entryId) async {
     final value = entryId.trim();
     if (value.isEmpty) return;
+    await _deleteWhere((trace) => _traceReferencesEntry(trace, value));
+  }
+
+  Future<void> deleteForSourceIds(Iterable<String> sourceIds) async {
+    final values =
+        sourceIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
+    if (values.isEmpty) return;
+    await _deleteWhere((trace) => _traceReferencesAny(trace, values));
+  }
+
+  Future<void> _deleteWhere(bool Function(AiPromptTrace trace) test) async {
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs
         .getKeys()
@@ -55,7 +66,7 @@ class AiPromptTraceRepository {
           continue;
         }
         final trace = AiPromptTrace.fromJson(decoded);
-        if (_traceReferencesEntry(trace, value)) {
+        if (test(trace)) {
           await prefs.remove(key);
         }
       } on Object {
@@ -92,5 +103,25 @@ class AiPromptTraceRepository {
       trace.userPrompt ?? '',
       trace.rawResponse ?? '',
     ].any((value) => value.contains(entryId));
+  }
+
+  bool _traceReferencesAny(AiPromptTrace trace, Set<String> sourceIds) {
+    final text = [
+      trace.id,
+      trace.contextSummary,
+      trace.systemPromptPreview,
+      trace.userPromptPreview,
+      trace.rawResponsePreview,
+      trace.systemPrompt ?? '',
+      trace.userPrompt ?? '',
+      trace.rawResponse ?? '',
+    ].join('\n');
+    return sourceIds.any((sourceId) {
+      if (text.contains(sourceId)) return true;
+      if (!sourceId.contains(':') && text.contains('memory:$sourceId')) {
+        return true;
+      }
+      return false;
+    });
   }
 }

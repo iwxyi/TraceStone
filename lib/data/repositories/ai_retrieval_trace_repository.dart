@@ -36,6 +36,17 @@ class AiRetrievalTraceRepository {
   Future<void> deleteForEntry(String entryId) async {
     final value = entryId.trim();
     if (value.isEmpty) return;
+    await _deleteWhere((trace) => _traceReferencesEntry(trace, value));
+  }
+
+  Future<void> deleteForSourceIds(Iterable<String> sourceIds) async {
+    final values =
+        sourceIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
+    if (values.isEmpty) return;
+    await _deleteWhere((trace) => _traceReferencesAny(trace, values));
+  }
+
+  Future<void> _deleteWhere(bool Function(AiRetrievalTrace trace) test) async {
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs
         .getKeys()
@@ -51,7 +62,7 @@ class AiRetrievalTraceRepository {
           continue;
         }
         final trace = AiRetrievalTrace.fromJson(decoded);
-        if (_traceReferencesEntry(trace, value)) {
+        if (test(trace)) {
           await prefs.remove(key);
         }
       } on Object {
@@ -87,6 +98,22 @@ class AiRetrievalTraceRepository {
           item.summary.contains(entryId) ||
           item.reasons.any((reason) => reason.contains(entryId)) ||
           item.matchedTokens.any((token) => token.contains(entryId));
+    });
+  }
+
+  bool _traceReferencesAny(AiRetrievalTrace trace, Set<String> sourceIds) {
+    if (sourceIds.contains(trace.entryId)) return true;
+    return trace.items.any((item) {
+      return sourceIds.any((sourceId) {
+        if (item.sourceId == sourceId) return true;
+        if (!sourceId.contains(':') && item.sourceId == 'memory:$sourceId') {
+          return true;
+        }
+        return item.title.contains(sourceId) ||
+            item.summary.contains(sourceId) ||
+            item.reasons.any((reason) => reason.contains(sourceId)) ||
+            item.matchedTokens.any((token) => token.contains(sourceId));
+      });
     });
   }
 }

@@ -105,6 +105,20 @@ class MemoryRepository {
     );
   }
 
+  Future<List<String>> memoryIdsForSourceEntry(String entryId) async {
+    final value = entryId.trim();
+    if (value.isEmpty) return const [];
+    final prefs = await SharedPreferences.getInstance();
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    final ids = <String>[];
+    for (final id in index) {
+      final memory = await _getMemory(prefs, id);
+      if (memory == null) continue;
+      if (memory.allSourceEntryIds.contains(value)) ids.add(memory.id);
+    }
+    return ids;
+  }
+
   Future<void> deleteForSourceEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
     final index = _safeGetStringList(prefs, _indexKey) ?? [];

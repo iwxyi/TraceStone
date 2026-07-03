@@ -4611,6 +4611,7 @@ void main() {
     test('move to trash clears debug traces referencing the entry', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
+      const memoryRepository = MemoryRepository();
       const promptRepository = AiPromptTraceRepository();
       const retrievalRepository = AiRetrievalTraceRepository();
       final date = DateTime(2026, 7, 3);
@@ -4620,6 +4621,17 @@ void main() {
         content: '这篇日记曾经进入搜索和问答调试记录。',
       );
       await diaryRepository.saveEntry(entry);
+      await memoryRepository.saveMemory(MemoryEntry(
+        id: 'memory:trash-debug-source',
+        sourceEntryId: entry.id,
+        date: date,
+        createdAt: date,
+        summary: '这篇日记沉淀成一条长期记忆。',
+        keywords: const ['调试'],
+        emotion: '',
+        people: const [],
+        tags: const ['调试'],
+      ));
       await promptRepository.saveTrace(AiPromptTrace(
         id: 'companion:last',
         scenario: 'question',
@@ -4629,7 +4641,8 @@ void main() {
         userPromptPreview: 'entry_summary:${entry.id}',
         systemPromptLength: 6,
         userPromptLength: 24,
-        userPrompt: 'source_id=entry_summary:${entry.id}',
+        userPrompt:
+            'source_id=entry_summary:${entry.id}\nsource_id=memory:trash-debug-source',
       ));
       await retrievalRepository.saveTrace(AiRetrievalTrace(
         entryId: 'search:last',
@@ -4647,11 +4660,28 @@ void main() {
           ),
         ],
       ));
+      await retrievalRepository.saveTrace(AiRetrievalTrace(
+        entryId: 'question:last',
+        generatedAt: date,
+        scenario: 'question',
+        items: const [
+          AiRetrievalTraceItem(
+            sourceType: 'memory',
+            sourceId: 'memory:trash-debug-source',
+            title: '长期记忆命中',
+            summary: '这条 trace 只记录 memory id，没有直接记录 entry id',
+            score: 8,
+            reasons: ['语义相似'],
+            matchedTokens: ['调试'],
+          ),
+        ],
+      ));
 
       await diaryRepository.moveToTrash(entry.id);
 
       expect(await promptRepository.getTrace('companion:last'), isNull);
       expect(await retrievalRepository.getTrace('search:last'), isNull);
+      expect(await retrievalRepository.getTrace('question:last'), isNull);
     });
   });
 

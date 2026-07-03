@@ -107,16 +107,7 @@ class DiaryRepository {
       await prefs.setStringList(_trashIndexKey, trashIndex);
     }
     await prefs.remove('$_recoveryPrefix$id');
-    await const InsightRepository().deleteForEntry(id);
-    await const MemoryRepository().deleteForSourceEntry(id);
-    await const StoneTaskRepository().deleteForSourceEntry(id);
-    await const AiAnalysisQueueRepository().deleteJob(id);
-    await const AiEmbeddingRepository().deleteForEntry(id);
-    await const AiFeedbackRepository().deleteFeedback(id);
-    await const AiPromptTraceRepository().deleteForEntry(id);
-    await const EntrySummaryRepository().deleteForEntry(id);
-    await const AiRetrievalTraceRepository().deleteForEntry(id);
-    await const PeriodSummaryRepository().deleteForEntry(id);
+    await _deleteAiArtifactsForEntry(id);
     DiaryChangeBus.bump();
   }
 
@@ -168,16 +159,7 @@ class DiaryRepository {
   Future<void> permanentlyDeleteFromTrash(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await _removeTrashItem(prefs, id);
-    await const InsightRepository().deleteForEntry(id);
-    await const MemoryRepository().deleteForSourceEntry(id);
-    await const StoneTaskRepository().deleteForSourceEntry(id);
-    await const AiAnalysisQueueRepository().deleteJob(id);
-    await const AiEmbeddingRepository().deleteForEntry(id);
-    await const AiFeedbackRepository().deleteFeedback(id);
-    await const AiPromptTraceRepository().deleteForEntry(id);
-    await const EntrySummaryRepository().deleteForEntry(id);
-    await const AiRetrievalTraceRepository().deleteForEntry(id);
-    await const PeriodSummaryRepository().deleteForEntry(id);
+    await _deleteAiArtifactsForEntry(id);
     DiaryChangeBus.bump();
   }
 
@@ -193,16 +175,7 @@ class DiaryRepository {
       }
       if (now.isAfter(item.expiresAt)) {
         await _removeTrashItem(prefs, id);
-        await const InsightRepository().deleteForEntry(id);
-        await const MemoryRepository().deleteForSourceEntry(id);
-        await const StoneTaskRepository().deleteForSourceEntry(id);
-        await const AiAnalysisQueueRepository().deleteJob(id);
-        await const AiEmbeddingRepository().deleteForEntry(id);
-        await const AiFeedbackRepository().deleteFeedback(id);
-        await const AiPromptTraceRepository().deleteForEntry(id);
-        await const EntrySummaryRepository().deleteForEntry(id);
-        await const AiRetrievalTraceRepository().deleteForEntry(id);
-        await const PeriodSummaryRepository().deleteForEntry(id);
+        await _deleteAiArtifactsForEntry(id);
       }
     }
   }
@@ -272,6 +245,25 @@ class DiaryRepository {
     } on Object {
       return null;
     }
+  }
+
+  Future<void> _deleteAiArtifactsForEntry(String id) async {
+    const memoryRepository = MemoryRepository();
+    const promptTraceRepository = AiPromptTraceRepository();
+    const retrievalTraceRepository = AiRetrievalTraceRepository();
+    final memoryIds = await memoryRepository.memoryIdsForSourceEntry(id);
+    await const InsightRepository().deleteForEntry(id);
+    await promptTraceRepository.deleteForSourceIds(memoryIds);
+    await retrievalTraceRepository.deleteForSourceIds(memoryIds);
+    await memoryRepository.deleteForSourceEntry(id);
+    await const StoneTaskRepository().deleteForSourceEntry(id);
+    await const AiAnalysisQueueRepository().deleteJob(id);
+    await const AiEmbeddingRepository().deleteForEntry(id);
+    await const AiFeedbackRepository().deleteFeedback(id);
+    await promptTraceRepository.deleteForEntry(id);
+    await const EntrySummaryRepository().deleteForEntry(id);
+    await retrievalTraceRepository.deleteForEntry(id);
+    await const PeriodSummaryRepository().deleteForEntry(id);
   }
 
   String? _safeGetString(SharedPreferences prefs, String key) {
