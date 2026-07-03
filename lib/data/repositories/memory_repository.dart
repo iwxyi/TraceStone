@@ -336,7 +336,10 @@ class MemoryRepository {
     if (meaningful.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     for (final contradiction in meaningful) {
-      final memory = await _getMemory(prefs, contradiction.oldMemoryId);
+      final memory = await _getMemory(
+        prefs,
+        _normalizeMemoryId(contradiction.oldMemoryId),
+      );
       if (memory == null) continue;
       final confidence = (contradiction.confidence ?? 0.55).clamp(0, 1);
       final confidencePenalty = (0.06 + confidence * 0.12).clamp(0, 0.18);
@@ -353,6 +356,13 @@ class MemoryRepository {
         updatedAt: DateTime.now(),
       ));
     }
+  }
+
+  String _normalizeMemoryId(String id) {
+    final trimmed = id.trim();
+    const prefix = 'memory:';
+    if (trimmed.startsWith(prefix)) return trimmed.substring(prefix.length);
+    return trimmed;
   }
 
   int _lifecycleScore(MemoryEntry memory, DateTime referenceDate) {

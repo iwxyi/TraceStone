@@ -4682,7 +4682,7 @@ void main() {
       await repository.applyContradictions(
         contradictions: const [
           InsightContradiction(
-            oldMemoryId: 'contradicted-memory',
+            oldMemoryId: 'memory:contradicted-memory',
             newEvidence: '今天和朋友聚会后感觉放松。',
             interpretation: '旧记忆需要增加条件。',
             confidence: 0.8,
