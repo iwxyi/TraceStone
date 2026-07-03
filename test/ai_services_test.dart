@@ -3428,6 +3428,44 @@ void main() {
       expect(matches.map((match) => match.sourceId), isNot(contains('小林')));
     });
 
+    test('returns stone task matches from vectors and keywords', () async {
+      SharedPreferences.setMockInitialValues({});
+      const stoneRepository = StoneTaskRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      final date = DateTime(2026, 7, 3);
+      await stoneRepository.saveTask(StoneTask(
+        id: 'stone:walk-search',
+        sourceEntryId: 'stone-source-entry',
+        title: '晚饭后散步 10 分钟',
+        description: '走一小圈即可，重点是恢复状态。',
+        createdAt: date,
+        updatedAt: date,
+        tags: const ['散步', '恢复'],
+        checkIns: [
+          StoneTaskCheckIn(
+            id: 'checkin:walk-search',
+            createdAt: date,
+            note: '完成了 8 分钟，感觉轻松一点。',
+            sourceEntryId: 'stone-checkin-entry',
+          ),
+        ],
+      ));
+
+      final matches = await const AiSearchService().search('饭后散步 恢复');
+      final stone = matches.firstWhere((match) => match.sourceType == 'stone');
+      final embedding = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.stone,
+        sourceId: stone.sourceId,
+      );
+
+      expect(stone.sourceId, 'stone:walk-search');
+      expect(stone.entryId, 'stone-source-entry');
+      expect(stone.summary, contains('最近进展'));
+      expect(stone.reasons.join(' '), contains('关键词重合'));
+      expect(embedding?.sourceType, AiEmbeddingSourceType.stone);
+      expect(embedding?.entryId, 'stone-source-entry');
+    });
+
     test(
         'returns archived long term memories in explicit search with penalties',
         () async {

@@ -3,12 +3,14 @@ import '../models/ai_embedding.dart';
 import '../models/ai_profile.dart';
 import '../models/diary_insight.dart';
 import '../models/memory_entry.dart';
+import '../models/stone_task.dart';
 import '../repositories/ai_embedding_repository.dart';
 import '../repositories/ai_profile_preference_repository.dart';
 import '../repositories/diary_repository.dart';
 import '../repositories/entry_summary_repository.dart';
 import '../repositories/insight_repository.dart';
 import '../repositories/memory_repository.dart';
+import '../repositories/stone_task_repository.dart';
 import 'embedding_service.dart';
 import 'profile_projection_service.dart';
 
@@ -21,6 +23,7 @@ class AiSearchService {
     InsightRepository? insightRepository,
     AiProfilePreferenceRepository? profilePreferenceRepository,
     ProfileProjectionService? profileProjectionService,
+    StoneTaskRepository? stoneTaskRepository,
     EmbeddingService? embeddingService,
   })  : _embeddingRepository =
             embeddingRepository ?? const AiEmbeddingRepository(),
@@ -33,6 +36,8 @@ class AiSearchService {
             const AiProfilePreferenceRepository(),
         _profileProjectionService =
             profileProjectionService ?? const ProfileProjectionService(),
+        _stoneTaskRepository =
+            stoneTaskRepository ?? const StoneTaskRepository(),
         _embeddingService = embeddingService ?? const EmbeddingService();
 
   final AiEmbeddingRepository _embeddingRepository;
@@ -42,6 +47,7 @@ class AiSearchService {
   final InsightRepository _insightRepository;
   final AiProfilePreferenceRepository _profilePreferenceRepository;
   final ProfileProjectionService _profileProjectionService;
+  final StoneTaskRepository _stoneTaskRepository;
   final EmbeddingService _embeddingService;
 
   Future<List<AiSearchMatch>> search(String query, {int limit = 12}) async {
@@ -77,7 +83,9 @@ class AiSearchService {
     try {
       queryEmbedding = _embeddingService.embed(query);
       final profileSources = await _profileSearchSources();
+      final stoneSources = await _stoneSearchSources();
       await _ensureProfileEmbeddings(profileSources);
+      await _ensureStoneEmbeddings(stoneSources);
       embeddings = <AiEmbedding>[
         ...await _embeddingRepository.listByType(AiEmbeddingSourceType.summary),
         ...await _embeddingRepository.listByType(AiEmbeddingSourceType.segment),
@@ -86,6 +94,7 @@ class AiSearchService {
         ...await _embeddingRepository.listByType(AiEmbeddingSourceType.profile),
         ...await _embeddingRepository
             .listByType(AiEmbeddingSourceType.relationship),
+        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.stone),
       ];
     } on Object {
       return const [];
@@ -95,6 +104,7 @@ class AiSearchService {
         memory.id: memory,
     };
     final profileSources = await _profileSearchSources();
+    final stoneSources = await _stoneSearchSources();
     final candidates = <AiSearchMatch>[];
     for (final embedding in embeddings) {
       final similarity = _embeddingService.cosineSimilarity(
@@ -106,6 +116,7 @@ class AiSearchService {
         embedding,
         memories: memories,
         profileSources: profileSources,
+        stoneSources: stoneSources,
       );
       if (source == null) continue;
       final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
@@ -226,6 +237,7 @@ class AiSearchService {
       if (match != null) matches.add(match);
     }
     matches.addAll(await _profileMatches(queryTokens));
+    matches.addAll(await _stoneMatches(queryTokens));
     return matches;
   }
 
@@ -280,6 +292,23 @@ class AiSearchService {
         sourceId: profile.personName,
         entryId: _firstEvidenceEntryId(profile.evidence),
         text: _relationshipText(profile),
+      );
+    }
+  }
+
+  Future<Map<String, StoneTask>> _stoneSearchSources() async {
+    return {
+      for (final task in await _stoneTaskRepository.listTasks()) task.id: task,
+    };
+  }
+
+  Future<void> _ensureStoneEmbeddings(Map<String, StoneTask> tasks) async {
+    for (final task in tasks.values) {
+      await _saveDerivedEmbedding(
+        sourceType: AiEmbeddingSourceType.stone,
+        sourceId: task.id,
+        entryId: task.sourceEntryId,
+        text: _stoneTaskText(task),
       );
     }
   }
@@ -422,10 +451,22 @@ class AiSearchService {
     );
   }
 
+  Future<List<AiSearchMatch>> _stoneMatches(Set<String> queryTokens) async {
+    final matches = <AiSearchMatch>[];
+    for (final task in (await _stoneSearchSources()).values) {
+      final source = _sourceForStoneTask(task);
+      if (source == null) continue;
+      final match = _matchSource(queryTokens: queryTokens, source: source);
+      if (match != null) matches.add(match);
+    }
+    return matches;
+  }
+
   Future<_SearchSource?> _sourceForEmbedding(
     AiEmbedding embedding, {
     Map<String, MemoryEntry> memories = const {},
     _ProfileSearchSources profileSources = const _ProfileSearchSources(),
+    Map<String, StoneTask> stoneSources = const {},
   }) async {
     if (embedding.sourceType == AiEmbeddingSourceType.memory) {
       return _sourceForMemory(memories[embedding.sourceId]);
@@ -439,6 +480,9 @@ class AiSearchService {
       return _sourceForRelationship(
         profileSources.relationshipProfiles[embedding.sourceId],
       );
+    }
+    if (embedding.sourceType == AiEmbeddingSourceType.stone) {
+      return _sourceForStoneTask(stoneSources[embedding.sourceId]);
     }
     final entry = await _diaryRepository.getEntryById(embedding.entryId);
     if (entry == null) return null;
@@ -507,6 +551,8 @@ class AiSearchService {
         return null;
       case AiEmbeddingSourceType.relationship:
         return null;
+      case AiEmbeddingSourceType.stone:
+        return null;
     }
   }
 
@@ -551,6 +597,27 @@ class AiSearchService {
       confidence: profile.confidence,
       referenceCount: profile.interactionCount,
       text: _relationshipText(profile),
+    );
+  }
+
+  _SearchSource? _sourceForStoneTask(StoneTask? task) {
+    if (task == null) return null;
+    return _SearchSource(
+      sourceType: 'stone',
+      sourceId: task.id,
+      entryId: task.sourceEntryId,
+      title: task.title,
+      summary: [
+        task.description,
+        if (task.checkIns.isNotEmpty) '最近进展：${task.checkIns.first.note}',
+      ].where((item) => item.trim().isNotEmpty).join('；'),
+      importance: task.status == StoneTaskStatus.active ? 0.72 : 0.48,
+      date: task.updatedAt,
+      topics: [
+        ...task.tags,
+        task.status.name,
+      ],
+      text: _stoneTaskText(task),
     );
   }
 
@@ -875,6 +942,16 @@ class AiSearchService {
         evidence.quote ?? '',
         evidence.relevance ?? '',
       ],
+    ].join(' ');
+  }
+
+  String _stoneTaskText(StoneTask task) {
+    return [
+      task.title,
+      task.description,
+      task.status.name,
+      ...task.tags,
+      for (final checkIn in task.checkIns) checkIn.note,
     ].join(' ');
   }
 

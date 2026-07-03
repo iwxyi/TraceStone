@@ -5,6 +5,7 @@ enum AiEmbeddingSourceType {
   memory,
   profile,
   relationship,
+  stone,
 }
 
 class AiEmbedding {
