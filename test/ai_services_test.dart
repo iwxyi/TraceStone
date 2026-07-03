@@ -1178,8 +1178,12 @@ void main() {
       expect(job?.state, AiAnalysisJobState.completed);
       expect(job?.completedStages, contains(AiAnalysisStage.embedding));
       expect(job?.completedStages, contains(AiAnalysisStage.generatingInsight));
+      expect(job?.completedStages, contains(AiAnalysisStage.updatingMemory));
       expect(job?.stageLogs.map((log) => log.stage),
           contains(AiAnalysisStage.embedding));
+      expect(job?.stageLogs.map((log) => log.stage),
+          contains(AiAnalysisStage.updatingMemory));
+      expect(job?.stageLogs.map((log) => log.message), contains('更新长期记忆和候选资料'));
       expect(job?.stageLogs.map((log) => log.message), contains('整理完成'));
       expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
           contains('segments=2'));
@@ -1187,6 +1191,10 @@ void main() {
           contains('embeddings=4'));
       expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
           contains('facts=1'));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('profileCandidates=1'));
+      expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
+          contains('memoryUpdate=0'));
       expect(job?.stageLogs.map((log) => log.inputSummary).join('\n'),
           contains('summary='));
       expect(job?.summaryId, entry.id);

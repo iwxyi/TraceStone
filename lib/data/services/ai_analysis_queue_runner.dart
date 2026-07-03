@@ -376,6 +376,20 @@ class AiAnalysisQueueRunner {
         completedStages,
         AiAnalysisStage.generatingInsight,
       );
+
+      await _saveStage(
+        job,
+        state: AiAnalysisJobState.running,
+        stage: AiAnalysisStage.updatingMemory,
+        analysisState: DiaryAnalysisState.analyzing,
+        message: '更新长期记忆和候选资料',
+        retryCount: job.retryCount,
+        completedStages: completedStages,
+        inputSummary: 'entryId=${entry.id} insight=${insight.entryId}',
+        outputSummary: _memoryUpdateOutputSummary(insight),
+        insightId: insight.entryId,
+        clearLastError: true,
+      );
       completedStages = _markCompleted(
         completedStages,
         AiAnalysisStage.updatingMemory,
@@ -765,6 +779,16 @@ class AiAnalysisQueueRunner {
       'signals=${insight.signals.length}',
       'hypotheses=${insight.hypotheses.length}',
       'suggestions=${insight.suggestions.length}',
+      'profileCandidates=${insight.profileUpdateCandidates.length}',
+      'relationshipUpdates=${insight.relationshipUpdates.length}',
+      'contradictions=${insight.contradictions.length}',
+    ].join(' ');
+  }
+
+  String _memoryUpdateOutputSummary(DiaryInsight insight) {
+    return [
+      'memoryUpdate=${insight.memorySummary.trim().isEmpty ? 0 : 1}',
+      'memoryTags=${insight.memoryTags.length}',
       'profileCandidates=${insight.profileUpdateCandidates.length}',
       'relationshipUpdates=${insight.relationshipUpdates.length}',
       'contradictions=${insight.contradictions.length}',
