@@ -3486,6 +3486,8 @@ void main() {
       expect(summary.contextSourceLines.join('\n'), contains(entry.id));
       expect(summary.contextSourceLines.join('\n'), contains('2026-07-03'));
       expect(
+          summary.contextSourceLines.join('\n'), contains('brief=晚上散步以后焦虑下降'));
+      expect(
           summary.contextSourceLines.join('\n'), contains('importance=0.82'));
       expect(summary.contextSourceLines.join('\n'),
           contains('memory:memory:period-source'));

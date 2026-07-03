@@ -222,6 +222,7 @@ class PeriodSummaryService {
           'entry_summary:${summary.entryId}',
           summary.date.toIso8601String().split('T').first,
           if (summary.title.isNotEmpty) summary.title else summary.brief,
+          if (summary.brief.isNotEmpty) 'brief=${_compact(summary.brief)}',
           if (summary.topics.isNotEmpty)
             'topics=${summary.topics.take(4).join('、')}',
           'importance=${summary.importance.toStringAsFixed(2)}',
@@ -317,5 +318,11 @@ class PeriodSummaryService {
     return signals.entries
         .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
         .join(',');
+  }
+
+  String _compact(String value, {int maxLength = 80}) {
+    final compacted = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (compacted.length <= maxLength) return compacted;
+    return '${compacted.substring(0, maxLength)}...';
   }
 }
