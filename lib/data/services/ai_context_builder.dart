@@ -145,6 +145,13 @@ class AiContextBuilder {
     final relatedMemories =
         await _memoryRepository.findRelatedWithReasons(entry: entry, limit: 12);
     final searchMatches = await _searchService.search(query);
+    final searchMemoryIds = searchMatches
+        .where((match) => match.sourceType == 'memory')
+        .map((match) => match.sourceId)
+        .toSet();
+    final dedupedRelatedMemories = relatedMemories
+        .where((result) => !searchMemoryIds.contains(result.memory.id))
+        .toList(growable: false);
     final projection = await _profileProjection();
     final profileFacts =
         _topProfileFacts(_matchingProfileFacts(projection.profileFacts, query));
@@ -157,14 +164,14 @@ class AiContextBuilder {
       scenario: scenario,
       query: query,
       searchMatches: searchMatches,
-      relatedMemories: relatedMemories,
+      relatedMemories: dedupedRelatedMemories,
       profileFacts: profileFacts,
       relationshipProfiles: relationshipProfiles,
       stoneTasks: stoneTasks,
     );
     final trace = _traceFromResults(
       traceId,
-      relatedMemories,
+      dedupedRelatedMemories,
       searchMatches: searchMatches,
       profileFacts: profileFacts,
       relationshipProfiles: relationshipProfiles,

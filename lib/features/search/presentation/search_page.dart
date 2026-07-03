@@ -102,14 +102,29 @@ class _SearchPageState extends State<SearchPage> {
                   }
                   final package = snapshot.data;
                   final searchMatches = package?.searchMatches ?? const [];
+                  final diaryMatches = searchMatches
+                      .where((match) => match.sourceType != 'memory')
+                      .toList(growable: false);
+                  final memorySearchMatches = searchMatches
+                      .where((match) => match.sourceType == 'memory')
+                      .toList(growable: false);
                   final memoryResults = package?.relatedMemories ?? const [];
+                  final memorySearchIds = memorySearchMatches
+                      .map((match) => match.sourceId)
+                      .toSet();
+                  final relatedMemoryResults = memoryResults
+                      .where((result) =>
+                          !memorySearchIds.contains(result.memory.id))
+                      .toList(growable: false);
                   final profileFacts = package?.profileFacts ?? const [];
                   final relationshipProfiles =
                       package?.relationshipProfiles ?? const [];
                   final stoneTasks = package?.stoneTasks ?? const [];
                   final hasVisibleResults = (_showDiary &&
-                          searchMatches.isNotEmpty) ||
-                      (_showMemory && memoryResults.isNotEmpty) ||
+                          diaryMatches.isNotEmpty) ||
+                      (_showMemory &&
+                          (memorySearchMatches.isNotEmpty ||
+                              relatedMemoryResults.isNotEmpty)) ||
                       (_showProfile && profileFacts.isNotEmpty) ||
                       (_showRelationship && relationshipProfiles.isNotEmpty) ||
                       (_showStone && stoneTasks.isNotEmpty);
@@ -139,21 +154,29 @@ class _SearchPageState extends State<SearchPage> {
                         const SizedBox(height: 12),
                       ],
                       if (_showDiary)
-                        for (final result in searchMatches) ...[
+                        for (final result in diaryMatches) ...[
                           _SearchMatchCard(
                             result: result,
                             developerMode: developerMode,
                           ),
                           const SizedBox(height: 10),
                         ],
-                      if (_showMemory)
-                        for (final result in memoryResults) ...[
+                      if (_showMemory) ...[
+                        for (final result in memorySearchMatches) ...[
+                          _SearchMatchCard(
+                            result: result,
+                            developerMode: developerMode,
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                        for (final result in relatedMemoryResults) ...[
                           _MemoryResultCard(
                             result: result,
                             developerMode: developerMode,
                           ),
                           const SizedBox(height: 10),
                         ],
+                      ],
                       if (_showRelationship)
                         for (final profile in relationshipProfiles) ...[
                           _RelationshipResultCard(
@@ -357,16 +380,31 @@ class _SearchMatchCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _ResultCard(
-      icon: result.sourceType == 'segment'
-          ? Icons.notes_outlined
-          : Icons.article_outlined,
+      icon: _sourceIcon(result.sourceType),
       title: result.title,
       subtitle: _sourceLabel(result.sourceType),
       score: result.score,
       body: result.summary,
       reasons: result.reasons,
+      sourceLine: [
+        '${result.sourceType}:${result.sourceId}',
+        if (result.entryId.isNotEmpty) 'entry=${result.entryId}',
+        if (result.matchedTokens.isNotEmpty)
+          'matched=${result.matchedTokens.take(8).join(',')}',
+      ].join(' | '),
       developerMode: developerMode,
     );
+  }
+
+  IconData _sourceIcon(String sourceType) {
+    switch (sourceType) {
+      case 'segment':
+        return Icons.notes_outlined;
+      case 'memory':
+        return Icons.psychology_alt_outlined;
+      default:
+        return Icons.article_outlined;
+    }
   }
 
   String _sourceLabel(String sourceType) {
@@ -377,6 +415,8 @@ class _SearchMatchCard extends StatelessWidget {
         return '日记摘要';
       case 'entry':
         return '日记全文预览';
+      case 'memory':
+        return '长期记忆';
       default:
         return '相关记录';
     }
@@ -402,6 +442,15 @@ class _MemoryResultCard extends StatelessWidget {
       score: result.score,
       body: memory.summary,
       reasons: result.reasons,
+      sourceLine: [
+        'memory:${memory.id}',
+        if (memory.sourceEntryId.isNotEmpty)
+          'sourceEntry=${memory.sourceEntryId}',
+        if (memory.allSourceEntryIds.isNotEmpty)
+          'evidence=${memory.allSourceEntryIds.take(6).join(',')}',
+        if (result.matchedTokens.isNotEmpty)
+          'matched=${result.matchedTokens.take(8).join(',')}',
+      ].join(' | '),
       developerMode: developerMode,
     );
   }
@@ -430,6 +479,11 @@ class _ProfileResultCard extends StatelessWidget {
         '${fact.distinctDays} 天',
         if (fact.userConfirmed) '用户确认',
       ],
+      sourceLine: [
+        'profile:${fact.id}',
+        if (fact.evidence.isNotEmpty)
+          'evidence=${fact.evidence.take(6).map((item) => '${item.type}:${item.id}').join(',')}',
+      ].join(' | '),
       developerMode: developerMode,
     );
   }
@@ -475,6 +529,11 @@ class _RelationshipResultCard extends StatelessWidget {
         '${profile.distinctDays} 天证据',
         if (profile.userConfirmed) '用户确认',
       ],
+      sourceLine: [
+        'relationship:${profile.personName}',
+        if (profile.evidence.isNotEmpty)
+          'evidence=${profile.evidence.take(6).map((item) => '${item.type}:${item.id}').join(',')}',
+      ].join(' | '),
       developerMode: developerMode,
     );
   }
@@ -505,6 +564,12 @@ class _StoneResultCard extends StatelessWidget {
         if (task.tags.isNotEmpty) '标签：${task.tags.take(4).join('、')}',
         if (task.checkIns.isNotEmpty) '进展 ${task.checkIns.length} 次',
       ],
+      sourceLine: [
+        'stone:${task.id}',
+        if (task.sourceEntryId.isNotEmpty) 'sourceEntry=${task.sourceEntryId}',
+        if (task.checkIns.isNotEmpty)
+          'checkIns=${task.checkIns.take(3).map((item) => item.id).join(',')}',
+      ].join(' | '),
       developerMode: developerMode,
     );
   }
@@ -519,6 +584,7 @@ class _ResultCard extends StatelessWidget {
     required this.body,
     required this.reasons,
     required this.developerMode,
+    this.sourceLine = '',
   });
 
   final IconData icon;
@@ -528,6 +594,7 @@ class _ResultCard extends StatelessWidget {
   final String body;
   final List<String> reasons;
   final bool developerMode;
+  final String sourceLine;
 
   @override
   Widget build(BuildContext context) {
@@ -554,6 +621,13 @@ class _ResultCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+            if (developerMode && sourceLine.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                sourceLine,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
             const SizedBox(height: 8),
             Text(body),
             if (developerMode && reasons.isNotEmpty) ...[

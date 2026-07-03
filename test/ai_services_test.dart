@@ -138,6 +138,67 @@ void main() {
       expect(prefs.get('ai.promptTraces.array'), isNull);
       expect(prefs.get('ai.retrievalTraces.array'), isNull);
     });
+
+    test('reads malformed retrieval trace fields with safe defaults', () {
+      final trace = AiRetrievalTrace.fromJson({
+        'entryId': 42,
+        'generatedAt': <String>['bad'],
+        'scenario': <String>['search'],
+        'contextSummary': 99,
+        'sourceCount': '3',
+        'items': [
+          {
+            'sourceType': 'memory',
+            'sourceId': 77,
+            'title': 12,
+            'summary': null,
+            'score': '8',
+            'reasons': ['语义相似', 3],
+            'matchedTokens': 'bad',
+          },
+          'bad-item',
+          {12: 'ignored', 'sourceType': 'segment'},
+        ],
+      });
+
+      expect(trace.entryId, '42');
+      expect(trace.scenario, isNull);
+      expect(trace.contextSummary, isNull);
+      expect(trace.sourceCount, 3);
+      expect(trace.items, hasLength(2));
+      expect(trace.items.first.sourceType, 'memory');
+      expect(trace.items.first.sourceId, '77');
+      expect(trace.items.first.title, '12');
+      expect(trace.items.first.score, 8);
+      expect(trace.items.first.reasons, ['语义相似', '3']);
+      expect(trace.items.first.matchedTokens, isEmpty);
+      expect(trace.items.last.sourceType, 'segment');
+    });
+
+    test('reads malformed prompt trace fields with safe defaults', () {
+      final trace = AiPromptTrace.fromJson({
+        'id': 42,
+        'scenario': <String>['todayInsight'],
+        'createdAt': <String>['bad'],
+        'contextSummary': 12,
+        'systemPromptPreview': null,
+        'userPromptPreview': true,
+        'systemPromptLength': '128',
+        'userPromptLength': 64.8,
+        'systemPrompt': ['bad'],
+        'userPrompt': '完整 user prompt',
+      });
+
+      expect(trace.id, '42');
+      expect(trace.scenario, '[todayInsight]');
+      expect(trace.contextSummary, '12');
+      expect(trace.systemPromptPreview, '');
+      expect(trace.userPromptPreview, 'true');
+      expect(trace.systemPromptLength, 128);
+      expect(trace.userPromptLength, 64);
+      expect(trace.systemPrompt, isNull);
+      expect(trace.userPrompt, '完整 user prompt');
+    });
   });
 
   group('AI settings and feedback', () {
@@ -157,6 +218,26 @@ void main() {
       expect(prefs.get('ai.feedback.list'), ['bad']);
       expect(prefs.get('ai.feedback.broken'), isNull);
       expect(prefs.get('ai.feedback.array'), isNull);
+    });
+
+    test('feedback repository keeps malformed field values safely', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.feedback.malformed': jsonEncode({
+          'entryId': 42,
+          'value': ['inaccurate'],
+          'createdAt': <String>['bad'],
+          'note': {'text': 'bad'},
+        }),
+      });
+
+      final feedback =
+          await const AiFeedbackRepository().getFeedback('malformed');
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(feedback?.entryId, '42');
+      expect(feedback?.value, AiFeedbackValue.unclear);
+      expect(feedback?.note, isNull);
+      expect(prefs.getString('ai.feedback.malformed'), isNotNull);
     });
 
     test('inaccurate insight feedback requeues analysis with a trace log',
@@ -447,6 +528,95 @@ void main() {
       expect(insight.relationshipUpdates, isEmpty);
       expect(insight.contradictions, isEmpty);
     });
+
+    test('reads malformed insight fields with safe defaults', () {
+      final insight = DiaryInsight.fromJson({
+        'entryId': 42,
+        'entryDate': <String>['bad'],
+        'generatedAt': <String>['bad'],
+        'reflection': 123,
+        'emotion': true,
+        'keywords': ['散步', 7, null],
+        'people': 'bad',
+        'stoneTitle': 88,
+        'stoneDescription': null,
+        'memorySummary': ['bad'],
+        'memoryTags': ['恢复', 3],
+        'relatedMemories': [
+          {
+            'title': 2025,
+            'reason': null,
+            'source_id': 'memory-walk',
+          },
+          'bad',
+        ],
+        'facts': [
+          {
+            'text': 12,
+            'confidence': '0.7',
+            'evidence': [
+              {
+                'type': 'memory',
+                'id': 99,
+                'quote': ['bad'],
+                'summary': '历史摘要',
+              },
+              'bad',
+            ],
+          },
+        ],
+        'profile_update_candidates': [
+          {
+            'field': 7,
+            'value': true,
+            'action': null,
+            'confidence': '0.61',
+            'evidence': [
+              {'type': 'current_entry', 'id': 'entry#s1'}
+            ],
+          },
+        ],
+        'relationship_updates': [
+          {
+            'person': 100,
+            'summary': false,
+            'relationship': ['bad'],
+            'emotion': '平静',
+          },
+        ],
+        'contradictions': [
+          {
+            'old_memory_id': 55,
+            'new_evidence': true,
+            'interpretation': 9,
+          },
+        ],
+      });
+
+      expect(insight.entryId, '42');
+      expect(insight.reflection, '123');
+      expect(insight.emotion, 'true');
+      expect(insight.keywords, ['散步', '7']);
+      expect(insight.people, isEmpty);
+      expect(insight.stoneTitle, '88');
+      expect(insight.memorySummary, '[bad]');
+      expect(insight.memoryTags, ['恢复', '3']);
+      expect(insight.relatedMemories.single.title, '2025');
+      expect(insight.relatedMemories.single.entryId, 'memory-walk');
+      expect(insight.facts.single.text, '12');
+      expect(insight.facts.single.confidence, 0.7);
+      expect(insight.facts.single.evidence.single.id, '99');
+      expect(insight.facts.single.evidence.single.quote, isNull);
+      expect(insight.profileUpdateCandidates.single.field, '7');
+      expect(insight.profileUpdateCandidates.single.value, 'true');
+      expect(insight.profileUpdateCandidates.single.action, 'candidate');
+      expect(insight.relationshipUpdates.single.personName, '100');
+      expect(insight.relationshipUpdates.single.summary, 'false');
+      expect(insight.relationshipUpdates.single.relationship, isNull);
+      expect(insight.contradictions.single.oldMemoryId, '55');
+      expect(insight.contradictions.single.newEvidence, 'true');
+      expect(insight.contradictions.single.interpretation, '9');
+    });
   });
 
   group('InsightRepository', () {
@@ -573,9 +743,9 @@ void main() {
         'updatedAt': date.toIso8601String(),
       });
       final malformed = AiAnalysisJob.fromJson({
-        'id': 'malformed',
-        'entryId': 'entry',
-        'pipelineVersion': 'old',
+        'id': 42,
+        'entryId': 43,
+        'pipelineVersion': '7',
         'state': <String>['pending'],
         'currentStage': 12,
         'createdAt': <String>['bad'],
@@ -583,27 +753,33 @@ void main() {
         'completedStages': 'queued',
         'stageLogs': [
           'bad',
+          {12: 'ignored'},
           {
             'stage': 'embedding',
             'startedAt': date.toIso8601String(),
-            'message': 'ok',
-            'retryCount': 'bad',
+            'message': 99,
+            'retryCount': '3',
           },
         ],
-        'retryCount': 'bad',
+        'retryCount': '2',
         'lastError': <String>['bad'],
       });
 
       expect(restored.stageLogs.single.stage, AiAnalysisStage.embedding);
       expect(restored.stageLogs.single.outputSummary, 'completed=segmenting');
       expect(legacy.stageLogs, isEmpty);
-      expect(malformed.pipelineVersion, 1);
+      expect(malformed.id, '42');
+      expect(malformed.entryId, '43');
+      expect(malformed.pipelineVersion, 7);
       expect(malformed.state, AiAnalysisJobState.pending);
       expect(malformed.currentStage, AiAnalysisStage.queued);
       expect(malformed.completedStages, isEmpty);
-      expect(malformed.stageLogs.single.stage, AiAnalysisStage.embedding);
-      expect(malformed.stageLogs.single.retryCount, 0);
-      expect(malformed.retryCount, 0);
+      expect(malformed.stageLogs, hasLength(2));
+      expect(malformed.stageLogs.first.stage, AiAnalysisStage.queued);
+      expect(malformed.stageLogs.last.stage, AiAnalysisStage.embedding);
+      expect(malformed.stageLogs.last.message, '99');
+      expect(malformed.stageLogs.last.retryCount, 3);
+      expect(malformed.retryCount, 2);
       expect(malformed.lastError, isNull);
     });
 
@@ -1593,6 +1769,33 @@ void main() {
       expect(prefs.get('ai.profilePreferences.list'), ['bad']);
     });
 
+    test('keeps malformed profile preferences with safe defaults', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.profilePreferences.index': <String>['profileFact:42'],
+        'ai.profilePreferences.profileFact:42': jsonEncode({
+          'targetType': ['relationship'],
+          'targetId': 42,
+          'updatedAt': <String>['bad'],
+          'confirmed': 'true',
+          'hidden': 'false',
+          'correctedValue': 99,
+        }),
+      });
+      const repository = AiProfilePreferenceRepository();
+
+      final preferences = await repository.listPreferences();
+      final preference = preferences.single;
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(preference.targetType, AiProfilePreferenceTargetType.profileFact);
+      expect(preference.targetId, '42');
+      expect(preference.confirmed, isTrue);
+      expect(preference.hidden, isFalse);
+      expect(preference.correctedValue, '99');
+      expect(
+          prefs.getString('ai.profilePreferences.profileFact:42'), isNotNull);
+    });
+
     test('applies user corrected profile fact value', () async {
       SharedPreferences.setMockInitialValues({});
       const projectionService = ProfileProjectionService();
@@ -1747,6 +1950,8 @@ void main() {
       expect(client.lastUserPrompt, contains('source_id=memory:walk-memory'));
       expect(client.lastUserPrompt,
           contains('source_id=entry_summary:walk-entry'));
+      expect(client.lastUserPrompt, contains('相关搜索命中'));
+      expect(client.lastUserPrompt, isNot(contains('相关日记和片段：')));
       expect(answer.sources, hasLength(1));
       expect(answer.sources.single.sourceType, 'memory');
       expect(answer.sources.single.sourceId, 'walk-memory');
@@ -2036,6 +2241,44 @@ void main() {
 
       expect(service.cosineSimilarity(empty.vector, diary.vector), 0);
     });
+
+    test('reads malformed embedding json with safe defaults', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.embeddings.typeIndex.memory': <String>['memory:bad-vector'],
+        'ai.embeddings.entryIndex.entry-1': <String>['memory:bad-vector'],
+        'ai.embeddings.memory:bad-vector': jsonEncode({
+          'id': 'memory:bad-vector',
+          'sourceType': 'memory',
+          'sourceId': 'bad-vector',
+          'entryId': 'entry-1',
+          'modelId': null,
+          'modelVersion': 3,
+          'dimensions': '4',
+          'vector': [0.1, '0.2', 'bad', null, 3],
+          'generatedAt': <String>['bad'],
+          'textHash': 99,
+        }),
+      });
+
+      final embedding = await const AiEmbeddingRepository().getBySource(
+        sourceType: AiEmbeddingSourceType.memory,
+        sourceId: 'bad-vector',
+      );
+      final byType = await const AiEmbeddingRepository().listByType(
+        AiEmbeddingSourceType.memory,
+      );
+
+      expect(embedding?.id, 'memory:bad-vector');
+      expect(embedding?.sourceType, AiEmbeddingSourceType.memory);
+      expect(embedding?.sourceId, 'bad-vector');
+      expect(embedding?.entryId, 'entry-1');
+      expect(embedding?.modelId, 'unknown');
+      expect(embedding?.modelVersion, '3');
+      expect(embedding?.dimensions, 4);
+      expect(embedding?.vector, [0.1, 0.2, 3.0]);
+      expect(embedding?.textHash, '99');
+      expect(byType.single.id, 'memory:bad-vector');
+    });
   });
 
   group('AiSearchService', () {
@@ -2148,6 +2391,69 @@ void main() {
       expect(matches.first.reasons.join(' '), contains('人物匹配'));
       expect(matches.first.reasons.join(' '), contains('主题匹配'));
       expect(matches.first.reasons.join(' '), contains('情绪匹配'));
+    });
+
+    test('returns long term memory matches from vectors and keywords',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const memoryRepository = MemoryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = EmbeddingService();
+      final date = DateTime(2026, 7, 3);
+      final memory = MemoryEntry(
+        id: 'memory:walk-recovery',
+        sourceEntryId: 'memory-source-entry',
+        date: date,
+        createdAt: date,
+        summary: '压力大时散步能帮助用户恢复状态，焦虑会下降。',
+        keywords: const ['散步', '焦虑', '恢复'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['自我调节'],
+        importance: 0.82,
+        confidence: 0.76,
+      );
+      await memoryRepository.saveMemory(memory);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: memory.sourceEntryId,
+        sourceType: AiEmbeddingSourceType.memory,
+        sourceId: memory.id,
+        text: memory.summary,
+        generatedAt: date,
+      );
+
+      final matches = await const AiSearchService().search('散步后焦虑下降');
+      final memoryMatch =
+          matches.firstWhere((match) => match.sourceType == 'memory');
+
+      expect(memoryMatch.sourceId, memory.id);
+      expect(memoryMatch.entryId, memory.sourceEntryId);
+      expect(memoryMatch.reasons.join(' '), contains('向量相似度'));
+      expect(memoryMatch.reasons.join(' '), contains('记忆重要度'));
+    });
+
+    test('skips archived long term memories in search', () async {
+      SharedPreferences.setMockInitialValues({});
+      final date = DateTime(2026, 7, 3);
+      await const MemoryRepository().saveMemory(MemoryEntry(
+        id: 'memory:archived-search',
+        sourceEntryId: 'archived-source-entry',
+        date: date,
+        createdAt: date,
+        summary: '散步后焦虑下降。',
+        keywords: const ['散步', '焦虑'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['自我调节'],
+        archived: true,
+      ));
+
+      final matches = await const AiSearchService().search('散步 焦虑');
+
+      expect(matches.map((match) => match.sourceId),
+          isNot(contains('memory:archived-search')));
     });
   });
 
@@ -2811,6 +3117,41 @@ void main() {
       expect(savedTrace?.items.map((item) => item.sourceType),
           contains('segment'));
     });
+
+    test('question context deduplicates memory search matches', () async {
+      SharedPreferences.setMockInitialValues({});
+      const memoryRepository = MemoryRepository();
+      const traceRepository = AiRetrievalTraceRepository();
+      final date = DateTime(2026, 7, 3);
+      final memory = MemoryEntry(
+        id: 'memory:question-dedupe',
+        sourceEntryId: 'memory-question-source',
+        date: date,
+        createdAt: date,
+        summary: '散步后焦虑下降，状态更容易恢复。',
+        keywords: const ['散步', '焦虑', '恢复'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['自我调节'],
+        importance: 0.8,
+        confidence: 0.76,
+      );
+      await memoryRepository.saveMemory(memory);
+
+      final package = await const AiContextBuilder().buildForQuestion('散步 焦虑');
+      final savedTrace = await traceRepository.getTrace('question:last');
+
+      expect(package.searchMatches.map((match) => match.sourceType),
+          contains('memory'));
+      expect(package.searchMatches.map((match) => match.sourceId),
+          contains(memory.id));
+      expect(package.relatedMemories.map((result) => result.memory.id),
+          isNot(contains(memory.id)));
+      expect(
+        savedTrace?.items.where((item) => item.sourceId == memory.id).length,
+        1,
+      );
+    });
   });
 
   group('DiaryRepository trash', () {
@@ -2834,6 +3175,19 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
 
       expect(items, isEmpty);
+      expect(prefs.containsKey('diary.trash.entry-1'), isFalse);
+      expect(prefs.getStringList('diary.trash.index'), isEmpty);
+    });
+
+    test('purges expired trash with legacy string list item values', () async {
+      SharedPreferences.setMockInitialValues({
+        'diary.trash.index': <String>['entry-1'],
+        'diary.trash.entry-1': <String>['corrupted'],
+      });
+
+      await const DiaryRepository().purgeExpiredTrash();
+      final prefs = await SharedPreferences.getInstance();
+
       expect(prefs.containsKey('diary.trash.entry-1'), isFalse);
       expect(prefs.getStringList('diary.trash.index'), isEmpty);
     });

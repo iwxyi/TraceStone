@@ -86,7 +86,7 @@ ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map((result)
             return '- source_id=memory:${memory.id}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${result.reasons.join('；')}';
           }).join('\n')}
 
-相关日记和片段：
+相关搜索命中（可能包含日记摘要、片段、全文预览或长期记忆）：
 ${context.searchMatches.isEmpty ? '无' : context.searchMatches.map((match) {
             return '- source_id=${match.sourceType}:${match.sourceId}｜entry=${match.entryId}｜score ${match.score}｜${match.title}｜${match.summary}｜${match.reasons.join('；')}';
           }).join('\n')}

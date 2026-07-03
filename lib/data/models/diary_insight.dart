@@ -68,22 +68,21 @@ class DiaryInsight {
 
   static DiaryInsight fromJson(Map<String, dynamic> json) {
     return DiaryInsight(
-      entryId: json['entryId'] as String? ?? '',
-      entryDate: DateTime.tryParse(json['entryDate'] as String? ?? '') ??
+      entryId: _stringValue(json['entryId']),
+      entryDate:
+          DateTime.tryParse(_stringValue(json['entryDate'])) ?? DateTime.now(),
+      generatedAt: DateTime.tryParse(_stringValue(json['generatedAt'])) ??
           DateTime.now(),
-      generatedAt: DateTime.tryParse(json['generatedAt'] as String? ?? '') ??
-          DateTime.now(),
-      reflection: json['reflection'] as String? ?? '',
-      relatedMemories: (json['relatedMemories'] as List<dynamic>? ?? [])
-          .map((item) => RelatedMemoryInsight.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      reflection: _stringValue(json['reflection']),
+      relatedMemories: _mapList(json['relatedMemories'])
+          .map(RelatedMemoryInsight.fromJson)
           .toList(),
-      emotion: json['emotion'] as String? ?? '',
+      emotion: _stringValue(json['emotion']),
       keywords: _stringList(json['keywords']),
       people: _stringList(json['people']),
-      stoneTitle: json['stoneTitle'] as String? ?? '',
-      stoneDescription: json['stoneDescription'] as String? ?? '',
-      memorySummary: json['memorySummary'] as String? ?? '',
+      stoneTitle: _stringValue(json['stoneTitle']),
+      stoneDescription: _stringValue(json['stoneDescription']),
+      memorySummary: _stringValue(json['memorySummary']),
       memoryTags: _stringList(json['memoryTags']),
       facts: _claimList(json['facts']),
       signals: _claimList(json['signals']),
@@ -99,39 +98,51 @@ class DiaryInsight {
     );
   }
 
-  static List<String> _stringList(Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) => item.toString().trim())
-          .where((item) => item.isNotEmpty)
-          .toList();
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
 
-  static List<InsightClaim> _claimList(Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) =>
-              InsightClaim.fromJson(item as Map<String, dynamic>? ?? const {}))
-          .where((item) => item.text.isNotEmpty)
-          .toList();
+  static List<String> _stringList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .where((item) => item != null)
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  static List<Map<String, dynamic>> _mapList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((item) => {
+              for (final entry in item.entries)
+                if (entry.key is String) entry.key as String: entry.value,
+            })
+        .toList();
+  }
+
+  static List<InsightClaim> _claimList(Object? value) => _mapList(value)
+      .map(InsightClaim.fromJson)
+      .where((item) => item.text.isNotEmpty)
+      .toList();
 
   static List<ProfileUpdateCandidate> _profileUpdateList(Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) => ProfileUpdateCandidate.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      _mapList(value)
+          .map(ProfileUpdateCandidate.fromJson)
           .where((item) => item.field.isNotEmpty && item.value.isNotEmpty)
           .toList();
 
   static List<RelationshipUpdateCandidate> _relationshipUpdateList(
           Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) => RelationshipUpdateCandidate.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      _mapList(value)
+          .map(RelationshipUpdateCandidate.fromJson)
           .where(
               (item) => item.personName.isNotEmpty || item.summary.isNotEmpty)
           .toList();
 
   static List<InsightContradiction> _contradictionList(Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) => InsightContradiction.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      _mapList(value)
+          .map(InsightContradiction.fromJson)
           .where((item) =>
               item.oldMemoryId.isNotEmpty || item.newEvidence.isNotEmpty)
           .toList();
@@ -156,12 +167,12 @@ class RelatedMemoryInsight {
 
   static RelatedMemoryInsight fromJson(Map<String, dynamic> json) {
     return RelatedMemoryInsight(
-      title: json['title'] as String? ?? '',
-      reason: json['reason'] as String? ?? '',
-      entryId: json['entryId'] as String? ??
-          json['entry_id'] as String? ??
-          json['sourceId'] as String? ??
-          json['source_id'] as String?,
+      title: _stringValue(json['title']),
+      reason: _stringValue(json['reason']),
+      entryId: _nullableString(json['entryId']) ??
+          _nullableString(json['entry_id']) ??
+          _nullableString(json['sourceId']) ??
+          _nullableString(json['source_id']),
     );
   }
 }
@@ -185,11 +196,9 @@ class InsightClaim {
 
   static InsightClaim fromJson(Map<String, dynamic> json) {
     return InsightClaim(
-      text: json['text'] as String? ?? '',
+      text: _stringValue(json['text']),
       confidence: _doubleValue(json['confidence']),
-      evidence: (json['evidence'] as List<dynamic>? ?? [])
-          .map((item) => InsightEvidence.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      evidence: _evidenceList(json['evidence'])
           .where((item) => item.type.isNotEmpty || item.id.isNotEmpty)
           .toList(),
     );
@@ -230,12 +239,12 @@ class InsightEvidence {
 
   static InsightEvidence fromJson(Map<String, dynamic> json) {
     return InsightEvidence(
-      type: json['type'] as String? ?? '',
-      id: json['id'] as String? ?? '',
-      date: DateTime.tryParse(json['date'] as String? ?? ''),
-      quote: json['quote'] as String?,
-      summary: json['summary'] as String?,
-      relevance: json['relevance'] as String?,
+      type: _stringValue(json['type']),
+      id: _stringValue(json['id']),
+      date: DateTime.tryParse(_stringValue(json['date'])),
+      quote: _nullableString(json['quote']),
+      summary: _nullableString(json['summary']),
+      relevance: _nullableString(json['relevance']),
     );
   }
 }
@@ -265,9 +274,11 @@ class ProfileUpdateCandidate {
 
   static ProfileUpdateCandidate fromJson(Map<String, dynamic> json) {
     return ProfileUpdateCandidate(
-      field: json['field'] as String? ?? '',
-      value: json['value'] as String? ?? '',
-      action: json['action'] as String? ?? 'candidate',
+      field: _stringValue(json['field']),
+      value: _stringValue(json['value']),
+      action: _stringValue(json['action']).isEmpty
+          ? 'candidate'
+          : _stringValue(json['action']),
       confidence: _doubleValue(json['confidence']),
       evidence: _evidenceList(json['evidence']),
     );
@@ -305,12 +316,13 @@ class RelationshipUpdateCandidate {
 
   static RelationshipUpdateCandidate fromJson(Map<String, dynamic> json) {
     return RelationshipUpdateCandidate(
-      personName:
-          json['personName'] as String? ?? json['person'] as String? ?? '',
-      summary: json['summary'] as String? ?? '',
-      relationship: json['relationship'] as String?,
-      emotion: json['emotion'] as String?,
-      pattern: json['pattern'] as String?,
+      personName: _stringValue(json['personName']).isNotEmpty
+          ? _stringValue(json['personName'])
+          : _stringValue(json['person']),
+      summary: _stringValue(json['summary']),
+      relationship: _nullableString(json['relationship']),
+      emotion: _nullableString(json['emotion']),
+      pattern: _nullableString(json['pattern']),
       confidence: _doubleValue(json['confidence']),
       evidence: _evidenceList(json['evidence']),
     );
@@ -342,13 +354,13 @@ class InsightContradiction {
 
   static InsightContradiction fromJson(Map<String, dynamic> json) {
     return InsightContradiction(
-      oldMemoryId: json['oldMemoryId'] as String? ??
-          json['old_memory_id'] as String? ??
-          '',
-      newEvidence: json['newEvidence'] as String? ??
-          json['new_evidence'] as String? ??
-          '',
-      interpretation: json['interpretation'] as String? ?? '',
+      oldMemoryId: _stringValue(json['oldMemoryId']).isNotEmpty
+          ? _stringValue(json['oldMemoryId'])
+          : _stringValue(json['old_memory_id']),
+      newEvidence: _stringValue(json['newEvidence']).isNotEmpty
+          ? _stringValue(json['newEvidence'])
+          : _stringValue(json['new_evidence']),
+      interpretation: _stringValue(json['interpretation']),
       confidence: _doubleValue(json['confidence']),
       evidence: _evidenceList(json['evidence']),
     );
@@ -356,12 +368,27 @@ class InsightContradiction {
 }
 
 List<InsightEvidence> _evidenceList(Object? value) {
-  return (value as List<dynamic>? ?? [])
-      .map((item) =>
-          InsightEvidence.fromJson(item as Map<String, dynamic>? ?? const {}))
+  return _mapList(value)
+      .map(InsightEvidence.fromJson)
       .where((item) => item.type.isNotEmpty || item.id.isNotEmpty)
       .toList();
 }
+
+List<Map<String, dynamic>> _mapList(Object? value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((item) => {
+            for (final entry in item.entries)
+              if (entry.key is String) entry.key as String: entry.value,
+          })
+      .toList();
+}
+
+String _stringValue(Object? value) =>
+    value is String ? value : value?.toString() ?? '';
+
+String? _nullableString(Object? value) => value is String ? value : null;
 
 double? _doubleValue(Object? value) {
   if (value == null) return null;

@@ -45,19 +45,29 @@ class AiProfilePreference {
       };
 
   factory AiProfilePreference.fromJson(Map<String, dynamic> json) {
+    final targetTypeName = _stringValue(json['targetType']);
     final targetType = AiProfilePreferenceTargetType.values.firstWhere(
-      (value) => value.name == json['targetType'],
+      (value) => value.name == targetTypeName,
       orElse: () => AiProfilePreferenceTargetType.profileFact,
     );
     return AiProfilePreference(
       targetType: targetType,
-      targetId: (json['targetId'] as String? ?? '').trim(),
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+      targetId: _stringValue(json['targetId']).trim(),
+      updatedAt: DateTime.tryParse(_stringValue(json['updatedAt'])) ??
           DateTime.fromMillisecondsSinceEpoch(0),
-      confirmed: json['confirmed'] == true,
-      hidden: json['hidden'] == true,
-      correctedValue: json['correctedValue'] as String? ?? '',
+      confirmed: _boolValue(json['confirmed']),
+      hidden: _boolValue(json['hidden']),
+      correctedValue: _stringValue(json['correctedValue']),
     );
+  }
+
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static bool _boolValue(Object? value) {
+    if (value is bool) return value;
+    final text = value?.toString().toLowerCase().trim();
+    return text == 'true';
   }
 
   static String keyFor({

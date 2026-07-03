@@ -872,6 +872,7 @@ void main() {
 
     expect(find.textContaining('晚上散步'), findsWidgets);
     expect(find.textContaining('score'), findsNothing);
+    expect(find.textContaining('entry_summary:search-entry'), findsNothing);
   });
 
   testWidgets('search shows profile relationship and stone sources',
@@ -934,6 +935,42 @@ void main() {
     expect(find.text('晚饭后散步 10 分钟'), findsNothing);
   });
 
+  testWidgets('search places long term memory matches under memory filter',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    await const MemoryRepository().saveMemory(MemoryEntry(
+      id: 'memory-search-widget',
+      sourceEntryId: 'memory-search-source',
+      date: date,
+      createdAt: date,
+      summary: '骑车以后压力下降，整个人更放松。',
+      keywords: const ['骑车', '压力', '放松'],
+      emotion: '放松',
+      people: const [],
+      tags: const ['运动恢复'],
+      importance: 0.78,
+      confidence: 0.74,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: SearchPage()));
+    await tester.enterText(find.byType(SearchBar), '骑车 压力');
+    await tester.tap(find.byIcon(Icons.arrow_forward));
+    await tester.pumpAndSettle();
+
+    expect(find.text('运动恢复'), findsOneWidget);
+    expect(find.text('长期记忆'), findsOneWidget);
+
+    await tester.tap(find.text('日记'));
+    await tester.pumpAndSettle();
+    expect(find.text('运动恢复'), findsNothing);
+    expect(find.text('暂时没有找到相关记录。'), findsOneWidget);
+
+    await tester.tap(find.text('记忆'));
+    await tester.pumpAndSettle();
+    expect(find.text('运动恢复'), findsOneWidget);
+  });
+
   testWidgets('search shows debug scores in developer mode', (tester) async {
     SharedPreferences.setMockInitialValues({
       'settings.developerMode': true,
@@ -947,6 +984,8 @@ void main() {
 
     expect(find.textContaining('晚上散步'), findsWidgets);
     expect(find.textContaining('score'), findsWidgets);
+    expect(find.textContaining('entry_summary:search-entry'), findsWidgets);
+    expect(find.textContaining('matched='), findsWidgets);
   });
 
   testWidgets('search developer mode copies debug context', (tester) async {

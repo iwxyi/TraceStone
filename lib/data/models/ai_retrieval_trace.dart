@@ -26,17 +26,39 @@ class AiRetrievalTrace {
 
   static AiRetrievalTrace fromJson(Map<String, dynamic> json) {
     return AiRetrievalTrace(
-      entryId: json['entryId'] as String? ?? '',
-      generatedAt: DateTime.tryParse(json['generatedAt'] as String? ?? '') ??
+      entryId: _stringValue(json['entryId']),
+      generatedAt: DateTime.tryParse(_stringValue(json['generatedAt'])) ??
           DateTime.now(),
-      scenario: json['scenario'] as String?,
-      contextSummary: json['contextSummary'] as String?,
-      sourceCount: json['sourceCount'] as int? ?? 0,
-      items: (json['items'] as List<dynamic>? ?? [])
-          .map((item) => AiRetrievalTraceItem.fromJson(
-              item as Map<String, dynamic>? ?? const {}))
+      scenario: _nullableString(json['scenario']),
+      contextSummary: _nullableString(json['contextSummary']),
+      sourceCount: _intValue(json['sourceCount']),
+      items: _mapList(json['items'])
+          .map((item) => AiRetrievalTraceItem.fromJson(item))
           .toList(),
     );
+  }
+
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static String? _nullableString(Object? value) =>
+      value is String ? value : null;
+
+  static int _intValue(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static List<Map<String, dynamic>> _mapList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((item) => {
+              for (final entry in item.entries)
+                if (entry.key is String) entry.key as String: entry.value,
+            })
+        .toList();
   }
 }
 
@@ -71,19 +93,30 @@ class AiRetrievalTraceItem {
 
   static AiRetrievalTraceItem fromJson(Map<String, dynamic> json) {
     return AiRetrievalTraceItem(
-      sourceType: json['sourceType'] as String? ?? '',
-      sourceId: json['sourceId'] as String? ?? '',
-      title: json['title'] as String? ?? '',
-      summary: json['summary'] as String? ?? '',
-      score: json['score'] as int? ?? 0,
+      sourceType: _stringValue(json['sourceType']),
+      sourceId: _stringValue(json['sourceId']),
+      title: _stringValue(json['title']),
+      summary: _stringValue(json['summary']),
+      score: _intValue(json['score']),
       reasons: _stringList(json['reasons']),
       matchedTokens: _stringList(json['matchedTokens']),
     );
   }
 
-  static List<String> _stringList(Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) => item.toString().trim())
-          .where((item) => item.isNotEmpty)
-          .toList();
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static int _intValue(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static List<String> _stringList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
 }

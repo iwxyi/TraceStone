@@ -21,16 +21,24 @@ class AiFeedback {
       };
 
   static AiFeedback fromJson(Map<String, dynamic> json) {
-    final valueName = json['value'] as String? ?? AiFeedbackValue.unclear.name;
+    final valueName = _stringValue(json['value']).isEmpty
+        ? AiFeedbackValue.unclear.name
+        : _stringValue(json['value']);
     return AiFeedback(
-      entryId: json['entryId'] as String? ?? '',
+      entryId: _stringValue(json['entryId']),
       value: AiFeedbackValue.values.firstWhere(
         (item) => item.name == valueName,
         orElse: () => AiFeedbackValue.unclear,
       ),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-          DateTime.now(),
-      note: json['note'] as String?,
+      createdAt:
+          DateTime.tryParse(_stringValue(json['createdAt'])) ?? DateTime.now(),
+      note: _nullableString(json['note']),
     );
   }
+
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static String? _nullableString(Object? value) =>
+      value is String ? value : null;
 }

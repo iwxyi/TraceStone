@@ -38,17 +38,29 @@ class AiPromptTrace {
 
   static AiPromptTrace fromJson(Map<String, dynamic> json) {
     return AiPromptTrace(
-      id: json['id'] as String? ?? '',
-      scenario: json['scenario'] as String? ?? '',
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-          DateTime.now(),
-      contextSummary: json['contextSummary'] as String? ?? '',
-      systemPromptPreview: json['systemPromptPreview'] as String? ?? '',
-      userPromptPreview: json['userPromptPreview'] as String? ?? '',
-      systemPromptLength: json['systemPromptLength'] as int? ?? 0,
-      userPromptLength: json['userPromptLength'] as int? ?? 0,
-      systemPrompt: json['systemPrompt'] as String?,
-      userPrompt: json['userPrompt'] as String?,
+      id: _stringValue(json['id']),
+      scenario: _stringValue(json['scenario']),
+      createdAt:
+          DateTime.tryParse(_stringValue(json['createdAt'])) ?? DateTime.now(),
+      contextSummary: _stringValue(json['contextSummary']),
+      systemPromptPreview: _stringValue(json['systemPromptPreview']),
+      userPromptPreview: _stringValue(json['userPromptPreview']),
+      systemPromptLength: _intValue(json['systemPromptLength']),
+      userPromptLength: _intValue(json['userPromptLength']),
+      systemPrompt: _nullableString(json['systemPrompt']),
+      userPrompt: _nullableString(json['userPrompt']),
     );
+  }
+
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static String? _nullableString(Object? value) =>
+      value is String ? value : null;
+
+  static int _intValue(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 }

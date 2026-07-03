@@ -108,20 +108,16 @@ class AiAnalysisJob {
 
   static AiAnalysisJob fromJson(Map<String, dynamic> json) {
     final now = DateTime.now();
-    final stateName = json['state'] is String
-        ? json['state'] as String
-        : AiAnalysisJobState.pending.name;
-    final stageName = json['currentStage'] is String
-        ? json['currentStage'] as String
-        : AiAnalysisStage.queued.name;
-    final pipelineVersion = json['pipelineVersion'];
-    final completedStages = json['completedStages'];
-    final stageLogs = json['stageLogs'];
-    final retryCount = json['retryCount'];
+    final stateName = _stringValue(json['state']).isEmpty
+        ? AiAnalysisJobState.pending.name
+        : _stringValue(json['state']);
+    final stageName = _stringValue(json['currentStage']).isEmpty
+        ? AiAnalysisStage.queued.name
+        : _stringValue(json['currentStage']);
     return AiAnalysisJob(
-      id: json['id'] is String ? json['id'] as String : '',
-      entryId: json['entryId'] is String ? json['entryId'] as String : '',
-      pipelineVersion: pipelineVersion is num ? pipelineVersion.toInt() : 1,
+      id: _stringValue(json['id']),
+      entryId: _stringValue(json['entryId']),
+      pipelineVersion: _intValue(json['pipelineVersion'], fallback: 1),
       state: AiAnalysisJobState.values.firstWhere(
         (item) => item.name == stateName,
         orElse: () => AiAnalysisJobState.pending,
@@ -130,28 +126,46 @@ class AiAnalysisJob {
         (item) => item.name == stageName,
         orElse: () => AiAnalysisStage.queued,
       ),
-      createdAt: json['createdAt'] is String
-          ? DateTime.tryParse(json['createdAt'] as String) ?? now
-          : now,
-      updatedAt: json['updatedAt'] is String
-          ? DateTime.tryParse(json['updatedAt'] as String) ?? now
-          : now,
-      completedStages: (completedStages is List ? completedStages : const [])
+      createdAt: DateTime.tryParse(_stringValue(json['createdAt'])) ?? now,
+      updatedAt: DateTime.tryParse(_stringValue(json['updatedAt'])) ?? now,
+      completedStages: _listValue(json['completedStages'])
           .map((item) => item.toString())
           .map((name) => AiAnalysisStage.values.firstWhere(
                 (item) => item.name == name,
                 orElse: () => AiAnalysisStage.queued,
               ))
           .toList(),
-      stageLogs: (stageLogs is List ? stageLogs : const [])
-          .whereType<Map>()
-          .map((item) =>
-              AiAnalysisStageLog.fromJson(Map<String, dynamic>.from(item)))
-          .toList(),
-      retryCount: retryCount is num ? retryCount.toInt() : 0,
-      lastError:
-          json['lastError'] is String ? json['lastError'] as String : null,
+      stageLogs:
+          _mapList(json['stageLogs']).map(AiAnalysisStageLog.fromJson).toList(),
+      retryCount: _intValue(json['retryCount']),
+      lastError: _nullableString(json['lastError']),
     );
+  }
+
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static String? _nullableString(Object? value) =>
+      value is String ? value : null;
+
+  static int _intValue(Object? value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static List<dynamic> _listValue(Object? value) =>
+      value is List ? value : const [];
+
+  static List<Map<String, dynamic>> _mapList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((item) => {
+              for (final entry in item.entries)
+                if (entry.key is String) entry.key as String: entry.value,
+            })
+        .toList();
   }
 }
 
@@ -186,27 +200,33 @@ class AiAnalysisStageLog {
 
   static AiAnalysisStageLog fromJson(Map<String, dynamic> json) {
     final now = DateTime.now();
-    final stageName = json['stage'] is String
-        ? json['stage'] as String
-        : AiAnalysisStage.queued.name;
-    final retryCount = json['retryCount'];
+    final stageName = _stringValue(json['stage']).isEmpty
+        ? AiAnalysisStage.queued.name
+        : _stringValue(json['stage']);
     return AiAnalysisStageLog(
       stage: AiAnalysisStage.values.firstWhere(
         (item) => item.name == stageName,
         orElse: () => AiAnalysisStage.queued,
       ),
-      startedAt: json['startedAt'] is String
-          ? DateTime.tryParse(json['startedAt'] as String) ?? now
-          : now,
-      message: json['message'] is String ? json['message'] as String : '',
-      inputSummary:
-          json['inputSummary'] is String ? json['inputSummary'] as String : '',
-      outputSummary: json['outputSummary'] is String
-          ? json['outputSummary'] as String
-          : '',
-      error: json['error'] is String ? json['error'] as String : null,
-      retryCount: retryCount is num ? retryCount.toInt() : 0,
+      startedAt: DateTime.tryParse(_stringValue(json['startedAt'])) ?? now,
+      message: _stringValue(json['message']),
+      inputSummary: _stringValue(json['inputSummary']),
+      outputSummary: _stringValue(json['outputSummary']),
+      error: _nullableString(json['error']),
+      retryCount: _intValue(json['retryCount']),
     );
+  }
+
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static String? _nullableString(Object? value) =>
+      value is String ? value : null;
+
+  static int _intValue(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 }
 

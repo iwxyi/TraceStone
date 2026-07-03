@@ -1,8 +1,10 @@
 import '../models/ai_context_package.dart';
 import '../models/ai_embedding.dart';
+import '../models/memory_entry.dart';
 import '../repositories/ai_embedding_repository.dart';
 import '../repositories/diary_repository.dart';
 import '../repositories/entry_summary_repository.dart';
+import '../repositories/memory_repository.dart';
 import 'embedding_service.dart';
 
 class AiSearchService {
@@ -10,17 +12,20 @@ class AiSearchService {
     AiEmbeddingRepository? embeddingRepository,
     DiaryRepository? diaryRepository,
     EntrySummaryRepository? summaryRepository,
+    MemoryRepository? memoryRepository,
     EmbeddingService? embeddingService,
   })  : _embeddingRepository =
             embeddingRepository ?? const AiEmbeddingRepository(),
         _diaryRepository = diaryRepository ?? const DiaryRepository(),
         _summaryRepository =
             summaryRepository ?? const EntrySummaryRepository(),
+        _memoryRepository = memoryRepository ?? const MemoryRepository(),
         _embeddingService = embeddingService ?? const EmbeddingService();
 
   final AiEmbeddingRepository _embeddingRepository;
   final DiaryRepository _diaryRepository;
   final EntrySummaryRepository _summaryRepository;
+  final MemoryRepository _memoryRepository;
   final EmbeddingService _embeddingService;
 
   Future<List<AiSearchMatch>> search(String query, {int limit = 12}) async {
@@ -56,7 +61,12 @@ class AiSearchService {
       ...await _embeddingRepository.listByType(AiEmbeddingSourceType.summary),
       ...await _embeddingRepository.listByType(AiEmbeddingSourceType.segment),
       ...await _embeddingRepository.listByType(AiEmbeddingSourceType.entry),
+      ...await _embeddingRepository.listByType(AiEmbeddingSourceType.memory),
     ];
+    final memories = {
+      for (final memory in await _memoryRepository.listMemories())
+        memory.id: memory,
+    };
     final candidates = <AiSearchMatch>[];
     for (final embedding in embeddings) {
       final similarity = _embeddingService.cosineSimilarity(
@@ -64,7 +74,10 @@ class AiSearchService {
         embedding.vector,
       );
       if (similarity < 0.18) continue;
-      final source = await _sourceForEmbedding(embedding);
+      final source = await _sourceForEmbedding(
+        embedding,
+        memories: memories,
+      );
       if (source == null) continue;
       final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
       final structuredScore = _structuredScore(queryTokens, source);
@@ -166,10 +179,22 @@ class AiSearchService {
         if (match != null) matches.add(match);
       }
     }
+    for (final memory in await _memoryRepository.listMemories()) {
+      final source = _sourceForMemory(memory);
+      if (source == null) continue;
+      final match = _matchSource(queryTokens: queryTokens, source: source);
+      if (match != null) matches.add(match);
+    }
     return matches;
   }
 
-  Future<_SearchSource?> _sourceForEmbedding(AiEmbedding embedding) async {
+  Future<_SearchSource?> _sourceForEmbedding(
+    AiEmbedding embedding, {
+    Map<String, MemoryEntry> memories = const {},
+  }) async {
+    if (embedding.sourceType == AiEmbeddingSourceType.memory) {
+      return _sourceForMemory(memories[embedding.sourceId]);
+    }
     final entry = await _diaryRepository.getEntryById(embedding.entryId);
     if (entry == null) return null;
     switch (embedding.sourceType) {
@@ -236,6 +261,30 @@ class AiSearchService {
     }
   }
 
+  _SearchSource? _sourceForMemory(MemoryEntry? memory) {
+    if (memory == null) return null;
+    if (memory.archived || memory.confidence < 0.2) return null;
+    return _SearchSource(
+      sourceType: 'memory',
+      sourceId: memory.id,
+      entryId: memory.sourceEntryId,
+      title: memory.title,
+      summary: memory.summary,
+      importance: memory.importance,
+      date: memory.date,
+      topics: memory.tags,
+      people: memory.people,
+      emotion: memory.emotion,
+      text: [
+        memory.summary,
+        ...memory.keywords,
+        ...memory.tags,
+        ...memory.people,
+        memory.emotion,
+      ].join(' '),
+    );
+  }
+
   AiSearchMatch? _matchText({
     required Set<String> queryTokens,
     required String sourceType,
@@ -263,27 +312,35 @@ class AiSearchService {
       emotion: emotion,
       text: text,
     );
+    return _matchSource(queryTokens: queryTokens, source: source);
+  }
+
+  AiSearchMatch? _matchSource({
+    required Set<String> queryTokens,
+    required _SearchSource source,
+  }) {
     final sourceTokens = _tokens(_searchableText(source));
     final matchedTokens = _matchedTokens(queryTokens, sourceTokens);
     if (matchedTokens.isEmpty) return null;
-    final importanceBonus = _importanceBonus(importance);
+    final importanceBonus = _importanceBonus(source.importance);
     final structuredScore = _structuredScore(queryTokens, source);
-    final recencyBonus = _recencyBonus(date);
+    final recencyBonus = _recencyBonus(source.date);
     final score = _keywordScore(queryTokens, sourceTokens) +
         structuredScore +
         importanceBonus +
         recencyBonus;
     return AiSearchMatch(
-      sourceType: sourceType,
-      sourceId: sourceId,
-      entryId: entryId,
-      title: title,
-      summary: summary,
+      sourceType: source.sourceType,
+      sourceId: source.sourceId,
+      entryId: source.entryId,
+      title: source.title,
+      summary: source.summary,
       score: score,
       reasons: [
         '关键词重合：${matchedTokens.take(6).join('、')}',
         ..._structuredReasons(queryTokens, source),
-        if (importanceBonus > 0) '摘要重要度 ${importance.toStringAsFixed(2)}',
+        if (importanceBonus > 0)
+          '${source.sourceType == 'memory' ? '记忆重要度' : '摘要重要度'} ${source.importance.toStringAsFixed(2)}',
         if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
       ],
       matchedTokens: matchedTokens.take(12).toList(),
