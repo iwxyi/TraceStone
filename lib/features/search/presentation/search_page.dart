@@ -275,6 +275,27 @@ class _SearchPageState extends State<SearchPage> {
       _filter == _SearchSourceFilter.stone;
 
   Future<void> _copyDebugContext(AiContextPackage package) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('复制搜索调试上下文？'),
+        content: const Text(
+          '调试上下文可能包含日记摘要、长期记忆、画像、关系、塑石行动和检索分数。'
+          '这些内容只会复制到本机剪贴板，请确认不会粘贴到不可信的位置。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('复制'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await Clipboard.setData(
       ClipboardData(text: _SearchDebugContextText(package).build()),
     );

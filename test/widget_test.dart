@@ -1175,6 +1175,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('复制上下文'), findsOneWidget);
     await tester.tap(find.text('复制上下文'));
+    await tester.pumpAndSettle();
+    expect(find.text('复制搜索调试上下文？'), findsOneWidget);
+    expect(copiedText, isNull);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(copiedText, contains('## Summary'));
