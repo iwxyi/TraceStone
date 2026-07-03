@@ -3938,6 +3938,78 @@ void main() {
       expect(package.profileFacts, hasLength(5));
       expect(package.debugSummary, contains('profile=5'));
     });
+
+    test('today context keeps relationship profile budget within design limit',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const insightRepository = InsightRepository();
+      final date = DateTime(2026, 7, 3);
+      final names = List.generate(7, (index) => '人物$index');
+      final entry = _entry(
+        id: 'today-relationship-budget-entry',
+        date: date,
+        content: '今天想起了${names.join('、')}这些关系里的互动。',
+      );
+      for (var index = 0; index < names.length; index++) {
+        await insightRepository.saveInsight(_insight(
+          entryId: 'relationship-budget-$index',
+          date: date.subtract(Duration(days: index)),
+          relationshipUpdate: RelationshipUpdateCandidate(
+            personName: names[index],
+            relationship: '朋友',
+            summary: '关系预算测试 $index',
+            confidence: 0.66,
+          ),
+        ));
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(entry);
+
+      expect(package.relationshipProfiles, hasLength(5));
+      expect(package.debugSummary, contains('relationships=5'));
+      expect(package.retrievalTrace?.sourceCount, package.sourceCount);
+      expect(
+        package.retrievalTrace?.items
+            .where((item) => item.sourceType == 'relationship'),
+        hasLength(5),
+      );
+    });
+
+    test('today context keeps active stone task budget within design limit',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const stoneRepository = StoneTaskRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'today-stone-budget-entry',
+        date: date,
+        content: '今天想看一下最近的塑石行动。',
+      );
+      for (var index = 0; index < 7; index++) {
+        await stoneRepository.saveTask(StoneTask(
+          id: 'stone:budget-$index',
+          sourceEntryId: 'stone-source-$index',
+          title: '塑石行动 $index',
+          description: '一个可执行的小行动。',
+          createdAt: date.subtract(Duration(days: index)),
+          updatedAt: date.subtract(Duration(days: index)),
+          status: StoneTaskStatus.active,
+        ));
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(entry);
+
+      expect(package.stoneTasks, hasLength(5));
+      expect(package.debugSummary, contains('stone=5'));
+      expect(package.retrievalTrace?.sourceCount, package.sourceCount);
+      expect(
+        package.retrievalTrace?.items
+            .where((item) => item.sourceType == 'stone'),
+        hasLength(5),
+      );
+    });
   });
 
   group('DiaryRepository trash', () {
