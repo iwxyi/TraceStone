@@ -3334,17 +3334,31 @@ void main() {
           matches.firstWhere((match) => match.sourceType == 'profile');
       final relationship =
           matches.firstWhere((match) => match.sourceType == 'relationship');
+      final profileEmbedding = await const AiEmbeddingRepository().getBySource(
+        sourceType: AiEmbeddingSourceType.profile,
+        sourceId: profile.sourceId,
+      );
+      final relationshipEmbedding =
+          await const AiEmbeddingRepository().getBySource(
+        sourceType: AiEmbeddingSourceType.relationship,
+        sourceId: relationship.sourceId,
+      );
 
       expect(profile.sourceId, contains('self_regulation'));
       expect(profile.entryId, 'profile-search-source');
       expect(profile.reasons.join(' '), contains('画像匹配'));
       expect(profile.rerankSignals['confidence'], 0.64);
       expect(profile.rerankSignals['evidence'], 1);
+      expect(profileEmbedding?.sourceType, AiEmbeddingSourceType.profile);
+      expect(profileEmbedding?.entryId, 'profile-search-source');
       expect(relationship.sourceId, '妈妈');
       expect(relationship.entryId, 'relationship-search-source');
       expect(relationship.reasons.join(' '), contains('关系匹配'));
       expect(relationship.rerankSignals['confidence'], 0.66);
       expect(relationship.rerankSignals['evidence'], 1);
+      expect(relationshipEmbedding?.sourceType,
+          AiEmbeddingSourceType.relationship);
+      expect(relationshipEmbedding?.entryId, 'relationship-search-source');
     });
 
     test('respects profile and relationship preferences in search', () async {

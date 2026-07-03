@@ -76,11 +76,16 @@ class AiSearchService {
     final List<AiEmbedding> embeddings;
     try {
       queryEmbedding = _embeddingService.embed(query);
+      final profileSources = await _profileSearchSources();
+      await _ensureProfileEmbeddings(profileSources);
       embeddings = <AiEmbedding>[
         ...await _embeddingRepository.listByType(AiEmbeddingSourceType.summary),
         ...await _embeddingRepository.listByType(AiEmbeddingSourceType.segment),
         ...await _embeddingRepository.listByType(AiEmbeddingSourceType.entry),
         ...await _embeddingRepository.listByType(AiEmbeddingSourceType.memory),
+        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.profile),
+        ...await _embeddingRepository
+            .listByType(AiEmbeddingSourceType.relationship),
       ];
     } on Object {
       return const [];
@@ -89,6 +94,7 @@ class AiSearchService {
       for (final memory in await _memoryRepository.listMemories())
         memory.id: memory,
     };
+    final profileSources = await _profileSearchSources();
     final candidates = <AiSearchMatch>[];
     for (final embedding in embeddings) {
       final similarity = _embeddingService.cosineSimilarity(
@@ -99,6 +105,7 @@ class AiSearchService {
       final source = await _sourceForEmbedding(
         embedding,
         memories: memories,
+        profileSources: profileSources,
       );
       if (source == null) continue;
       final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
@@ -223,6 +230,20 @@ class AiSearchService {
   }
 
   Future<List<AiSearchMatch>> _profileMatches(Set<String> queryTokens) async {
+    final profileSources = await _profileSearchSources();
+    final matches = <AiSearchMatch>[];
+    for (final fact in profileSources.profileFacts.values) {
+      final match = _profileFactMatch(queryTokens, fact);
+      if (match != null) matches.add(match);
+    }
+    for (final profile in profileSources.relationshipProfiles.values) {
+      final match = _relationshipMatch(queryTokens, profile);
+      if (match != null) matches.add(match);
+    }
+    return matches;
+  }
+
+  Future<_ProfileSearchSources> _profileSearchSources() async {
     final projection = _profileProjectionService
         .build(await _insightRepository.listInsights());
     final profileFacts = await _profilePreferenceRepository.applyToProfileFacts(
@@ -232,16 +253,65 @@ class AiSearchService {
         await _profilePreferenceRepository.applyToRelationshipProfiles(
       projection.relationshipProfiles,
     );
-    final matches = <AiSearchMatch>[];
-    for (final fact in profileFacts) {
-      final match = _profileFactMatch(queryTokens, fact);
-      if (match != null) matches.add(match);
+    return _ProfileSearchSources(
+      profileFacts: {
+        for (final fact in profileFacts) fact.id: fact,
+      },
+      relationshipProfiles: {
+        for (final profile in relationshipProfiles) profile.personName: profile,
+      },
+    );
+  }
+
+  Future<void> _ensureProfileEmbeddings(
+    _ProfileSearchSources profileSources,
+  ) async {
+    for (final fact in profileSources.profileFacts.values) {
+      await _saveDerivedEmbedding(
+        sourceType: AiEmbeddingSourceType.profile,
+        sourceId: fact.id,
+        entryId: _firstEvidenceEntryId(fact.evidence),
+        text: _profileFactText(fact),
+      );
     }
-    for (final profile in relationshipProfiles) {
-      final match = _relationshipMatch(queryTokens, profile);
-      if (match != null) matches.add(match);
+    for (final profile in profileSources.relationshipProfiles.values) {
+      await _saveDerivedEmbedding(
+        sourceType: AiEmbeddingSourceType.relationship,
+        sourceId: profile.personName,
+        entryId: _firstEvidenceEntryId(profile.evidence),
+        text: _relationshipText(profile),
+      );
     }
-    return matches;
+  }
+
+  Future<void> _saveDerivedEmbedding({
+    required AiEmbeddingSourceType sourceType,
+    required String sourceId,
+    required String entryId,
+    required String text,
+  }) async {
+    final result = _embeddingService.embed(text);
+    final existing = await _embeddingRepository.getBySource(
+      sourceType: sourceType,
+      sourceId: sourceId,
+    );
+    if (existing?.textHash == result.textHash &&
+        existing?.modelId == result.modelId &&
+        existing?.modelVersion == result.modelVersion) {
+      return;
+    }
+    await _embeddingRepository.saveEmbedding(AiEmbedding(
+      id: '${sourceType.name}:$sourceId',
+      sourceType: sourceType,
+      sourceId: sourceId,
+      entryId: entryId.isEmpty ? sourceId : entryId,
+      modelId: result.modelId,
+      modelVersion: result.modelVersion,
+      dimensions: result.dimensions,
+      vector: result.vector,
+      generatedAt: DateTime.now(),
+      textHash: result.textHash,
+    ));
   }
 
   AiSearchMatch? _profileFactMatch(
@@ -355,9 +425,20 @@ class AiSearchService {
   Future<_SearchSource?> _sourceForEmbedding(
     AiEmbedding embedding, {
     Map<String, MemoryEntry> memories = const {},
+    _ProfileSearchSources profileSources = const _ProfileSearchSources(),
   }) async {
     if (embedding.sourceType == AiEmbeddingSourceType.memory) {
       return _sourceForMemory(memories[embedding.sourceId]);
+    }
+    if (embedding.sourceType == AiEmbeddingSourceType.profile) {
+      return _sourceForProfileFact(
+        profileSources.profileFacts[embedding.sourceId],
+      );
+    }
+    if (embedding.sourceType == AiEmbeddingSourceType.relationship) {
+      return _sourceForRelationship(
+        profileSources.relationshipProfiles[embedding.sourceId],
+      );
     }
     final entry = await _diaryRepository.getEntryById(embedding.entryId);
     if (entry == null) return null;
@@ -422,7 +503,55 @@ class AiSearchService {
         );
       case AiEmbeddingSourceType.memory:
         return null;
+      case AiEmbeddingSourceType.profile:
+        return null;
+      case AiEmbeddingSourceType.relationship:
+        return null;
     }
+  }
+
+  _SearchSource? _sourceForProfileFact(ProfileFact? fact) {
+    if (fact == null) return null;
+    return _SearchSource(
+      sourceType: 'profile',
+      sourceId: fact.id,
+      entryId: _firstEvidenceEntryId(fact.evidence),
+      title: fact.field,
+      summary: fact.value,
+      importance: fact.confidence,
+      date: fact.lastSeenAt,
+      topics: [fact.field, fact.status.name],
+      confidence: fact.confidence,
+      referenceCount: fact.evidenceCount,
+      text: _profileFactText(fact),
+    );
+  }
+
+  _SearchSource? _sourceForRelationship(RelationshipProfile? profile) {
+    if (profile == null) return null;
+    return _SearchSource(
+      sourceType: 'relationship',
+      sourceId: profile.personName,
+      entryId: _firstEvidenceEntryId(profile.evidence),
+      title: profile.personName,
+      summary: [
+        if (profile.relationship?.isNotEmpty ?? false) profile.relationship,
+        ...profile.patterns.take(2),
+        ...profile.emotions.take(2),
+      ].whereType<String>().join('；'),
+      importance: profile.confidence,
+      date: profile.lastInteractionAt,
+      topics: [
+        if (profile.relationship?.isNotEmpty ?? false) profile.relationship!,
+        ...profile.patterns,
+        profile.status.name,
+      ],
+      people: [profile.personName, ...profile.names],
+      emotion: profile.emotions.join(' '),
+      confidence: profile.confidence,
+      referenceCount: profile.interactionCount,
+      text: _relationshipText(profile),
+    );
   }
 
   _SearchSource? _sourceForMemory(MemoryEntry? memory) {
@@ -719,6 +848,36 @@ class AiSearchService {
     ].join(' ');
   }
 
+  String _profileFactText(ProfileFact fact) {
+    return [
+      fact.field,
+      fact.value,
+      fact.status.name,
+      for (final evidence in fact.evidence) ...[
+        evidence.summary ?? '',
+        evidence.quote ?? '',
+        evidence.relevance ?? '',
+      ],
+    ].join(' ');
+  }
+
+  String _relationshipText(RelationshipProfile profile) {
+    return [
+      profile.personName,
+      ...profile.names,
+      profile.relationship ?? '',
+      ...profile.emotions,
+      ...profile.patterns,
+      for (final interaction in profile.recentInteractions)
+        '${interaction.summary} ${interaction.emotion ?? ''}',
+      for (final evidence in profile.evidence) ...[
+        evidence.summary ?? '',
+        evidence.quote ?? '',
+        evidence.relevance ?? '',
+      ],
+    ].join(' ');
+  }
+
   String _firstEvidenceEntryId(List<InsightEvidence> evidence) {
     for (final item in evidence) {
       final id = item.id.trim();
@@ -763,4 +922,14 @@ class _SearchSource {
   final double decay;
   final bool archived;
   final String text;
+}
+
+class _ProfileSearchSources {
+  const _ProfileSearchSources({
+    this.profileFacts = const {},
+    this.relationshipProfiles = const {},
+  });
+
+  final Map<String, ProfileFact> profileFacts;
+  final Map<String, RelationshipProfile> relationshipProfiles;
 }

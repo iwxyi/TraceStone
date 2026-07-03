@@ -1,4 +1,11 @@
-enum AiEmbeddingSourceType { entry, summary, segment, memory }
+enum AiEmbeddingSourceType {
+  entry,
+  summary,
+  segment,
+  memory,
+  profile,
+  relationship,
+}
 
 class AiEmbedding {
   const AiEmbedding({
