@@ -11,13 +11,21 @@ class LocationWeatherService {
   final http.Client? _client;
 
   Future<LocationWeather> getCurrent() async {
-    final position = await _getPosition();
     final client = _client ?? http.Client();
 
     try {
+      final position = await _getPosition();
       final locationName = await _reverseGeocode(client, position);
       final weather = await _fetchWeather(client, position);
       return weather.copyWith(locationName: locationName);
+    } on Object {
+      return const LocationWeather(
+        latitude: 0,
+        longitude: 0,
+        locationName: '未选择地点',
+        weather: '',
+        temperature: '',
+      );
     } finally {
       if (_client == null) client.close();
     }
@@ -63,18 +71,36 @@ class LocationWeatherService {
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final address = data['address'] as Map<String, dynamic>?;
-    if (address == null) return data['display_name'] as String? ?? '当前位置';
+    if (address == null) {
+      final displayName = data['display_name']?.toString() ?? '';
+      return _shortDisplayName(displayName, position);
+    }
 
     final city = address['city'] ??
         address['town'] ??
         address['county'] ??
         address['state'];
-    final district =
-        address['suburb'] ?? address['city_district'] ?? address['road'];
-    return [city, district]
+    final district = address['suburb'] ??
+        address['city_district'] ??
+        address['district'] ??
+        address['road'];
+    final name = [city, district]
         .whereType<String>()
         .where((value) => value.isNotEmpty)
         .join(' · ');
+    if (name.isNotEmpty) return name;
+    return _shortDisplayName(data['display_name']?.toString() ?? '', position);
+  }
+
+  String _shortDisplayName(String displayName, Position position) {
+    final parts = displayName
+        .split(',')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .take(2)
+        .toList();
+    if (parts.isNotEmpty) return parts.join(' · ');
+    return '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
   }
 
   Future<LocationWeather> _fetchWeather(
@@ -124,6 +150,7 @@ class LocationWeather {
     required this.locationName,
     required this.weather,
     required this.temperature,
+    this.details = const {},
   });
 
   final double latitude;
@@ -131,15 +158,21 @@ class LocationWeather {
   final String locationName;
   final String weather;
   final String temperature;
+  final Map<String, dynamic> details;
 
-  LocationWeather copyWith(
-      {String? locationName, String? weather, String? temperature}) {
+  LocationWeather copyWith({
+    String? locationName,
+    String? weather,
+    String? temperature,
+    Map<String, dynamic>? details,
+  }) {
     return LocationWeather(
       latitude: latitude,
       longitude: longitude,
       locationName: locationName ?? this.locationName,
       weather: weather ?? this.weather,
       temperature: temperature ?? this.temperature,
+      details: details ?? this.details,
     );
   }
 }

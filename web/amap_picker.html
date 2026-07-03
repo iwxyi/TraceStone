@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AMap Picker</title>
+  <style>
+    html, body, #map { margin:0; padding:0; width:100%; height:100%; overflow:hidden; font-family: Arial, sans-serif; }
+    #topbar {
+      position:absolute; left:12px; right:12px; top:12px; z-index:10; display:flex; gap:8px;
+      background:rgba(255,255,255,.96); padding:10px; border-radius:12px; box-shadow:0 4px 14px rgba(0,0,0,.12);
+    }
+    #search { flex:1; height:38px; border:1px solid #ddd; border-radius:10px; padding:0 12px; }
+    #locate { width:44px; border:none; border-radius:10px; background:#f1f3f5; cursor:pointer; }
+    #results {
+      position:absolute; left:12px; right:12px; top:72px; max-height:220px; overflow:auto; z-index:10;
+      background:rgba(255,255,255,.98); border-radius:12px; box-shadow:0 4px 14px rgba(0,0,0,.12); display:none;
+    }
+    .item { padding:10px 12px; border-bottom:1px solid #eee; cursor:pointer; }
+    .item:last-child { border-bottom:none; }
+    .title { font-size:14px; color:#222; }
+    .sub { font-size:12px; color:#666; margin-top:3px; }
+    #pin {
+      position:absolute; left:50%; top:50%; transform:translate(-50%, -100%); z-index:9; pointer-events:none;
+      width:18px; height:18px; background:#ff4d4f; border:3px solid #fff; border-radius:999px; box-shadow:0 2px 6px rgba(0,0,0,.2);
+    }
+    #card {
+      position:absolute; left:12px; right:12px; bottom:12px; z-index:10;
+      background:rgba(255,255,255,.97); border-radius:14px; box-shadow:0 4px 14px rgba(0,0,0,.12); padding:12px;
+    }
+    #name { font-size:16px; font-weight:600; color:#222; }
+    #addr, #coord, #err { margin-top:6px; font-size:12px; color:#666; line-height:1.5; }
+    #err { color:#d93025; }
+    #confirm {
+      margin-top:10px; width:100%; height:40px; border:none; border-radius:10px;
+      background:#1677ff; color:#fff; cursor:pointer; font-size:14px;
+    }
+    #confirm:disabled { background:#b7c6d9; cursor:not-allowed; }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <input id="search" placeholder="搜索地点" />
+    <button id="locate">◎</button>
+  </div>
+  <div id="results"></div>
+  <div id="pin"></div>
+  <div id="map"></div>
+  <div id="card">
+    <div id="name">定位中</div>
+    <div id="addr"></div>
+    <div id="coord"></div>
+    <div id="err"></div>
+    <button id="confirm" disabled>使用此地点</button>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const key = params.get('key') || '';
+    const code = params.get('code') || '';
+    if (code) window._AMapSecurityConfig = { securityJsCode: code };
+
+    const searchInput = document.getElementById('search');
+    const locateBtn = document.getElementById('locate');
+    const resultsBox = document.getElementById('results');
+    const nameBox = document.getElementById('name');
+    const addrBox = document.getElementById('addr');
+    const coordBox = document.getElementById('coord');
+    const errBox = document.getElementById('err');
+    const confirmBtn = document.getElementById('confirm');
+
+    let map = null;
+    let geocoder = null;
+    let geolocation = null;
+    let selected = null;
+
+    function emit(type, payload) {
+      parent.postMessage(JSON.stringify({ source: 'trace_stone_amap', type, payload }), '*');
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+
+    function setError(message) {
+      errBox.textContent = message || '';
+      if (message) {
+        nameBox.textContent = '定位失败';
+        addrBox.textContent = '';
+        coordBox.textContent = '';
+        confirmBtn.disabled = true;
+      }
+    }
+
+    function normalizeAddress(regeocode, lng, lat) {
+      const c = regeocode.addressComponent || {};
+      const street = c.streetNumber || {};
+      const poi = (regeocode.pois || [])[0] || {};
+      return {
+        locationName: poi.name || regeocode.formatted_address || '当前位置',
+        latitude: lat,
+        longitude: lng,
+        weather: '',
+        temperature: '',
+        details: {
+          source: 'amap',
+          country: c.country || '',
+          province: c.province || '',
+          city: Array.isArray(c.city) ? c.city.join('') : (c.city || ''),
+          district: c.district || '',
+          township: c.township || '',
+          street: street.street || '',
+          streetNumber: street.number || '',
+          address: regeocode.formatted_address || '',
+          formattedAddress: regeocode.formatted_address || '',
+          poiId: poi.id || '',
+          poiType: poi.type || '',
+          latitude: lat,
+          longitude: lng,
+          raw: regeocode,
+        },
+      };
+    }
+
+    function renderSelected(location) {
+      selected = location;
+      nameBox.textContent = location.locationName || '未命名地点';
+      addrBox.textContent = location.details?.formattedAddress || '';
+      coordBox.textContent = `${Number(location.latitude).toFixed(6)}, ${Number(location.longitude).toFixed(6)}`;
+      errBox.textContent = '';
+      confirmBtn.disabled = false;
+      emit('select', location);
+    }
+
+    function reverseAt(lng, lat) {
+      geocoder.getAddress([lng, lat], (status, result) => {
+        if (status === 'complete' && result.regeocode) {
+          renderSelected(normalizeAddress(result.regeocode, lng, lat));
+        } else {
+          setError('无法解析当前位置，请移动地图或搜索地点。');
+          emit('error', '无法解析当前位置，请移动地图或搜索地点。');
+        }
+      });
+    }
+
+    function renderResults(list) {
+      resultsBox.innerHTML = '';
+      if (!list.length) {
+        resultsBox.style.display = 'none';
+        return;
+      }
+      list.forEach((item) => {
+        if (!item.location) return;
+        const row = document.createElement('div');
+        row.className = 'item';
+        row.innerHTML = `<div class="title">${item.name || ''}</div><div class="sub">${(item.pname || '')}${(item.cityname || '')}${(item.adname || '')}${(item.address || '')}</div>`;
+        row.onclick = () => {
+          resultsBox.style.display = 'none';
+          const [lng, lat] = String(item.location).split(',').map(Number);
+          if (!lng || !lat) return;
+          map.setCenter([lng, lat]);
+          map.setZoom(17);
+          reverseAt(lng, lat);
+        };
+        resultsBox.appendChild(row);
+      });
+      resultsBox.style.display = 'block';
+    }
+
+    async function searchPlaces(keyword) {
+      const url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(keyword)}&offset=10&page=1&extensions=all`;
+      const response = await fetch(url);
+      const data = await response.json();
+      renderResults(data.pois || []);
+    }
+
+    function locate() {
+      geolocation.getCurrentPosition((status, result) => {
+        if (status === 'complete' && result.position) {
+          const lng = result.position.lng;
+          const lat = result.position.lat;
+          map.setCenter([lng, lat]);
+          map.setZoom(17);
+          reverseAt(lng, lat);
+        } else {
+          setError('定位失败');
+          emit('error', '定位失败');
+        }
+      });
+    }
+
+    async function boot() {
+      if (!key) {
+        setError('缺少高德 Key');
+        emit('error', '缺少高德 Key');
+        return;
+      }
+      try {
+        await loadScript(`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geocoder,AMap.Geolocation`);
+      } catch (_) {
+        setError('高德地图脚本加载失败');
+        emit('error', '高德地图脚本加载失败');
+        return;
+      }
+
+      map = new AMap.Map('map', {
+        resizeEnable: true,
+        zoom: 15,
+        center: [116.397428, 39.90923],
+        dragEnable: true,
+        zoomEnable: true,
+        doubleClickZoom: true,
+        scrollWheel: true,
+      });
+      geocoder = new AMap.Geocoder({ radius: 1000, extensions: 'all' });
+      geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000, zoomToAccuracy: true });
+      map.addControl(geolocation);
+
+      searchInput.addEventListener('input', async () => {
+        const value = searchInput.value.trim();
+        if (!value) {
+          renderResults([]);
+          return;
+        }
+        try {
+          await searchPlaces(value);
+        } catch (_) {
+          setError('搜索失败');
+        }
+      });
+
+      locateBtn.addEventListener('click', locate);
+      confirmBtn.addEventListener('click', () => {
+        if (!selected) return;
+        emit('confirm', selected);
+      });
+
+      map.on('moveend', () => {
+        const center = map.getCenter();
+        reverseAt(center.lng, center.lat);
+      });
+
+      map.on('click', (event) => {
+        const lng = event.lnglat.lng;
+        const lat = event.lnglat.lat;
+        map.setCenter([lng, lat]);
+        reverseAt(lng, lat);
+      });
+
+      window.addEventListener('message', (event) => {
+        try {
+          const data = JSON.parse(event.data || '{}');
+          if (data.source !== 'trace_stone_flutter') return;
+          if (data.type === 'locate') locate();
+          if (data.type === 'focus') {
+            const payload = data.payload || {};
+            const lng = Number(payload.longitude || 0);
+            const lat = Number(payload.latitude || 0);
+            if (lng && lat) {
+              map.setCenter([lng, lat]);
+              map.setZoom(17);
+              reverseAt(lng, lat);
+            }
+          }
+        } catch (_) {}
+      });
+
+      setTimeout(locate, 120);
+    }
+
+    boot();
+  </script>
+</body>
+</html>

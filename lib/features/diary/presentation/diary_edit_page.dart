@@ -1,16 +1,22 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:calendar_date_picker2/calendar_date_picker2.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../data/models/diary_entry.dart';
+import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/diary_repository.dart';
+import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/ai_repair_service.dart';
+import '../../../data/services/diary_analysis_service.dart';
 import '../../../data/services/location_weather_service.dart';
+import 'map_picker_page.dart';
 
 class DiaryEditPage extends StatefulWidget {
   const DiaryEditPage({super.key});
@@ -20,17 +26,23 @@ class DiaryEditPage extends StatefulWidget {
 }
 
 class _DiaryEditPageState extends State<DiaryEditPage> {
+  static const _recentLocationsKey = 'diary.recentLocations';
+
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   final _picker = ImagePicker();
   final _repository = const DiaryRepository();
+  final _insightRepository = const InsightRepository();
+  final _analysisService = const DiaryAnalysisService();
   final _aiRepairService = const AiRepairService();
   final _locationWeatherService = const LocationWeatherService();
   final _images = <XFile>[];
 
   bool _routeLoaded = false;
+  bool _isEditing = true;
   bool _isPreview = false;
   bool _isAiFixing = false;
+  bool _isAnalyzingDiary = false;
   bool _isLoadingLocation = false;
   bool _suppressHistory = false;
   final List<String> _undoStack = [];
@@ -43,13 +55,16 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   bool _isBootstrapping = true;
   bool _useCustomAiFix = false;
   String _customAiFixRule = '';
+  String? _analysisError;
+  Future<DiaryInsight?>? _insightFuture;
 
   String _entryId = const Uuid().v4();
   DateTime _createdAt = DateTime.now();
   DateTime _selectedDate = DateTime.now();
-  String _selectedLocation = '未选择地点';
-  String _weather = '天气';
+  String _selectedLocation = '定位中';
+  String _weather = '';
   String? _temperature;
+  Map<String, dynamic> _locationDetails = const {};
   int _headingLevel = 2;
   _ListStyle _listStyle = _ListStyle.unordered;
 
@@ -63,7 +78,6 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     super.initState();
     _controller.addListener(_onTextChanged);
     _loadEditorPreferences();
-    _restoreFocus();
   }
 
   @override
@@ -74,12 +88,11 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     final routeId = ModalRoute.of(context)?.settings.arguments as String?;
     final urlId = Uri.base.queryParameters['id'];
     final id = routeId ?? urlId;
-    if (id != null) {
-      _restoreFocus();
-    }
     if (id == null) {
+      _isEditing = true;
       _loadNewEntryState();
     } else {
+      _isEditing = false;
       _loadExistingEntryState(id);
     }
   }
@@ -115,9 +128,10 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _entryId = const Uuid().v4();
       _createdAt = DateTime.now();
       _selectedDate = DateTime.now();
-      _selectedLocation = '未选择地点';
-      _weather = '天气';
+      _selectedLocation = '定位中';
+      _weather = '';
       _temperature = null;
+      _locationDetails = const {};
       _hasManualLocation = false;
       _hasManualWeather = false;
       _hasUnsavedChanges = false;
@@ -126,6 +140,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _lastHistoryValue = '';
       _isBootstrapping = false;
     });
+    _restoreFocus();
     await _loadCurrentLocationWeather();
   }
 
@@ -152,6 +167,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _selectedLocation = resolvedEntry.location;
       _weather = resolvedEntry.weather;
       _temperature = resolvedEntry.temperature;
+      _locationDetails = resolvedEntry.locationDetails;
       _hasManualLocation = resolvedEntry.location.trim().isNotEmpty &&
           resolvedEntry.location != '未选择地点' &&
           resolvedEntry.location != '点击选择地点';
@@ -163,6 +179,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _lastHistoryValue = resolvedEntry.content;
       _isBootstrapping = false;
     });
+    _loadOrAnalyzeInsight(resolvedEntry);
   }
 
   DiaryEntry _currentEntry() {
@@ -175,6 +192,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       weather: _weather,
       temperature: _temperature,
       updatedAt: DateTime.now(),
+      locationDetails: _locationDetails,
     );
   }
 
@@ -184,8 +202,39 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     await _repository.saveEntry(entry);
   }
 
+  Future<void> _loadOrAnalyzeInsight(DiaryEntry entry) async {
+    setState(() {
+      _analysisError = null;
+      _insightFuture = _insightRepository.getInsight(entry.id);
+    });
+    final existing = await _insightFuture;
+    if (!mounted || existing != null) return;
+    await _refreshInsight(entry);
+  }
+
+  Future<void> _refreshInsight([DiaryEntry? source]) async {
+    final entry = source ?? _currentEntry();
+    if (entry.content.trim().isEmpty || _isAnalyzingDiary) return;
+    setState(() {
+      _isAnalyzingDiary = true;
+      _analysisError = null;
+    });
+    try {
+      final insight = await _analysisService.analyzeEntry(entry);
+      if (!mounted) return;
+      setState(() {
+        _insightFuture = Future.value(insight);
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _analysisError = error.toString());
+    } finally {
+      if (mounted) setState(() => _isAnalyzingDiary = false);
+    }
+  }
+
   void _onTextChanged() {
-    if (_isBootstrapping) return;
+    if (_isBootstrapping || !_isEditing) return;
     if (!_suppressHistory && _controller.text != _lastHistoryValue) {
       _undoStack.add(_lastHistoryValue);
       _lastHistoryValue = _controller.text;
@@ -477,7 +526,16 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     }
   }
 
+  void _enterEditMode() {
+    setState(() => _isEditing = true);
+    _restoreFocus();
+  }
+
   Future<void> _closeEditor() async {
+    if (!_isEditing) {
+      Navigator.of(context).pop(true);
+      return;
+    }
     if (_autoSave) {
       await _finishEditing();
       return;
@@ -746,6 +804,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
         if (!_hasManualLocation) {
           _selectedLocation =
               value.locationName.isEmpty ? '当前位置' : value.locationName;
+          _locationDetails = value.details;
         }
         if (!_hasManualWeather) {
           _weather = value.weather;
@@ -771,38 +830,75 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   }
 
   Future<void> _openLocationMenu() async {
-    final action = await showModalBottomSheet<_LocationAction>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => const _LocationActionSheet(),
-    );
-    if (action == null) return;
-    switch (action) {
-      case _LocationAction.change:
-        await _selectLocation();
-      case _LocationAction.map:
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('地图选点页面稍后接入')),
-          );
-        }
-    }
-  }
-
-  Future<void> _selectLocation() async {
+    final recentLocations = await _recentLocations();
+    if (!mounted) return;
     final value = await showModalBottomSheet<LocationWeather>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => const _LocationSheet(),
+      builder: (context) => _LocationSheet(
+        recentLocations: recentLocations,
+        currentLocation: _selectedLocation,
+        weather: _weather,
+        temperature: _temperature,
+      ),
     );
     if (value == null) return;
+    await _rememberLocation(value);
     setState(() {
       _selectedLocation = value.locationName;
       _weather = value.weather;
       _temperature = value.temperature;
+      _locationDetails = value.details;
       _hasManualLocation = true;
       _hasManualWeather = true;
     });
+  }
+
+  Future<List<LocationWeather>> _recentLocations() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_recentLocationsKey) ?? [];
+    return saved.map(_locationFromStorage).take(5).toList();
+  }
+
+  Future<void> _rememberLocation(LocationWeather value) async {
+    final location = value.locationName.trim();
+    if (location.isEmpty || location == '未选择地点' || location == '点击选择地点') {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getStringList(_recentLocationsKey) ?? [];
+    final next = <String>[_locationToStorage(value)];
+    for (final item in current) {
+      final stored = _locationFromStorage(item);
+      if (stored.locationName == location) continue;
+      next.add(item);
+      if (next.length >= 10) break;
+    }
+    await prefs.setStringList(_recentLocationsKey, next);
+  }
+
+  String _locationToStorage(LocationWeather value) => [
+        value.locationName,
+        value.weather,
+        value.temperature,
+        value.latitude.toString(),
+        value.longitude.toString(),
+        jsonEncode(value.details),
+      ].join('');
+
+  LocationWeather _locationFromStorage(String value) {
+    final parts = value.split('');
+    return LocationWeather(
+      latitude: parts.length > 3 ? double.tryParse(parts[3]) ?? 0 : 0,
+      longitude: parts.length > 4 ? double.tryParse(parts[4]) ?? 0 : 0,
+      locationName: parts.isNotEmpty ? parts[0] : '',
+      weather: parts.length > 1 ? parts[1] : _weather,
+      temperature: parts.length > 2 ? parts[2] : (_temperature ?? ''),
+      details: parts.length > 5
+          ? (jsonDecode(parts[5]) as Map<String, dynamic>? ?? const {})
+          : const {},
+    );
   }
 
   Future<void> _openDatePicker() async {
@@ -839,9 +935,10 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _entryId = const Uuid().v4();
       _createdAt = DateTime.now();
       _controller.clear();
-      _selectedLocation = '未选择地点';
-      _weather = '天气';
+      _selectedLocation = '定位中';
+      _weather = '';
       _temperature = null;
+      _locationDetails = const {};
       _hasManualLocation = false;
       _hasManualWeather = false;
       _hasUnsavedChanges = false;
@@ -953,16 +1050,23 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
             onPressed: _closeEditor,
             icon: const Icon(Icons.arrow_back),
           ),
-          title: const Text('写日记'),
+          title: Text(_isEditing ? '写日记' : '日记'),
           actions: [
-            IconButton(
-              tooltip: '更多',
-              onPressed: _openEditorMenu,
-              icon: const Icon(Icons.more_horiz),
-            ),
+            if (_isEditing)
+              IconButton(
+                tooltip: '更多',
+                onPressed: _openEditorMenu,
+                icon: const Icon(Icons.more_vert),
+              ),
           ],
         ),
         resizeToAvoidBottomInset: true,
+        floatingActionButton: _isEditing
+            ? null
+            : FloatingActionButton(
+                onPressed: _enterEditMode,
+                child: const Icon(Icons.edit_outlined),
+              ),
         body: Column(
           children: [
             _DiaryMetaBar(
@@ -971,57 +1075,66 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
               weather: _weather,
               temperature: _temperature,
               isLoadingLocation: _isLoadingLocation,
-              onOpenDate: _openDatePicker,
-              onOpenLocation: _openLocationMenu,
-              onOpenWeather: _openWeatherMenu,
+              onOpenDate: _isEditing ? _openDatePicker : null,
+              onOpenLocation: _isEditing ? _openLocationMenu : null,
+              onOpenWeather: _isEditing ? _openWeatherMenu : null,
             ),
             Expanded(
-              child: _isPreview
-                  ? _MarkdownPreview(text: _controller.text)
-                  : TextField(
-                      controller: _controller,
-                      focusNode: _focusNode,
-                      expands: true,
-                      maxLines: null,
-                      minLines: null,
-                      keyboardType: TextInputType.multiline,
-                      textAlignVertical: TextAlignVertical.top,
-                      decoration: InputDecoration(
-                        contentPadding:
-                            const EdgeInsets.fromLTRB(24, 20, 24, 20),
-                        border: InputBorder.none,
-                        hintText: _placeholder,
-                      ),
+              child: _isEditing
+                  ? (_isPreview
+                      ? _MarkdownPreview(text: _controller.text)
+                      : TextField(
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          expands: true,
+                          maxLines: null,
+                          minLines: null,
+                          keyboardType: TextInputType.multiline,
+                          textAlignVertical: TextAlignVertical.top,
+                          decoration: InputDecoration(
+                            contentPadding:
+                                const EdgeInsets.fromLTRB(24, 20, 24, 20),
+                            border: InputBorder.none,
+                            hintText: _placeholder,
+                          ),
+                        ))
+                  : _DiaryReadView(
+                      text: _controller.text,
+                      isAnalyzing: _isAnalyzingDiary,
+                      insightFuture: _insightFuture,
+                      error: _analysisError,
+                      onRefresh: () => _refreshInsight(),
                     ),
             ),
-            if (_images.isNotEmpty)
+            if (_isEditing && _images.isNotEmpty)
               _ImageStrip(
                 images: _images,
                 onInsert: _insertImageMarkdown,
                 onRemove: (image) => setState(() => _images.remove(image)),
               ),
-            SafeArea(
-              top: false,
-              child: _EditorAccessoryBar(
-                headingLevel: _headingLevel,
-                onHeading: _toggleHeading,
-                onHeadingLongPress: _chooseHeadingLevel,
-                onBold: () => _toggleMarkdown('**'),
-                onItalic: () => _toggleMarkdown('*'),
-                onQuote: _toggleQuote,
-                onList: _insertList,
-                onListLongPress: _chooseListStyle,
-                onDivider: _insertDivider,
-                onImage: _pickImages,
-                onUndo: _undo,
-                onRedo: _redo,
-                onAiFix: _runAiFix,
-                onAiFixLongPress: _openAiFixMenu,
-                canUndo: _canUndo,
-                canRedo: _canRedo,
-                canAiFix: _canAiFix,
+            if (_isEditing)
+              SafeArea(
+                top: false,
+                child: _EditorAccessoryBar(
+                  headingLevel: _headingLevel,
+                  onHeading: _toggleHeading,
+                  onHeadingLongPress: _chooseHeadingLevel,
+                  onBold: () => _toggleMarkdown('**'),
+                  onItalic: () => _toggleMarkdown('*'),
+                  onQuote: _toggleQuote,
+                  onList: _insertList,
+                  onListLongPress: _chooseListStyle,
+                  onDivider: _insertDivider,
+                  onImage: _pickImages,
+                  onUndo: _undo,
+                  onRedo: _redo,
+                  onAiFix: _runAiFix,
+                  onAiFixLongPress: _openAiFixMenu,
+                  canUndo: _canUndo,
+                  canRedo: _canRedo,
+                  canAiFix: _canAiFix,
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -1046,15 +1159,16 @@ class _DiaryMetaBar extends StatelessWidget {
   final String weather;
   final String? temperature;
   final bool isLoadingLocation;
-  final VoidCallback onOpenDate;
-  final VoidCallback onOpenLocation;
-  final VoidCallback onOpenWeather;
+  final VoidCallback? onOpenDate;
+  final VoidCallback? onOpenLocation;
+  final VoidCallback? onOpenWeather;
 
   @override
   Widget build(BuildContext context) {
+    final baseWeather = weather.trim().isEmpty ? '天气' : weather;
     final weatherLabel = temperature == null || temperature!.isEmpty
-        ? weather
-        : '$weather ${temperature!.replaceAll('℃', '°')}';
+        ? baseWeather
+        : '$baseWeather ${temperature!.replaceAll('℃', '°')}';
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -1071,12 +1185,6 @@ class _DiaryMetaBar extends StatelessWidget {
             Text(' · ', style: Theme.of(context).textTheme.bodySmall),
             _HoverChip(
               onTap: isLoadingLocation ? null : onOpenLocation,
-              child:
-                  Text(location, style: Theme.of(context).textTheme.bodySmall),
-            ),
-            Text(' · ', style: Theme.of(context).textTheme.bodySmall),
-            _HoverChip(
-              onTap: onOpenWeather,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1087,13 +1195,25 @@ class _DiaryMetaBar extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 1.4)),
                     const SizedBox(width: 4),
                   ],
-                  Text(_weatherIcon(weather),
-                      style: Theme.of(context).textTheme.bodySmall),
-                  Text(weatherLabel,
-                      style: Theme.of(context).textTheme.bodySmall),
+                  Text(location, style: Theme.of(context).textTheme.bodySmall),
                 ],
               ),
             ),
+            if (weatherLabel.trim().isNotEmpty) ...[
+              Text(' · ', style: Theme.of(context).textTheme.bodySmall),
+              _HoverChip(
+                onTap: onOpenWeather,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_weatherIcon(weather),
+                        style: Theme.of(context).textTheme.bodySmall),
+                    Text(weatherLabel,
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1292,8 +1412,6 @@ enum _ListStyle { unordered, ordered, checkbox }
 
 enum _LeaveAction { save, discard, cancel }
 
-enum _LocationAction { change, map }
-
 class _DiaryPlaceholders {
   const _DiaryPlaceholders._();
   static const gentle = [
@@ -1336,32 +1454,6 @@ class _DiaryPlaceholders {
     '今天有没有什么，让你觉得离想要的自己更近了？',
     '如果给今天的自己一个拥抱，因为什么？'
   ];
-}
-
-class _LocationActionSheet extends StatelessWidget {
-  const _LocationActionSheet();
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.swap_horiz),
-            title: const Text('更换'),
-            onTap: () => Navigator.of(context).pop(_LocationAction.change),
-          ),
-          ListTile(
-            leading: const Icon(Icons.map_outlined),
-            title: const Text('打开地图页面'),
-            onTap: () => Navigator.of(context).pop(_LocationAction.map),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _WeatherSheet extends StatefulWidget {
@@ -1479,55 +1571,119 @@ class _WeatherEditResult {
   final String? temperature;
 }
 
-class _LocationSheet extends StatelessWidget {
-  const _LocationSheet();
+class _LocationSheet extends StatefulWidget {
+  const _LocationSheet({
+    required this.recentLocations,
+    required this.currentLocation,
+    required this.weather,
+    required this.temperature,
+  });
+
+  final List<LocationWeather> recentLocations;
+  final String currentLocation;
+  final String weather;
+  final String? temperature;
+
+  @override
+  State<_LocationSheet> createState() => _LocationSheetState();
+}
+
+class _LocationSheetState extends State<_LocationSheet> {
+  String get _initialLocation =>
+      widget.currentLocation == '未选择地点' || widget.currentLocation == '点击选择地点'
+          ? ''
+          : widget.currentLocation;
+
+  Future<void> _openMapPicker() async {
+    final result = await Navigator.of(context).push<LocationWeather>(
+      MaterialPageRoute(
+        builder: (_) => MapPickerPage(
+          weather: widget.weather,
+          temperature: widget.temperature,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    Navigator.of(context).pop(result);
+  }
 
   @override
   Widget build(BuildContext context) {
-    const locations = [
-      LocationWeather(
-          latitude: 39.9042,
-          longitude: 116.4074,
-          locationName: '北京 · 朝阳',
-          weather: '晴',
-          temperature: '26℃'),
-      LocationWeather(
-          latitude: 31.2304,
-          longitude: 121.4737,
-          locationName: '上海 · 徐汇',
-          weather: '多云',
-          temperature: '28℃'),
-      LocationWeather(
-          latitude: 30.2590,
-          longitude: 120.1303,
-          locationName: '杭州 · 西湖',
-          weather: '小雨',
-          temperature: '24℃'),
-      LocationWeather(
-          latitude: 22.5431,
-          longitude: 114.0579,
-          locationName: '深圳 · 南山',
-          weather: '阵雨',
-          temperature: '30℃'),
-    ];
-
-    return ListView(
-      shrinkWrap: true,
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 8, 20, 12),
-          child: Text('选择地点',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          bottom: MediaQuery.viewInsetsOf(context).bottom + 20,
         ),
-        for (final item in locations)
-          ListTile(
-            leading: const Icon(Icons.place_outlined),
-            title: Text(item.locationName),
-            subtitle: Text('${item.weather} · ${item.temperature}'),
-            onTap: () => Navigator.of(context).pop(item),
-          ),
-        const SizedBox(height: 16),
-      ],
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Text('选择地点',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.my_location_outlined),
+              title: Text(
+                  '当前（${_initialLocation.isEmpty ? '未选择地点' : _initialLocation}）'),
+              subtitle: Text([
+                widget.weather,
+                if (widget.temperature?.isNotEmpty ?? false)
+                  widget.temperature!,
+              ].join(' · ')),
+              onTap: _initialLocation.isEmpty
+                  ? null
+                  : () => Navigator.of(context).pop(LocationWeather(
+                        latitude: 0,
+                        longitude: 0,
+                        locationName: _initialLocation,
+                        weather: widget.weather,
+                        temperature: widget.temperature ?? '',
+                      )),
+            ),
+            const Divider(height: 28),
+            Text('最近使用', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 6),
+            if (widget.recentLocations.isEmpty)
+              Text('无最近使用的地点',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: Theme.of(context).disabledColor))
+            else
+              for (final item in widget.recentLocations)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.history),
+                  title: Text(item.locationName),
+                  subtitle: Text([
+                    item.weather,
+                    if (item.temperature.isNotEmpty) item.temperature,
+                  ].join(' · ')),
+                  onTap: () => Navigator.of(context).pop(item),
+                ),
+            const Divider(height: 28),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.map_outlined),
+              title: const Text('地图选点'),
+              subtitle: const Text('打开地图页面搜索或定位'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _openMapPicker,
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('取消'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1577,6 +1733,206 @@ class _ImageStrip extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemCount: images.length,
       ),
+    );
+  }
+}
+
+class _DiaryReadView extends StatelessWidget {
+  const _DiaryReadView({
+    required this.text,
+    required this.isAnalyzing,
+    required this.insightFuture,
+    required this.error,
+    required this.onRefresh,
+  });
+
+  final String text;
+  final bool isAnalyzing;
+  final Future<DiaryInsight?>? insightFuture;
+  final String? error;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.isEmpty ? ['还没有内容。'] : text.split('\n');
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
+      children: [
+        for (final line in lines) _PreviewLine(line: line),
+        const SizedBox(height: 22),
+        Center(
+          child: Container(
+            width: 56,
+            height: 1,
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+        ),
+        const SizedBox(height: 22),
+        _ReadInsightSection(
+          isAnalyzing: isAnalyzing,
+          insightFuture: insightFuture,
+          error: error,
+        ),
+        const SizedBox(height: 28),
+        Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'END · 仅供参考',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.outline),
+              ),
+              IconButton(
+                tooltip: '重新分析',
+                visualDensity: VisualDensity.compact,
+                onPressed: isAnalyzing ? null : onRefresh,
+                icon: Icon(Icons.refresh,
+                    size: 16, color: Theme.of(context).colorScheme.outline),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReadInsightSection extends StatelessWidget {
+  const _ReadInsightSection({
+    required this.isAnalyzing,
+    required this.insightFuture,
+    required this.error,
+  });
+
+  final bool isAnalyzing;
+  final Future<DiaryInsight?>? insightFuture;
+  final String? error;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isAnalyzing) return const _InsightLoadingBlock();
+    if (error != null) return _InsightErrorBlock(message: error!);
+    return FutureBuilder<DiaryInsight?>(
+      future: insightFuture,
+      builder: (context, snapshot) {
+        final insight = snapshot.data;
+        if (insight == null) return const _InsightLoadingBlock();
+        return _InsightResultBlock(insight: insight);
+      },
+    );
+  }
+}
+
+class _InsightLoadingBlock extends StatefulWidget {
+  const _InsightLoadingBlock();
+
+  @override
+  State<_InsightLoadingBlock> createState() => _InsightLoadingBlockState();
+}
+
+class _InsightLoadingBlockState extends State<_InsightLoadingBlock>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) => Opacity(
+        opacity: 0.45 + _controller.value * 0.35,
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 10),
+                Text('正在分析这篇日记',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              ],
+            ),
+            SizedBox(height: 10),
+            Text('正在结合历史记录与相关日记生成分析。'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InsightErrorBlock extends StatelessWidget {
+  const _InsightErrorBlock({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('分析失败',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 10),
+        Text(message),
+      ],
+    );
+  }
+}
+
+class _InsightResultBlock extends StatelessWidget {
+  const _InsightResultBlock({required this.insight});
+
+  final DiaryInsight insight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('日记 AI 分析',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 10),
+        if (insight.reflection.isNotEmpty) Text(insight.reflection),
+        if (insight.relatedMemories.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text('关联日记', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          for (final memory in insight.relatedMemories)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                  '· ${memory.title}${memory.reason.isEmpty ? '' : '：${memory.reason}'}'),
+            ),
+        ],
+        if (insight.stoneTitle.isNotEmpty ||
+            insight.stoneDescription.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text('建议', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          if (insight.stoneTitle.isNotEmpty)
+            Text(insight.stoneTitle,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+          if (insight.stoneDescription.isNotEmpty)
+            Text(insight.stoneDescription),
+        ],
+      ],
     );
   }
 }

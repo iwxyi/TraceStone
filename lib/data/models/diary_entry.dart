@@ -8,6 +8,7 @@ class DiaryEntry {
     required this.weather,
     required this.temperature,
     required this.updatedAt,
+    this.locationDetails = const {},
   });
 
   final String id;
@@ -18,6 +19,7 @@ class DiaryEntry {
   final String weather;
   final String? temperature;
   final DateTime updatedAt;
+  final Map<String, dynamic> locationDetails;
 
   String get dayKey => dateKey(date);
 
@@ -76,6 +78,7 @@ class DiaryEntry {
         'weather': weather,
         'temperature': temperature,
         'updatedAt': updatedAt.toIso8601String(),
+        'locationDetails': locationDetails,
       };
 
   static DiaryEntry fromJson(Map<String, dynamic> json) {
@@ -93,6 +96,8 @@ class DiaryEntry {
       weather: json['weather'] as String? ?? '天气',
       temperature: json['temperature'] as String?,
       updatedAt: updatedAt,
+      locationDetails:
+          json['locationDetails'] as Map<String, dynamic>? ?? const {},
     );
   }
 

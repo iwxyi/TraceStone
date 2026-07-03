@@ -31,8 +31,41 @@
 
   <title>trace_stone</title>
   <link rel="manifest" href="manifest.json">
+  <script>
+    window._AMapSecurityConfig = {
+      securityJsCode: '23aab56d297730c1bf702c66e3762db6',
+    };
+  </script>
+  <script src="https://webapi.amap.com/maps?v=2.0&key=23aab56d297730c1bf702c66e3762db6&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geocoder,AMap.Geolocation"></script>
 </head>
 <body>
+  <script>
+    window.traceStoneAmap = {
+      createMap: function (containerId, lat, lng, zoom) {
+        const map = new AMap.Map(containerId, {
+          zoom: zoom || 15,
+          center: [lng, lat],
+          resizeEnable: true,
+          jogEnable: true,
+          scrollWheel: true,
+          dragEnable: true,
+          doubleClickZoom: true,
+          touchZoom: true,
+        });
+        const marker = new AMap.Marker({
+          position: [lng, lat],
+          anchor: 'bottom-center',
+        });
+        map.add(marker);
+        return { map, marker };
+      },
+      updateMarker: function (bundle, lat, lng) {
+        if (!bundle) return;
+        bundle.marker.setPosition([lng, lat]);
+        bundle.map.setCenter([lng, lat]);
+      },
+    };
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
