@@ -1101,6 +1101,39 @@ void main() {
       expect(repaired?.stageLogs.last.error, contains('超过 10 分钟未更新'));
     });
 
+    test('runner syncs interrupted queue jobs to diary analysis status',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const queueRepository = AiAnalysisQueueRepository();
+      const insightRepository = InsightRepository();
+      final old = DateTime.now().subtract(const Duration(minutes: 11));
+      final job = AiAnalysisJob(
+        id: 'interrupted-status',
+        entryId: 'interrupted-status',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.running,
+        currentStage: AiAnalysisStage.generatingInsight,
+        createdAt: old,
+        updatedAt: old,
+      );
+      await queueRepository.saveJob(job);
+      await insightRepository.saveStatus(DiaryAnalysisStatus(
+        entryId: job.entryId,
+        state: DiaryAnalysisState.analyzing,
+        updatedAt: old,
+        message: '生成今日洞察',
+      ));
+
+      await const AiAnalysisQueueRunner().processUntilIdle(maxJobs: 0);
+
+      final repairedJob = await queueRepository.getJob(job.id);
+      final status = await insightRepository.getStatus(job.entryId);
+
+      expect(repairedJob?.state, AiAnalysisJobState.incomplete);
+      expect(status?.state, DiaryAnalysisState.incomplete);
+      expect(status?.message, '上次整理被系统中断，下次将继续');
+    });
+
     test('runner resumes incomplete jobs without rewriting existing embeddings',
         () async {
       SharedPreferences.setMockInitialValues({});

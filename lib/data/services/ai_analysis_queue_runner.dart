@@ -94,6 +94,7 @@ class AiAnalysisQueueRunner {
     if (_isRunning) return;
     _isRunning = true;
     try {
+      await _syncInterruptedStatuses();
       final job = await _queueRepository.nextRunnableJob();
       if (job == null) return;
       await _runJob(job);
@@ -103,6 +104,7 @@ class AiAnalysisQueueRunner {
   }
 
   Future<void> processUntilIdle({int maxJobs = 1}) async {
+    await _syncInterruptedStatuses();
     for (var index = 0; index < maxJobs; index++) {
       final current = await _queueRepository.nextRunnableJob();
       if (current == null) break;
@@ -130,6 +132,23 @@ class AiAnalysisQueueRunner {
     final insight = await _insightRepository.getInsight(entry.id);
     if (insight == null) return true;
     return job.state != AiAnalysisJobState.completed;
+  }
+
+  Future<void> _syncInterruptedStatuses() async {
+    await _queueRepository.markStaleRunningIncomplete();
+    final jobs = await _queueRepository.listJobs();
+    for (final job in jobs) {
+      if (job.state != AiAnalysisJobState.incomplete) continue;
+      if (job.lastError != '上次整理被中断，已等待继续') continue;
+      final status = await _insightRepository.getStatus(job.entryId);
+      if (status?.state == DiaryAnalysisState.incomplete) continue;
+      await _insightRepository.saveStatus(DiaryAnalysisStatus(
+        entryId: job.entryId,
+        state: DiaryAnalysisState.incomplete,
+        updatedAt: DateTime.now(),
+        message: '上次整理被系统中断，下次将继续',
+      ));
+    }
   }
 
   Future<void> _runJob(AiAnalysisJob job) async {
