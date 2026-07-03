@@ -544,6 +544,25 @@ class _JobCard extends StatelessWidget {
                     value:
                         job.completedStages.map((item) => item.name).join(', '),
                   ),
+                if (job.summaryId?.isNotEmpty ?? false)
+                  _DebugLine(label: 'artifact.summary', value: job.summaryId!),
+                if (job.segmentIds.isNotEmpty)
+                  _DebugLine(
+                    label: 'artifact.segments',
+                    value: job.segmentIds.join(', '),
+                  ),
+                if (job.embeddingIds.isNotEmpty)
+                  _DebugLine(
+                    label: 'artifact.embeddings',
+                    value: job.embeddingIds.join(', '),
+                  ),
+                if (job.insightId?.isNotEmpty ?? false)
+                  _DebugLine(label: 'artifact.insight', value: job.insightId!),
+                if (job.retrievalTraceId?.isNotEmpty ?? false)
+                  _DebugLine(
+                    label: 'artifact.retrieval',
+                    value: job.retrievalTraceId!,
+                  ),
                 if (job.stageLogs.isNotEmpty) ...[
                   _DebugLine(
                       label: 'stageLogs', value: '${job.stageLogs.length}'),
@@ -824,6 +843,13 @@ class _JobCard extends StatelessWidget {
       if (job.lastError?.isNotEmpty ?? false) 'lastError=${job.lastError}',
       if (job.completedStages.isNotEmpty)
         'completedStages=${job.completedStages.map((item) => item.name).join(',')}',
+      if (job.summaryId?.isNotEmpty ?? false) 'summaryId=${job.summaryId}',
+      if (job.segmentIds.isNotEmpty) 'segmentIds=${job.segmentIds.join(',')}',
+      if (job.embeddingIds.isNotEmpty)
+        'embeddingIds=${job.embeddingIds.join(',')}',
+      if (job.insightId?.isNotEmpty ?? false) 'insightId=${job.insightId}',
+      if (job.retrievalTraceId?.isNotEmpty ?? false)
+        'retrievalTraceId=${job.retrievalTraceId}',
       if (job.stageLogs.isNotEmpty) ...[
         '',
         '## Stage Logs',
@@ -1260,7 +1286,7 @@ class _JobArtifacts {
           .length,
       retrievalLines: [
         for (final item in trace?.items ?? [])
-          '${item.sourceType}:${item.sourceId} score=${item.score} ${item.title} ${item.reasons.join('；')}${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}',
+          '${item.sourceType}:${item.sourceId} score=${item.score} ${item.title} ${item.reasons.join('；')}${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}${item.rerankSignals.isEmpty ? '' : ' signals=${_signalLine(item.rerankSignals)}'}',
       ],
       summaryMeta: summary == null
           ? ''
@@ -1315,6 +1341,12 @@ class _JobArtifacts {
     final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (normalized.length <= 240) return normalized;
     return '${normalized.substring(0, 240)}...';
+  }
+
+  static String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
   }
 }
 
@@ -1380,9 +1412,16 @@ class _RecentRetrievalTraceItem {
         for (final item in trace.items)
           '${item.sourceType}:${item.sourceId} score=${item.score} '
               '${item.title} ${item.reasons.join('；')}'
-              '${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}',
+              '${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}'
+              '${item.rerankSignals.isEmpty ? '' : ' signals=${_signalLine(item.rerankSignals)}'}',
       ],
     );
+  }
+
+  static String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
   }
 }
 

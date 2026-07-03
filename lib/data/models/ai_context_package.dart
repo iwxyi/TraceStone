@@ -110,6 +110,7 @@ class AiSearchMatch {
     required this.score,
     required this.reasons,
     required this.matchedTokens,
+    this.rerankSignals = const {},
   });
 
   final String sourceType;
@@ -120,4 +121,5 @@ class AiSearchMatch {
   final int score;
   final List<String> reasons;
   final List<String> matchedTokens;
+  final Map<String, double> rerankSignals;
 }

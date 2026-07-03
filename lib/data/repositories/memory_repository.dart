@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/ai_embedding.dart';
 import '../models/ai_feedback.dart';
 import '../models/diary_entry.dart';
+import '../models/diary_insight.dart';
 import '../models/memory_entry.dart';
 import '../models/memory_retrieval_result.dart';
 import '../services/embedding_service.dart';
@@ -25,6 +26,37 @@ class MemoryRepository {
       await prefs.setStringList(_indexKey, index);
     }
     await _saveEmbeddingIfNeeded(memory);
+  }
+
+  Future<void> saveGeneratedMemory(MemoryEntry memory) async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = await _getMemory(prefs, memory.id);
+    if (existing == null) {
+      await saveMemory(memory);
+      return;
+    }
+    await saveMemory(MemoryEntry(
+      id: memory.id,
+      sourceEntryId: memory.sourceEntryId,
+      date: memory.date,
+      createdAt: existing.createdAt,
+      updatedAt: DateTime.now(),
+      lastReferencedAt: existing.lastReferencedAt,
+      summary: memory.summary,
+      keywords: memory.keywords,
+      emotion: memory.emotion,
+      people: memory.people,
+      tags: memory.tags,
+      evidenceEntryIds: {
+        ...existing.allSourceEntryIds,
+        ...memory.allSourceEntryIds,
+      }.toList(growable: false),
+      importance: existing.importance,
+      confidence: existing.confidence,
+      referenceCount: existing.referenceCount,
+      decay: existing.decay,
+      archived: existing.archived,
+    ));
   }
 
   Future<List<MemoryEntry>> listMemories() async {
@@ -135,11 +167,14 @@ class MemoryRepository {
       ].join(' ');
       final memoryTokens = _tokens(memoryText);
       var score = 0;
+      var keywordScore = 0;
       final matchedTokens = <String>[];
       final reasons = <String>[];
       for (final token in queryTokens) {
         if (memoryTokens.contains(token)) {
-          score += token.length > 1 ? 2 : 1;
+          final tokenScore = token.length > 1 ? 2 : 1;
+          keywordScore += tokenScore;
+          score += tokenScore;
           matchedTokens.add(token);
         }
       }
@@ -147,28 +182,36 @@ class MemoryRepository {
         reasons.add('关键词重合：${matchedTokens.take(6).join('、')}');
       }
       final dayDistance = entry.date.difference(memory.date).inDays.abs();
+      var timeScore = 0;
       if (dayDistance <= 14) {
-        score += 2;
+        timeScore = 2;
+        score += timeScore;
         reasons.add('时间接近：$dayDistance 天内');
       } else if (dayDistance <= 60) {
-        score += 1;
+        timeScore = 1;
+        score += timeScore;
         reasons.add('时间较近：$dayDistance 天内');
       }
+      var peopleScore = 0;
       if (memory.people.isNotEmpty) {
         final peopleMatches = memory.people
             .where((person) => entry.content.contains(person))
             .toList();
         if (peopleMatches.isNotEmpty) {
-          score += peopleMatches.length * 2;
+          peopleScore = peopleMatches.length * 2;
+          score += peopleScore;
           reasons.add('人物重合：${peopleMatches.join('、')}');
         }
       }
+      var semanticSimilarity = 0.0;
+      var semanticScore = 0;
       final memoryEmbedding = memoryEmbeddings[memory.id];
       if (memoryEmbedding != null) {
         final similarity = const EmbeddingService()
             .cosineSimilarity(queryEmbedding.vector, memoryEmbedding.vector);
         if (similarity > 0.12) {
-          final semanticScore = (similarity * 10).round();
+          semanticSimilarity = similarity;
+          semanticScore = (similarity * 10).round();
           score += semanticScore;
           reasons.add('语义相似：${similarity.toStringAsFixed(2)}');
         }
@@ -182,8 +225,11 @@ class MemoryRepository {
       if (memory.referenceCount > 0) {
         score += memory.referenceCount.clamp(0, 3);
       }
+      final referenceScore = memory.referenceCount.clamp(0, 3);
+      var decayPenalty = 0;
       if (memory.decay > 0) {
         final penalty = (memory.decay * 4).round();
+        decayPenalty = penalty;
         score -= penalty;
         if (penalty > 0) {
           reasons.add('长期未引用降权：-$penalty');
@@ -195,6 +241,15 @@ class MemoryRepository {
           score: score,
           reasons: reasons,
           matchedTokens: matchedTokens.take(12).toList(),
+          rerankSignals: {
+            if (keywordScore > 0) 'keyword': keywordScore.toDouble(),
+            if (timeScore > 0) 'time': timeScore.toDouble(),
+            if (peopleScore > 0) 'people': peopleScore.toDouble(),
+            if (semanticScore > 0) 'semantic': semanticSimilarity,
+            if (lifecycleScore > 0) 'lifecycle': lifecycleScore.toDouble(),
+            if (referenceScore > 0) 'reference': referenceScore.toDouble(),
+            if (decayPenalty > 0) 'decay': -decayPenalty.toDouble(),
+          },
         ));
       }
     }
@@ -269,6 +324,34 @@ class MemoryRepository {
             updatedAt: DateTime.now(),
           ));
       }
+    }
+  }
+
+  Future<void> applyContradictions({
+    required Iterable<InsightContradiction> contradictions,
+  }) async {
+    final meaningful = contradictions
+        .where((item) => item.oldMemoryId.trim().isNotEmpty)
+        .toList(growable: false);
+    if (meaningful.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    for (final contradiction in meaningful) {
+      final memory = await _getMemory(prefs, contradiction.oldMemoryId);
+      if (memory == null) continue;
+      final confidence = (contradiction.confidence ?? 0.55).clamp(0, 1);
+      final confidencePenalty = (0.06 + confidence * 0.12).clamp(0, 0.18);
+      final importancePenalty = (0.04 + confidence * 0.08).clamp(0, 0.12);
+      final decayIncrease = (0.08 + confidence * 0.14).clamp(0, 0.22);
+      final nextConfidence =
+          (memory.confidence - confidencePenalty).clamp(0, 1).toDouble();
+      await saveMemory(memory.copyWith(
+        confidence: nextConfidence,
+        importance:
+            (memory.importance - importancePenalty).clamp(0, 1).toDouble(),
+        decay: (memory.decay + decayIncrease).clamp(0, 1).toDouble(),
+        archived: nextConfidence < 0.25,
+        updatedAt: DateTime.now(),
+      ));
     }
   }
 

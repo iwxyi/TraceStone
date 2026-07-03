@@ -179,6 +179,7 @@ class AiAnalysisQueueRunner {
           retryCount: job.retryCount,
           completedStages: completedStages,
           outputSummary: _segmentOutputSummary(segments),
+          segmentIds: segments.map((segment) => segment.id).toList(),
           clearLastError: true,
         );
         await _summaryRepository.saveSegments(entry.id, segments);
@@ -192,6 +193,7 @@ class AiAnalysisQueueRunner {
           retryCount: job.retryCount,
           completedStages: completedStages,
           outputSummary: _segmentOutputSummary(segments),
+          segmentIds: segments.map((segment) => segment.id).toList(),
           clearLastError: true,
         );
       }
@@ -211,6 +213,7 @@ class AiAnalysisQueueRunner {
           retryCount: job.retryCount,
           completedStages: completedStages,
           outputSummary: _summaryOutputSummary(summary),
+          summaryId: summary.entryId,
           clearLastError: true,
         );
         await _summaryRepository.saveSummary(summary);
@@ -224,6 +227,7 @@ class AiAnalysisQueueRunner {
           retryCount: job.retryCount,
           completedStages: completedStages,
           outputSummary: _summaryOutputSummary(summary),
+          summaryId: summary.entryId,
           clearLastError: true,
         );
       }
@@ -243,6 +247,7 @@ class AiAnalysisQueueRunner {
           retryCount: job.retryCount,
           completedStages: completedStages,
           outputSummary: _embeddingOutputSummary(segments),
+          embeddingIds: _embeddingIds(entry, segments),
           clearLastError: true,
         );
         await _saveEmbeddings(entry, summary, segments);
@@ -256,6 +261,7 @@ class AiAnalysisQueueRunner {
           retryCount: job.retryCount,
           completedStages: completedStages,
           outputSummary: _embeddingOutputSummary(segments),
+          embeddingIds: _embeddingIds(entry, segments),
           clearLastError: true,
         );
       }
@@ -273,6 +279,7 @@ class AiAnalysisQueueRunner {
         retryCount: job.retryCount,
         completedStages: completedStages,
         outputSummary: '由今日洞察上下文构建器执行，生成后写入 retrieval trace',
+        retrievalTraceId: entry.id,
         clearLastError: true,
       );
       completedStages = _markCompleted(
@@ -305,6 +312,8 @@ class AiAnalysisQueueRunner {
           if (trace != null)
             'retrievalSources=${trace.sourceCount} items=${trace.items.length}',
         ].join(' '),
+        insightId: insight.entryId,
+        retrievalTraceId: trace?.entryId ?? entry.id,
         clearLastError: true,
       );
       completedStages = _markCompleted(
@@ -326,6 +335,11 @@ class AiAnalysisQueueRunner {
         completedStages: completedStages,
         outputSummary:
             'completed=${completedStages.map((item) => item.name).join(',')}',
+        summaryId: summary.entryId,
+        segmentIds: segments.map((segment) => segment.id).toList(),
+        embeddingIds: _embeddingIds(entry, segments),
+        insightId: insight.entryId,
+        retrievalTraceId: trace?.entryId ?? entry.id,
         clearLastError: true,
       );
     } on AiClientException catch (error) {
@@ -397,6 +411,11 @@ class AiAnalysisQueueRunner {
     required String message,
     required int retryCount,
     List<AiAnalysisStage>? completedStages,
+    String? summaryId,
+    List<String>? segmentIds,
+    List<String>? embeddingIds,
+    String? insightId,
+    String? retrievalTraceId,
     bool clearLastError = false,
     String? inputSummary,
     String? outputSummary,
@@ -424,6 +443,11 @@ class AiAnalysisQueueRunner {
       updatedAt: DateTime.now(),
       completedStages: completedStages,
       stageLogs: logs,
+      summaryId: summaryId,
+      segmentIds: segmentIds,
+      embeddingIds: embeddingIds,
+      insightId: insightId,
+      retrievalTraceId: retrievalTraceId,
       retryCount: retryCount,
       clearLastError: clearLastError,
     ));
@@ -581,6 +605,18 @@ class AiAnalysisQueueRunner {
       'segments=${segments.length}',
       'model=${EmbeddingService.modelId}/${EmbeddingService.modelVersion}/${EmbeddingService.dimensions}d',
     ].join(' ');
+  }
+
+  List<String> _embeddingIds(
+    DiaryEntry entry,
+    List<DiarySegment> segments,
+  ) {
+    return [
+      '${AiEmbeddingSourceType.entry.name}:${entry.id}',
+      '${AiEmbeddingSourceType.summary.name}:${entry.id}',
+      for (final segment in segments)
+        '${AiEmbeddingSourceType.segment.name}:${segment.id}',
+    ];
   }
 
   String _insightOutputSummary(DiaryInsight insight) {

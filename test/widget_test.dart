@@ -482,6 +482,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('证据来源'), findsOneWidget);
+    expect(find.text('调试信息'), findsOneWidget);
+    expect(find.text('memory:memory-source-widget'), findsOneWidget);
+    expect(find.text('sourceEntry:first-entry'), findsOneWidget);
+    expect(find.text('updatedAt:${date.toIso8601String()}'), findsOneWidget);
+    expect(find.text('lastReferencedAt:${date.toIso8601String()}'),
+        findsOneWidget);
     expect(find.text('entry:first-entry'), findsOneWidget);
     expect(find.text('entry:second-entry'), findsOneWidget);
   });

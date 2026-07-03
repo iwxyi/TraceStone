@@ -225,6 +225,8 @@ class PeriodSummaryService {
           'score=${result.score}',
           if (result.reasons.isNotEmpty)
             'reasons=${result.reasons.take(3).join('；')}',
+          if (result.rerankSignals.isNotEmpty)
+            'signals=${_signalLine(result.rerankSignals)}',
         ].join(' | '),
       for (final fact in context.profileFacts.take(6))
         [
@@ -301,5 +303,11 @@ class PeriodSummaryService {
         return a.key.compareTo(b.key);
       });
     return entries.map((entry) => entry.key).take(limit).toList();
+  }
+
+  String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
   }
 }

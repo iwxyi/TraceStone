@@ -83,12 +83,12 @@ $question
 相关记忆：
 ${context.relatedMemories.isEmpty ? '无' : context.relatedMemories.map((result) {
             final memory = result.memory;
-            return '- source_id=memory:${memory.id}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${result.reasons.join('；')}';
+            return '- source_id=memory:${memory.id}｜score ${result.score}｜${memory.title}｜${memory.summary}｜${result.reasons.join('；')}${result.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(result.rerankSignals)}'}';
           }).join('\n')}
 
 相关搜索命中（可能包含日记摘要、片段、全文预览或长期记忆）：
 ${context.searchMatches.isEmpty ? '无' : context.searchMatches.map((match) {
-            return '- source_id=${match.sourceType}:${match.sourceId}｜entry=${match.entryId}｜score ${match.score}｜${match.title}｜${match.summary}｜${match.reasons.join('；')}';
+            return '- source_id=${match.sourceType}:${match.sourceId}｜entry=${match.entryId}｜score ${match.score}｜${match.title}｜${match.summary}｜${match.reasons.join('；')}${match.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(match.rerankSignals)}'}';
           }).join('\n')}
 
 稳定画像：
@@ -123,6 +123,12 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
   "follow_up": "一个可选追问",
   "sources": [{"source_id": "memory:xxx", "title": "来源标题", "reason": "为什么引用"}]
 }''';
+  }
+
+  String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
   }
 
   CompanionAnswer _fallbackAnswer(String question, AiContextPackage context) {

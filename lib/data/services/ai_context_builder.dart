@@ -565,6 +565,7 @@ class AiContextBuilder {
             score: result.score,
             reasons: result.reasons,
             matchedTokens: result.matchedTokens,
+            rerankSignals: result.rerankSignals,
           ),
         for (final match in calendarMatches)
           AiRetrievalTraceItem(
@@ -590,6 +591,7 @@ class AiContextBuilder {
             score: match.score,
             reasons: match.reasons,
             matchedTokens: match.matchedTokens,
+            rerankSignals: match.rerankSignals,
           ),
         for (final fact in profileFacts)
           AiRetrievalTraceItem(

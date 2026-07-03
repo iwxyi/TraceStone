@@ -78,8 +78,13 @@ class DiaryAnalysisService {
       );
     }
     await _insightRepository.saveInsight(insight);
+    await _memoryRepository.applyContradictions(
+      contradictions: insight.contradictions,
+    );
     final memory = _memoryFromInsight(insight);
-    await _memoryRepository.saveMemory(memory);
+    if (memory != null) {
+      await _memoryRepository.saveGeneratedMemory(memory);
+    }
     return insight;
   }
 
@@ -197,7 +202,7 @@ $feedbackBlock
       ...memory.keywords,
       ...memory.people,
       ...memory.tags
-    ].join('、')}｜原因：${result.reasons.join('；')}';
+    ].join('、')}｜原因：${result.reasons.join('；')}${result.rerankSignals.isEmpty ? '' : '｜signals:${_signalLine(result.rerankSignals)}'}';
   }
 
   String _calendarLine(AiCalendarMatch match) =>
@@ -227,6 +232,12 @@ $feedbackBlock
 
   String _dateLabel(DateTime date) =>
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
+  }
 
   DiaryInsight _parseInsight(
     DiaryEntry entry,
@@ -466,21 +477,21 @@ $feedbackBlock
     ];
   }
 
-  MemoryEntry _memoryFromInsight(DiaryInsight insight) {
+  MemoryEntry? _memoryFromInsight(DiaryInsight insight) {
+    final summary = insight.memorySummary.trim();
+    if (summary.isEmpty) return null;
     return MemoryEntry(
       id: insight.entryId,
       sourceEntryId: insight.entryId,
       date: insight.entryDate,
       createdAt: insight.generatedAt,
-      summary: insight.memorySummary.isEmpty
-          ? insight.reflection
-          : insight.memorySummary,
+      summary: summary,
       keywords: insight.keywords,
       emotion: insight.emotion,
       people: insight.people,
       tags: insight.memoryTags,
       evidenceEntryIds: [insight.entryId],
-      importance: insight.memorySummary.isEmpty ? 0.5 : 0.64,
+      importance: 0.64,
       confidence: 0.58,
     );
   }

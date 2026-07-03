@@ -105,6 +105,13 @@ class AiSearchService {
         ],
         matchedTokens:
             _matchedTokens(queryTokens, _tokens(_searchableText(source))),
+        rerankSignals: _signals(
+          semantic: similarity,
+          keyword: keywordScore,
+          structured: _structuredSignals(queryTokens, source),
+          importance: importanceBonus,
+          recency: recencyBonus,
+        ),
       ));
     }
     return candidates;
@@ -344,6 +351,12 @@ class AiSearchService {
         if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
       ],
       matchedTokens: matchedTokens.take(12).toList(),
+      rerankSignals: _signals(
+        keyword: _keywordScore(queryTokens, sourceTokens),
+        structured: _structuredSignals(queryTokens, source),
+        importance: importanceBonus,
+        recency: recencyBonus,
+      ),
     );
   }
 
@@ -357,6 +370,7 @@ class AiSearchService {
       score: first.score,
       reasons: {...first.reasons, ...second.reasons}.toList(),
       matchedTokens: {...first.matchedTokens, ...second.matchedTokens}.toList(),
+      rerankSignals: _mergeSignals(first.rerankSignals, second.rerankSignals),
     );
   }
 
@@ -376,19 +390,25 @@ class AiSearchService {
   }
 
   int _structuredScore(Set<String> queryTokens, _SearchSource source) {
-    var score = 0;
-    if (_matchedTokens(queryTokens, _tokens(source.people.join(' ')))
-        .isNotEmpty) {
-      score += 3;
-    }
-    if (_matchedTokens(queryTokens, _tokens(source.topics.join(' ')))
-        .isNotEmpty) {
-      score += 2;
-    }
-    if (_matchedTokens(queryTokens, _tokens(source.emotion)).isNotEmpty) {
-      score += 1;
-    }
-    return score;
+    return _structuredSignals(queryTokens, source)
+        .values
+        .fold<int>(0, (total, value) => total + value.round());
+  }
+
+  Map<String, double> _structuredSignals(
+    Set<String> queryTokens,
+    _SearchSource source,
+  ) {
+    return {
+      if (_matchedTokens(queryTokens, _tokens(source.people.join(' ')))
+          .isNotEmpty)
+        'people': 3,
+      if (_matchedTokens(queryTokens, _tokens(source.topics.join(' ')))
+          .isNotEmpty)
+        'topic': 2,
+      if (_matchedTokens(queryTokens, _tokens(source.emotion)).isNotEmpty)
+        'emotion': 1,
+    };
   }
 
   List<String> _structuredReasons(
@@ -413,6 +433,35 @@ class AiSearchService {
     if (age <= 30) return 2;
     if (age <= 180) return 1;
     return 0;
+  }
+
+  Map<String, double> _signals({
+    double? semantic,
+    int keyword = 0,
+    Map<String, double> structured = const {},
+    int importance = 0,
+    int recency = 0,
+  }) {
+    return {
+      if (semantic != null) 'semantic': semantic,
+      if (keyword > 0) 'keyword': keyword.toDouble(),
+      ...structured,
+      if (importance > 0) 'importance': importance.toDouble(),
+      if (recency > 0) 'time': recency.toDouble(),
+    };
+  }
+
+  Map<String, double> _mergeSignals(
+    Map<String, double> first,
+    Map<String, double> second,
+  ) {
+    return {
+      ...first,
+      for (final entry in second.entries)
+        entry.key: entry.value > (first[entry.key] ?? 0)
+            ? entry.value
+            : first[entry.key]!,
+    };
   }
 
   List<String> _matchedTokens(

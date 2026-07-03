@@ -23,6 +23,11 @@ class AiAnalysisJob {
     required this.updatedAt,
     this.completedStages = const [],
     this.stageLogs = const [],
+    this.summaryId,
+    this.segmentIds = const [],
+    this.embeddingIds = const [],
+    this.insightId,
+    this.retrievalTraceId,
     this.retryCount = 0,
     this.lastError,
   });
@@ -36,6 +41,11 @@ class AiAnalysisJob {
   final DateTime updatedAt;
   final List<AiAnalysisStage> completedStages;
   final List<AiAnalysisStageLog> stageLogs;
+  final String? summaryId;
+  final List<String> segmentIds;
+  final List<String> embeddingIds;
+  final String? insightId;
+  final String? retrievalTraceId;
   final int retryCount;
   final String? lastError;
 
@@ -73,6 +83,11 @@ class AiAnalysisJob {
     DateTime? updatedAt,
     List<AiAnalysisStage>? completedStages,
     List<AiAnalysisStageLog>? stageLogs,
+    String? summaryId,
+    List<String>? segmentIds,
+    List<String>? embeddingIds,
+    String? insightId,
+    String? retrievalTraceId,
     int? retryCount,
     String? lastError,
     bool clearLastError = false,
@@ -87,6 +102,11 @@ class AiAnalysisJob {
       updatedAt: updatedAt ?? this.updatedAt,
       completedStages: completedStages ?? this.completedStages,
       stageLogs: stageLogs ?? this.stageLogs,
+      summaryId: summaryId ?? this.summaryId,
+      segmentIds: segmentIds ?? this.segmentIds,
+      embeddingIds: embeddingIds ?? this.embeddingIds,
+      insightId: insightId ?? this.insightId,
+      retrievalTraceId: retrievalTraceId ?? this.retrievalTraceId,
       retryCount: retryCount ?? this.retryCount,
       lastError: clearLastError ? null : lastError ?? this.lastError,
     );
@@ -102,6 +122,11 @@ class AiAnalysisJob {
         'updatedAt': updatedAt.toIso8601String(),
         'completedStages': completedStages.map((item) => item.name).toList(),
         'stageLogs': stageLogs.map((item) => item.toJson()).toList(),
+        'summaryId': summaryId,
+        'segmentIds': segmentIds,
+        'embeddingIds': embeddingIds,
+        'insightId': insightId,
+        'retrievalTraceId': retrievalTraceId,
         'retryCount': retryCount,
         'lastError': lastError,
       };
@@ -137,6 +162,11 @@ class AiAnalysisJob {
           .toList(),
       stageLogs:
           _mapList(json['stageLogs']).map(AiAnalysisStageLog.fromJson).toList(),
+      summaryId: _nullableString(json['summaryId']),
+      segmentIds: _stringList(json['segmentIds']),
+      embeddingIds: _stringList(json['embeddingIds']),
+      insightId: _nullableString(json['insightId']),
+      retrievalTraceId: _nullableString(json['retrievalTraceId']),
       retryCount: _intValue(json['retryCount']),
       lastError: _nullableString(json['lastError']),
     );
@@ -156,6 +186,9 @@ class AiAnalysisJob {
 
   static List<dynamic> _listValue(Object? value) =>
       value is List ? value : const [];
+
+  static List<String> _stringList(Object? value) =>
+      _listValue(value).whereType<String>().toList();
 
   static List<Map<String, dynamic>> _mapList(Object? value) {
     if (value is! List) return const [];

@@ -6,10 +6,12 @@ class MemoryRetrievalResult {
     required this.score,
     required this.reasons,
     required this.matchedTokens,
+    this.rerankSignals = const {},
   });
 
   final MemoryEntry memory;
   final int score;
   final List<String> reasons;
   final List<String> matchedTokens;
+  final Map<String, double> rerankSignals;
 }

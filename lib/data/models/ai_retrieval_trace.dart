@@ -71,6 +71,7 @@ class AiRetrievalTraceItem {
     required this.score,
     required this.reasons,
     required this.matchedTokens,
+    this.rerankSignals = const {},
   });
 
   final String sourceType;
@@ -80,6 +81,7 @@ class AiRetrievalTraceItem {
   final int score;
   final List<String> reasons;
   final List<String> matchedTokens;
+  final Map<String, double> rerankSignals;
 
   Map<String, dynamic> toJson() => {
         'sourceType': sourceType,
@@ -89,6 +91,7 @@ class AiRetrievalTraceItem {
         'score': score,
         'reasons': reasons,
         'matchedTokens': matchedTokens,
+        'rerankSignals': rerankSignals,
       };
 
   static AiRetrievalTraceItem fromJson(Map<String, dynamic> json) {
@@ -100,6 +103,7 @@ class AiRetrievalTraceItem {
       score: _intValue(json['score']),
       reasons: _stringList(json['reasons']),
       matchedTokens: _stringList(json['matchedTokens']),
+      rerankSignals: _doubleMap(json['rerankSignals']),
     );
   }
 
@@ -118,5 +122,19 @@ class AiRetrievalTraceItem {
         .map((item) => item.toString().trim())
         .where((item) => item.isNotEmpty)
         .toList();
+  }
+
+  static Map<String, double> _doubleMap(Object? value) {
+    if (value is! Map) return const {};
+    return {
+      for (final entry in value.entries)
+        if (entry.key is String && _doubleValue(entry.value) != null)
+          entry.key as String: _doubleValue(entry.value)!,
+    };
+  }
+
+  static double? _doubleValue(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 }

@@ -155,6 +155,12 @@ void main() {
             'score': '8',
             'reasons': ['语义相似', 3],
             'matchedTokens': 'bad',
+            'rerankSignals': {
+              'semantic': '0.75',
+              'keyword': 3,
+              12: 'ignored',
+              'bad': 'x',
+            },
           },
           'bad-item',
           {12: 'ignored', 'sourceType': 'segment'},
@@ -172,6 +178,10 @@ void main() {
       expect(trace.items.first.score, 8);
       expect(trace.items.first.reasons, ['语义相似', '3']);
       expect(trace.items.first.matchedTokens, isEmpty);
+      expect(trace.items.first.rerankSignals, {
+        'semantic': 0.75,
+        'keyword': 3.0,
+      });
       expect(trace.items.last.sourceType, 'segment');
     });
 
@@ -346,6 +356,7 @@ void main() {
           client.lastUserPrompt, contains('sourceEntry:memory-entry-source'));
       expect(client.lastUserPrompt,
           contains('evidenceEntries:memory-entry-source,older-evidence'));
+      expect(client.lastUserPrompt, contains('signals:'));
       expect(client.lastUserPrompt, contains('stone:stone-walk-source'));
       expect(client.lastUserPrompt, contains('sourceEntry:stone-entry-source'));
       expect(trace?.userPrompt, contains('不要把轻松判断成焦虑'));
@@ -361,6 +372,30 @@ void main() {
           ['memory-walk-source']);
       expect(insight?.suggestions.single.evidence.map((item) => item.id),
           ['stone-walk-source']);
+      final oldMemory = (await const MemoryRepository().listMemories())
+          .firstWhere((memory) => memory.id == 'memory-walk-source');
+      expect(oldMemory.confidence, lessThan(0.58));
+      expect(oldMemory.decay, greaterThan(0));
+    });
+
+    test('analysis does not create long term memory without memory update',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final entry = _entry(
+        id: 'no-memory-update-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天只是简单记录一下，没有需要长期记住的内容。',
+      );
+      await const DiaryRepository().saveEntry(entry);
+
+      await DiaryAnalysisService(client: _NoMemoryUpdateAiClientService())
+          .analyzeEntry(entry);
+
+      final insight = await const InsightRepository().getInsight(entry.id);
+      final memories = await const MemoryRepository().listMemories();
+
+      expect(insight?.reflection, '今天是普通记录。');
+      expect(memories.map((memory) => memory.id), isNot(contains(entry.id)));
     });
 
     test('developer mode ignores invalid boolean values', () async {
@@ -731,6 +766,16 @@ void main() {
             retryCount: 1,
           ),
         ],
+        summaryId: 'entry',
+        segmentIds: const ['entry#s1', 'entry#s2'],
+        embeddingIds: const [
+          'entry:entry',
+          'summary:entry',
+          'segment:entry#s1',
+          'segment:entry#s2',
+        ],
+        insightId: 'entry',
+        retrievalTraceId: 'entry',
       );
       final restored = AiAnalysisJob.fromJson(job.toJson());
       final legacy = AiAnalysisJob.fromJson({
@@ -761,13 +806,31 @@ void main() {
             'retryCount': '3',
           },
         ],
+        'summaryId': 44,
+        'segmentIds': ['42#s1', 12, null],
+        'embeddingIds': ['entry:42', 13],
+        'insightId': ['bad'],
+        'retrievalTraceId': '42',
         'retryCount': '2',
         'lastError': <String>['bad'],
       });
 
       expect(restored.stageLogs.single.stage, AiAnalysisStage.embedding);
       expect(restored.stageLogs.single.outputSummary, 'completed=segmenting');
+      expect(restored.summaryId, 'entry');
+      expect(restored.segmentIds, ['entry#s1', 'entry#s2']);
+      expect(restored.embeddingIds, [
+        'entry:entry',
+        'summary:entry',
+        'segment:entry#s1',
+        'segment:entry#s2',
+      ]);
+      expect(restored.insightId, 'entry');
+      expect(restored.retrievalTraceId, 'entry');
       expect(legacy.stageLogs, isEmpty);
+      expect(legacy.summaryId, isNull);
+      expect(legacy.segmentIds, isEmpty);
+      expect(legacy.embeddingIds, isEmpty);
       expect(malformed.id, '42');
       expect(malformed.entryId, '43');
       expect(malformed.pipelineVersion, 7);
@@ -779,6 +842,11 @@ void main() {
       expect(malformed.stageLogs.last.stage, AiAnalysisStage.embedding);
       expect(malformed.stageLogs.last.message, '99');
       expect(malformed.stageLogs.last.retryCount, 3);
+      expect(malformed.summaryId, isNull);
+      expect(malformed.segmentIds, ['42#s1']);
+      expect(malformed.embeddingIds, ['entry:42']);
+      expect(malformed.insightId, isNull);
+      expect(malformed.retrievalTraceId, '42');
       expect(malformed.retryCount, 2);
       expect(malformed.lastError, isNull);
     });
@@ -1049,6 +1117,15 @@ void main() {
           contains('facts=1'));
       expect(job?.stageLogs.map((log) => log.inputSummary).join('\n'),
           contains('summary='));
+      expect(job?.summaryId, entry.id);
+      expect(job?.segmentIds, segments.map((segment) => segment.id).toList());
+      expect(job?.embeddingIds, [
+        'entry:${entry.id}',
+        'summary:${entry.id}',
+        for (final segment in segments) 'segment:${segment.id}',
+      ]);
+      expect(job?.insightId, entry.id);
+      expect(job?.retrievalTraceId, entry.id);
       expect(entryEmbedding?.generatedAt, oldGeneratedAt);
     });
 
@@ -1924,6 +2001,7 @@ void main() {
             score: 8,
             reasons: const ['主题匹配：运动'],
             matchedTokens: const ['运动'],
+            rerankSignals: const {'topic': 2, 'keyword': 2},
           ),
         ],
         searchMatches: const [
@@ -1936,6 +2014,7 @@ void main() {
             score: 6,
             reasons: ['关键词重合：运动'],
             matchedTokens: ['运动'],
+            rerankSignals: {'keyword': 2},
           ),
         ],
       );
@@ -1950,6 +2029,8 @@ void main() {
       expect(client.lastUserPrompt, contains('source_id=memory:walk-memory'));
       expect(client.lastUserPrompt,
           contains('source_id=entry_summary:walk-entry'));
+      expect(client.lastUserPrompt, contains('signals:topic:2.00'));
+      expect(client.lastUserPrompt, contains('signals:keyword:2.00'));
       expect(client.lastUserPrompt, contains('相关搜索命中'));
       expect(client.lastUserPrompt, isNot(contains('相关日记和片段：')));
       expect(answer.sources, hasLength(1));
@@ -2317,6 +2398,8 @@ void main() {
       expect(
           matches.map((match) => match.sourceType), contains('entry_summary'));
       expect(matches.first.reasons.join(' '), contains('向量相似度'));
+      expect(matches.first.rerankSignals['semantic'], isNotNull);
+      expect(matches.first.rerankSignals.keys, contains('keyword'));
     });
 
     test('uses summary importance as a rerank signal', () async {
@@ -2391,6 +2474,9 @@ void main() {
       expect(matches.first.reasons.join(' '), contains('人物匹配'));
       expect(matches.first.reasons.join(' '), contains('主题匹配'));
       expect(matches.first.reasons.join(' '), contains('情绪匹配'));
+      expect(matches.first.rerankSignals['people'], 3);
+      expect(matches.first.rerankSignals['topic'], 2);
+      expect(matches.first.rerankSignals['emotion'], 1);
     });
 
     test('returns long term memory matches from vectors and keywords',
@@ -2592,6 +2678,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const summaryRepository = EntrySummaryRepository();
+      const memoryRepository = MemoryRepository();
       final entry = _entry(
         id: 'period-source-entry',
         date: DateTime(2026, 7, 3),
@@ -2604,6 +2691,19 @@ void main() {
         importance: 0.82,
         topics: const ['散步', '情绪调节'],
       ));
+      await memoryRepository.saveMemory(MemoryEntry(
+        id: 'memory:period-source',
+        sourceEntryId: 'old-period-source',
+        date: DateTime(2026, 7, 1),
+        createdAt: DateTime(2026, 7, 1),
+        summary: '散步后焦虑下降，状态恢复。',
+        keywords: const ['散步', '焦虑', '恢复'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['情绪调节'],
+        importance: 0.82,
+        confidence: 0.76,
+      ));
 
       final summary = await const PeriodSummaryService()
           .buildMonthSummary(DateTime(2026, 7), [entry]);
@@ -2614,6 +2714,9 @@ void main() {
       expect(summary.contextSourceLines.join('\n'), contains('2026-07-03'));
       expect(
           summary.contextSourceLines.join('\n'), contains('importance=0.82'));
+      expect(summary.contextSourceLines.join('\n'),
+          contains('memory:memory:period-source'));
+      expect(summary.contextSourceLines.join('\n'), contains('signals='));
     });
 
     test('period summary traces raw entries even before summaries exist',
@@ -3145,12 +3248,58 @@ void main() {
           contains('memory'));
       expect(package.searchMatches.map((match) => match.sourceId),
           contains(memory.id));
+      expect(
+        package.searchMatches
+            .firstWhere((match) => match.sourceId == memory.id)
+            .rerankSignals,
+        isNotEmpty,
+      );
       expect(package.relatedMemories.map((result) => result.memory.id),
           isNot(contains(memory.id)));
       expect(
         savedTrace?.items.where((item) => item.sourceId == memory.id).length,
         1,
       );
+      expect(
+        savedTrace?.items
+            .firstWhere((item) => item.sourceId == memory.id)
+            .rerankSignals,
+        isNotEmpty,
+      );
+    });
+
+    test('today context persists related memory rerank signals in trace',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const memoryRepository = MemoryRepository();
+      const traceRepository = AiRetrievalTraceRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'today-memory-rerank-entry',
+        date: date,
+        content: '今天散步以后焦虑下降，身体放松。',
+      );
+      await memoryRepository.saveMemory(MemoryEntry(
+        id: 'memory:today-rerank',
+        sourceEntryId: 'old-walk-entry',
+        date: date.subtract(const Duration(days: 2)),
+        createdAt: date.subtract(const Duration(days: 2)),
+        summary: '散步能帮助用户降低焦虑并恢复状态。',
+        keywords: const ['散步', '焦虑', '恢复'],
+        emotion: '放松',
+        people: const [],
+        tags: const ['情绪调节'],
+        importance: 0.82,
+        confidence: 0.76,
+      ));
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(entry);
+      final trace = await traceRepository.getTrace(entry.id);
+
+      expect(package.relatedMemories.single.rerankSignals, isNotEmpty);
+      expect(trace?.items.single.rerankSignals, isNotEmpty);
+      expect(trace?.items.single.rerankSignals.keys, contains('keyword'));
     });
   });
 
@@ -3385,6 +3534,42 @@ void main() {
       expect(after?.generatedAt, before?.generatedAt);
     });
 
+    test('retrieval results expose memory rerank signals', () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = MemoryRepository();
+      final memoryDate = DateTime(2026, 7, 1);
+      await repository.saveMemory(MemoryEntry(
+        id: 'memory-rerank-signals',
+        sourceEntryId: 'memory-source',
+        date: memoryDate,
+        createdAt: memoryDate,
+        summary: '和妈妈散步以后焦虑下降，状态恢复。',
+        keywords: const ['散步', '焦虑', '恢复'],
+        emotion: '放松',
+        people: const ['妈妈'],
+        tags: const ['情绪调节'],
+        importance: 0.82,
+        confidence: 0.76,
+        referenceCount: 2,
+      ));
+
+      final results = await repository.findRelatedWithReasons(
+        entry: _entry(
+          id: 'memory-rerank-entry',
+          date: DateTime(2026, 7, 3),
+          content: '今天和妈妈散步后，焦虑下降了。',
+        ),
+      );
+      final result = results.single;
+
+      expect(result.rerankSignals['keyword'], greaterThan(0));
+      expect(result.rerankSignals['time'], 2);
+      expect(result.rerankSignals['people'], 2);
+      expect(result.rerankSignals['semantic'], isNotNull);
+      expect(result.rerankSignals['lifecycle'], greaterThan(0));
+      expect(result.rerankSignals['reference'], 2);
+    });
+
     test('feedback adjusts memory lifecycle', () async {
       SharedPreferences.setMockInitialValues({});
       const repository = MemoryRepository();
@@ -3419,6 +3604,96 @@ void main() {
       expect(lowered.archived, isTrue);
       expect(restored.confidence, greaterThan(lowered.confidence));
       expect(restored.archived, isFalse);
+    });
+
+    test('contradictions lower old memory confidence without deleting it',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = MemoryRepository();
+      final date = DateTime(2026, 7, 3);
+      await repository.saveMemory(MemoryEntry(
+        id: 'contradicted-memory',
+        sourceEntryId: 'old-entry',
+        date: date,
+        createdAt: date,
+        summary: '用户一直不喜欢社交。',
+        keywords: const ['社交'],
+        emotion: '压力',
+        people: const [],
+        tags: const ['关系'],
+        importance: 0.7,
+        confidence: 0.7,
+      ));
+
+      await repository.applyContradictions(
+        contradictions: const [
+          InsightContradiction(
+            oldMemoryId: 'contradicted-memory',
+            newEvidence: '今天和朋友聚会后感觉放松。',
+            interpretation: '旧记忆需要增加条件。',
+            confidence: 0.8,
+          ),
+        ],
+      );
+      final memory = (await repository.listMemories()).single;
+
+      expect(memory.id, 'contradicted-memory');
+      expect(memory.confidence, lessThan(0.7));
+      expect(memory.importance, lessThan(0.7));
+      expect(memory.decay, greaterThan(0));
+      expect(memory.archived, isFalse);
+    });
+
+    test('generated memory updates content without resetting lifecycle',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = MemoryRepository();
+      final originalDate = DateTime(2026, 7, 1);
+      await repository.saveMemory(MemoryEntry(
+        id: 'generated-lifecycle-memory',
+        sourceEntryId: 'old-entry',
+        date: originalDate,
+        createdAt: originalDate,
+        summary: '旧摘要。',
+        keywords: const ['旧'],
+        emotion: '平静',
+        people: const [],
+        tags: const ['旧标签'],
+        importance: 0.31,
+        confidence: 0.27,
+        referenceCount: 4,
+        decay: 0.42,
+        archived: true,
+      ));
+
+      await repository.saveGeneratedMemory(MemoryEntry(
+        id: 'generated-lifecycle-memory',
+        sourceEntryId: 'new-entry',
+        date: DateTime(2026, 7, 3),
+        createdAt: DateTime(2026, 7, 3),
+        summary: '新的 AI 摘要。',
+        keywords: const ['新'],
+        emotion: '轻松',
+        people: const ['妈妈'],
+        tags: const ['新标签'],
+        evidenceEntryIds: const ['new-entry'],
+        importance: 0.64,
+        confidence: 0.58,
+      ));
+      final memory = (await repository.listMemories()).single;
+
+      expect(memory.summary, '新的 AI 摘要。');
+      expect(memory.keywords, ['新']);
+      expect(memory.emotion, '轻松');
+      expect(memory.people, ['妈妈']);
+      expect(memory.tags, ['新标签']);
+      expect(memory.createdAt, originalDate);
+      expect(memory.importance, 0.31);
+      expect(memory.confidence, 0.27);
+      expect(memory.referenceCount, 4);
+      expect(memory.decay, 0.42);
+      expect(memory.archived, isTrue);
+      expect(memory.allSourceEntryIds, containsAll(['old-entry', 'new-entry']));
     });
 
     test('corrects memory summary and refreshes embedding', () async {
@@ -3563,6 +3838,42 @@ void main() {
       expect(memory.referenceCount, 0);
       expect(memory.archived, isFalse);
       expect(memory.evidenceEntryIds, ['entry']);
+    });
+
+    test('reads malformed memory fields with safe defaults', () {
+      final memory = MemoryEntry.fromJson({
+        'id': 42,
+        'sourceEntryId': 43,
+        'date': <String>['bad'],
+        'createdAt': <String>['bad'],
+        'updatedAt': null,
+        'lastReferencedAt': null,
+        'summary': 99,
+        'keywords': ['散步', 7, null],
+        'emotion': true,
+        'people': 'bad',
+        'tags': ['恢复', 3],
+        'evidenceEntryIds': 'bad',
+        'importance': '0.71',
+        'confidence': '0.62',
+        'referenceCount': '4',
+        'decay': '0.2',
+        'archived': 'true',
+      });
+
+      expect(memory.id, '42');
+      expect(memory.sourceEntryId, '43');
+      expect(memory.summary, '99');
+      expect(memory.keywords, ['散步', '7']);
+      expect(memory.emotion, 'true');
+      expect(memory.people, isEmpty);
+      expect(memory.tags, ['恢复', '3']);
+      expect(memory.evidenceEntryIds, ['43']);
+      expect(memory.importance, 0.71);
+      expect(memory.confidence, 0.62);
+      expect(memory.referenceCount, 4);
+      expect(memory.decay, 0.2);
+      expect(memory.archived, isTrue);
     });
   });
 }
@@ -3800,6 +4111,42 @@ class _CapturingAiClientService extends AiClientService {
         'summary': '散步后状态更轻松。',
         'tags': ['散步'],
       },
+      'profile_update_candidates': [],
+      'relationship_updates': [],
+      'contradictions': [
+        {
+          'old_memory_id': 'memory-walk-source',
+          'new_evidence': '今天写到散步后状态轻松。',
+          'interpretation': '旧记忆需要避免把轻松误判为焦虑。',
+          'confidence': 0.7,
+          'evidence': [
+            {'type': 'current_entry', 'id': 'feedback-prompt-entry'}
+          ],
+        }
+      ],
+    });
+  }
+}
+
+class _NoMemoryUpdateAiClientService extends AiClientService {
+  @override
+  Future<String> completeJson({
+    required String systemPrompt,
+    required String userPrompt,
+    required int maxTokens,
+  }) async {
+    return jsonEncode({
+      'reflection': '今天是普通记录。',
+      'related_memories': [],
+      'facts': [],
+      'signals': [],
+      'hypotheses': [],
+      'suggestions': [],
+      'emotion': '平静',
+      'keywords': ['记录'],
+      'people': [],
+      'stone_suggestion': {},
+      'memory_update': {'summary': '', 'tags': []},
       'profile_update_candidates': [],
       'relationship_updates': [],
       'contradictions': [],

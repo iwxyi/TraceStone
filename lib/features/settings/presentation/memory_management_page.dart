@@ -243,15 +243,28 @@ class _MemoryCard extends StatelessWidget {
                 ],
               ),
             ],
-            if (developerMode && memory.allSourceEntryIds.isNotEmpty) ...[
+            if (developerMode) ...[
               const SizedBox(height: 12),
-              Text('证据来源', style: theme.textTheme.labelLarge),
+              Text('调试信息', style: theme.textTheme.labelLarge),
               const SizedBox(height: 4),
-              for (final id in memory.allSourceEntryIds.take(8))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 3),
-                  child: Text('entry:$id', style: theme.textTheme.bodySmall),
-                ),
+              Text('memory:${memory.id}', style: theme.textTheme.bodySmall),
+              Text('sourceEntry:${memory.sourceEntryId}',
+                  style: theme.textTheme.bodySmall),
+              Text('updatedAt:${memory.updatedAt.toIso8601String()}',
+                  style: theme.textTheme.bodySmall),
+              Text(
+                  'lastReferencedAt:${memory.lastReferencedAt.toIso8601String()}',
+                  style: theme.textTheme.bodySmall),
+              if (memory.allSourceEntryIds.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('证据来源', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 4),
+                for (final id in memory.allSourceEntryIds.take(8))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Text('entry:$id', style: theme.textTheme.bodySmall),
+                  ),
+              ],
             ],
           ],
         ),

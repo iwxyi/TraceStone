@@ -260,12 +260,14 @@ class _SearchDebugContextText {
         for (final match in package.searchMatches)
           '${match.sourceType}:${match.sourceId} entry=${match.entryId} '
               'score=${match.score} ${match.title} | ${match.summary} | '
-              '${match.reasons.join('；')}',
+              '${match.reasons.join('；')}'
+              '${match.rerankSignals.isEmpty ? '' : ' | signals=${_signalLine(match.rerankSignals)}'}',
       ]),
       _section('Memories', [
         for (final result in package.relatedMemories)
           '${result.memory.id} score=${result.score} ${result.memory.title} | '
-              '${result.memory.summary} | ${result.reasons.join('；')}',
+              '${result.memory.summary} | ${result.reasons.join('；')}'
+              '${result.rerankSignals.isEmpty ? '' : ' | signals=${_signalLine(result.rerankSignals)}'}',
       ]),
       _section('Profile', [
         for (final fact in package.profileFacts) ...[
@@ -307,9 +309,16 @@ class _SearchDebugContextText {
               'generatedAt=${package.retrievalTrace!.generatedAt.toIso8601String()}',
           for (final item in package.retrievalTrace!.items)
             '${item.sourceType}:${item.sourceId} score=${item.score} '
-                '${item.title} | ${item.reasons.join('；')}',
+                '${item.title} | ${item.reasons.join('；')}'
+                '${item.rerankSignals.isEmpty ? '' : ' | signals=${_signalLine(item.rerankSignals)}'}',
         ]),
     ].where((section) => section.trim().isNotEmpty).join('\n\n');
+  }
+
+  String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
   }
 
   String _section(String title, List<String> lines) {
@@ -391,9 +400,17 @@ class _SearchMatchCard extends StatelessWidget {
         if (result.entryId.isNotEmpty) 'entry=${result.entryId}',
         if (result.matchedTokens.isNotEmpty)
           'matched=${result.matchedTokens.take(8).join(',')}',
+        if (result.rerankSignals.isNotEmpty)
+          'signals=${_signalLine(result.rerankSignals)}',
       ].join(' | '),
       developerMode: developerMode,
     );
+  }
+
+  String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
   }
 
   IconData _sourceIcon(String sourceType) {
@@ -450,9 +467,17 @@ class _MemoryResultCard extends StatelessWidget {
           'evidence=${memory.allSourceEntryIds.take(6).join(',')}',
         if (result.matchedTokens.isNotEmpty)
           'matched=${result.matchedTokens.take(8).join(',')}',
+        if (result.rerankSignals.isNotEmpty)
+          'signals=${_signalLine(result.rerankSignals)}',
       ].join(' | '),
       developerMode: developerMode,
     );
+  }
+
+  String _signalLine(Map<String, double> signals) {
+    return signals.entries
+        .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
+        .join(',');
   }
 }
 

@@ -74,33 +74,35 @@ class MemoryEntry {
 
   static MemoryEntry fromJson(Map<String, dynamic> json) {
     final date =
-        DateTime.tryParse(json['date'] as String? ?? '') ?? DateTime.now();
+        DateTime.tryParse(_stringValue(json['date'])) ?? DateTime.now();
     final createdAt =
-        DateTime.tryParse(json['createdAt'] as String? ?? '') ?? date;
+        DateTime.tryParse(_stringValue(json['createdAt'])) ?? date;
+    final evidenceEntryIds = _stringList(json['evidenceEntryIds']);
     return MemoryEntry(
-      id: json['id'] as String? ??
-          '${json['sourceEntryId'] ?? 'memory'}-${date.microsecondsSinceEpoch}',
-      sourceEntryId: json['sourceEntryId'] as String? ?? '',
+      id: _stringValue(json['id']).isEmpty
+          ? '${_stringValue(json['sourceEntryId']).isEmpty ? 'memory' : _stringValue(json['sourceEntryId'])}-${date.microsecondsSinceEpoch}'
+          : _stringValue(json['id']),
+      sourceEntryId: _stringValue(json['sourceEntryId']),
       date: date,
       createdAt: createdAt,
       updatedAt:
-          DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? createdAt,
+          DateTime.tryParse(_stringValue(json['updatedAt'])) ?? createdAt,
       lastReferencedAt:
-          DateTime.tryParse(json['lastReferencedAt'] as String? ?? '') ??
+          DateTime.tryParse(_stringValue(json['lastReferencedAt'])) ??
               createdAt,
-      summary: json['summary'] as String? ?? '',
+      summary: _stringValue(json['summary']),
       keywords: _stringList(json['keywords']),
-      emotion: json['emotion'] as String? ?? '',
+      emotion: _stringValue(json['emotion']),
       people: _stringList(json['people']),
       tags: _stringList(json['tags']),
-      evidenceEntryIds: _stringList(json['evidenceEntryIds']).isEmpty
+      evidenceEntryIds: evidenceEntryIds.isEmpty
           ? _legacyEvidenceEntryIds(json['sourceEntryId'])
-          : _stringList(json['evidenceEntryIds']),
+          : evidenceEntryIds,
       importance: _doubleValue(json['importance'], fallback: 0.56),
       confidence: _doubleValue(json['confidence'], fallback: 0.58),
-      referenceCount: json['referenceCount'] as int? ?? 0,
+      referenceCount: _intValue(json['referenceCount']),
       decay: _doubleValue(json['decay'], fallback: 0),
-      archived: json['archived'] as bool? ?? false,
+      archived: _boolValue(json['archived']),
     );
   }
 
@@ -137,11 +139,17 @@ class MemoryEntry {
     );
   }
 
-  static List<String> _stringList(Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) => item.toString().trim())
-          .where((item) => item.isNotEmpty)
-          .toList();
+  static String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  static List<String> _stringList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .where((item) => item != null)
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
 
   static List<String> _legacyEvidenceEntryIds(Object? sourceEntryId) {
     final id = sourceEntryId?.toString().trim() ?? '';
@@ -151,5 +159,17 @@ class MemoryEntry {
   static double _doubleValue(Object? value, {required double fallback}) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static int _intValue(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static bool _boolValue(Object? value) {
+    if (value is bool) return value;
+    if (value is String) return value.toLowerCase() == 'true';
+    return false;
   }
 }
