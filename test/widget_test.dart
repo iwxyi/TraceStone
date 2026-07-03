@@ -779,6 +779,42 @@ void main() {
     expect(find.textContaining('已有日记内容'), findsOneWidget);
   });
 
+  testWidgets('diary editor queues AI pipeline when leaving with saved content',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'diary.autoSave': true,
+    });
+    const queueRepository = AiAnalysisQueueRepository();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => FilledButton(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const DiaryEditPage(),
+          )),
+          child: const Text('open editor'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open editor'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.enterText(find.byType(TextField).first, '今天散步后状态恢复。');
+    await tester.pump();
+
+    expect((await queueRepository.listJobs()), isEmpty);
+
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pump(const Duration(milliseconds: 100));
+    final jobs = await queueRepository.listJobs();
+    final entries = await const DiaryRepository().listEntries();
+
+    expect(entries.single.content, '今天散步后状态恢复。');
+    expect(jobs.single.entryId, entries.single.id);
+    expect(jobs.single.canRun, isTrue);
+    expect(jobs.single.state, isNot(AiAnalysisJobState.completed));
+  });
+
   testWidgets('relationships page filters and asks about a person',
       (tester) async {
     SharedPreferences.setMockInitialValues({});

@@ -522,6 +522,8 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     final entry = _currentEntry();
     if (entry.content.trim().isNotEmpty) {
       await _repository.saveEntry(entry);
+      await _analysisQueueRunner.enqueue(entry, start: false);
+      unawaited(_analysisQueueRunner.processNext());
     }
     if (mounted) {
       Navigator.of(context).pop(entry.content.trim().isEmpty ? true : entry);
