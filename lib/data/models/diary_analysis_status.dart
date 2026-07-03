@@ -1,4 +1,11 @@
-enum DiaryAnalysisState { idle, analyzing, completed, failed }
+enum DiaryAnalysisState {
+  idle,
+  queued,
+  analyzing,
+  incomplete,
+  completed,
+  failed
+}
 
 class DiaryAnalysisStatus {
   const DiaryAnalysisStatus({

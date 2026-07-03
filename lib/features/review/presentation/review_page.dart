@@ -6,11 +6,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/models/period_summary.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
+import '../../../data/services/period_summary_service.dart';
+import '../../ai_insight/presentation/ai_feedback_bar.dart';
 
 class ReviewPage extends StatefulWidget {
   const ReviewPage({super.key});
@@ -679,7 +683,7 @@ class _InsightPreview extends StatelessWidget {
             Text('AI 分析', style: Theme.of(context).textTheme.titleSmall),
             if (insight.reflection.isNotEmpty) ...[
               const SizedBox(height: 8),
-              _EntryMarkdownPreview(text: insight.reflection),
+              SimpleMarkdownText(text: insight.reflection),
             ],
             if (insight.emotion.isNotEmpty ||
                 insight.keywords.isNotEmpty ||
@@ -702,10 +706,12 @@ class _InsightPreview extends StatelessWidget {
                 insight.stoneDescription.isNotEmpty) ...[
               const SizedBox(height: 10),
               if (insight.stoneTitle.isNotEmpty)
-                _EntryMarkdownPreview(text: '### ${insight.stoneTitle}'),
+                SimpleMarkdownText(text: '### ${insight.stoneTitle}'),
               if (insight.stoneDescription.isNotEmpty)
-                _EntryMarkdownPreview(text: insight.stoneDescription),
+                SimpleMarkdownText(text: insight.stoneDescription),
             ],
+            const SizedBox(height: 12),
+            AiFeedbackBar(entryId: insight.entryId),
           ],
         ),
       ),
@@ -930,6 +936,11 @@ class _YearListState extends State<_YearList> {
           activeDays: activeDays,
           longestStreak: longestStreak,
           busiestLabel: busiestLabel,
+        ),
+        const SizedBox(height: 16),
+        _PeriodSummaryCard(
+          future: const PeriodSummaryService()
+              .buildYearSummary(widget.selectedYear, widget.entries),
         ),
         const SizedBox(height: 16),
         LayoutBuilder(
@@ -1587,6 +1598,11 @@ class _MonthCalendar extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
+        _PeriodSummaryCard(
+          future: const PeriodSummaryService()
+              .buildMonthSummary(selectedMonth, entries),
+        ),
+        const SizedBox(height: 16),
         if (dayEntries.isEmpty)
           const Card(
               elevation: 0,
@@ -1688,6 +1704,82 @@ class _MonthDayCell extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PeriodSummaryCard extends StatelessWidget {
+  const _PeriodSummaryCard({required this.future});
+
+  final Future<PeriodSummary> future;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PeriodSummary>(
+      future: future,
+      builder: (context, snapshot) {
+        final summary = snapshot.data;
+        if (summary == null) {
+          return const Card(
+            elevation: 0,
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 10),
+                  Text('正在整理周期总结…'),
+                ],
+              ),
+            ),
+          );
+        }
+        final title = summary.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
+        return Card(
+          elevation: 0,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.insights_outlined, size: 20),
+                    const SizedBox(width: 8),
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const Spacer(),
+                    Text('${summary.entryCount}篇',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(summary.brief),
+                if (summary.themes.isNotEmpty ||
+                    summary.emotions.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final theme in summary.themes.take(6))
+                        Chip(label: Text(theme)),
+                      for (final emotion in summary.emotions.take(3))
+                        Chip(
+                          avatar: const Icon(Icons.mood_outlined, size: 16),
+                          label: Text(emotion),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

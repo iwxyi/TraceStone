@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/insight_repository.dart';
+import 'ai_feedback_bar.dart';
 
 class InsightPage extends StatefulWidget {
   const InsightPage({super.key});
@@ -63,7 +65,10 @@ class _InsightBody extends StatelessWidget {
         _SectionCard(
           title: '读后感',
           icon: Icons.auto_awesome_outlined,
-          child: Text(insight.reflection.isEmpty ? '洞察生成中。' : insight.reflection),
+          child: SimpleMarkdownText(
+            text: insight.reflection,
+            emptyText: '洞察生成中。',
+          ),
         ),
         if (insight.relatedMemories.isNotEmpty) ...[
           const SizedBox(height: 12),
@@ -83,7 +88,8 @@ class _InsightBody extends StatelessWidget {
             ),
           ),
         ],
-        if (insight.stoneTitle.isNotEmpty || insight.stoneDescription.isNotEmpty) ...[
+        if (insight.stoneTitle.isNotEmpty ||
+            insight.stoneDescription.isNotEmpty) ...[
           const SizedBox(height: 12),
           _SectionCard(
             title: '塑石建议',
@@ -96,7 +102,7 @@ class _InsightBody extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                 if (insight.stoneDescription.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  Text(insight.stoneDescription),
+                  SimpleMarkdownText(text: insight.stoneDescription),
                 ],
               ],
             ),
@@ -117,6 +123,12 @@ class _InsightBody extends StatelessWidget {
             ),
           ),
         ],
+        const SizedBox(height: 12),
+        _SectionCard(
+          title: '反馈',
+          icon: Icons.rate_review_outlined,
+          child: AiFeedbackBar(entryId: insight.entryId),
+        ),
       ],
     );
   }

@@ -1,13 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../core/widgets/simple_markdown_text.dart';
+import '../../../data/models/ai_analysis_job.dart';
+import '../../../data/models/diary_analysis_status.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/repositories/ai_analysis_queue_bus.dart';
+import '../../../data/repositories/ai_analysis_queue_repository.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
-import '../../../data/services/diary_analysis_service.dart';
+import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../ai_insight/presentation/ai_feedback_bar.dart';
 
 class TodayPage extends StatefulWidget {
   const TodayPage({super.key, this.onDiaryChanged});
@@ -21,21 +29,25 @@ class TodayPage extends StatefulWidget {
 class _TodayPageState extends State<TodayPage> {
   final repository = const DiaryRepository();
   final insightRepository = const InsightRepository();
-  final analysisService = const DiaryAnalysisService();
+  final queueRepository = const AiAnalysisQueueRepository();
+  final queueRunner = const AiAnalysisQueueRunner();
   late Future<List<DiaryEntry>> _entriesFuture =
       repository.getEntriesForDate(DateTime.now());
-  String? _analyzingEntryId;
-  String? _analysisError;
+  late Future<AiAnalysisQueueSnapshot> _queueSnapshotFuture =
+      queueRepository.snapshot();
 
   @override
   void initState() {
     super.initState();
     DiaryChangeBus.version.addListener(_refreshEntries);
+    AiAnalysisQueueBus.version.addListener(_refreshQueue);
+    unawaited(_runQueuedAnalysis());
   }
 
   @override
   void dispose() {
     DiaryChangeBus.version.removeListener(_refreshEntries);
+    AiAnalysisQueueBus.version.removeListener(_refreshQueue);
     super.dispose();
   }
 
@@ -43,6 +55,13 @@ class _TodayPageState extends State<TodayPage> {
     if (!mounted) return;
     setState(() {
       _entriesFuture = repository.getEntriesForDate(DateTime.now());
+    });
+  }
+
+  void _refreshQueue() {
+    if (!mounted) return;
+    setState(() {
+      _queueSnapshotFuture = queueRepository.snapshot();
     });
   }
 
@@ -55,27 +74,70 @@ class _TodayPageState extends State<TodayPage> {
     });
     widget.onDiaryChanged?.call();
     if (result is DiaryEntry) {
-      _analyzeEntry(result);
+      unawaited(_enqueueAnalysis(result));
     }
   }
 
-  Future<void> _analyzeEntry(DiaryEntry entry) async {
+  Future<void> _enqueueAnalysis(DiaryEntry entry) async {
+    await queueRunner.enqueue(entry, start: false);
+    await _runQueuedAnalysis();
+  }
+
+  Future<void> _runQueuedAnalysis() async {
+    await queueRunner.processNext();
+    if (!mounted) return;
     setState(() {
-      _analyzingEntryId = entry.id;
-      _analysisError = null;
+      _entriesFuture = repository.getEntriesForDate(DateTime.now());
+      _queueSnapshotFuture = queueRepository.snapshot();
     });
-    try {
-      await analysisService.analyzeEntry(entry);
-    } on Object catch (error) {
-      if (!mounted) return;
-      setState(() => _analysisError = error.toString());
-    } finally {
-      if (mounted) {
-        setState(() {
-          _analyzingEntryId = null;
-          _entriesFuture = repository.getEntriesForDate(DateTime.now());
-        });
-      }
+  }
+
+  Future<void> _retryQueue() async {
+    await _runQueuedAnalysis();
+  }
+
+  Future<_AnalysisData> _loadAnalysisData(DiaryEntry entry) async {
+    final status = await insightRepository.getStatus(entry.id);
+    final insight = await insightRepository.getInsight(entry.id);
+    return _AnalysisData(status: status, insight: insight);
+  }
+
+  Widget _buildQueueCard() {
+    return FutureBuilder<AiAnalysisQueueSnapshot>(
+      future: _queueSnapshotFuture,
+      builder: (context, snapshot) {
+        final queue = snapshot.data;
+        if (queue == null || !queue.hasVisibleWork) {
+          return const SizedBox.shrink();
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _AiQueueCard(
+            snapshot: queue,
+            onRetry: _retryQueue,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAnalysisCard(DiaryEntry entry) {
+    return FutureBuilder<_AnalysisData>(
+      future: _loadAnalysisData(entry),
+      builder: (context, snapshot) {
+        return _TodayAnalysisCard(
+          entry: entry,
+          data: snapshot.data,
+        );
+      },
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant TodayPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.key != widget.key) {
+      unawaited(_runQueuedAnalysis());
     }
   }
 
@@ -105,6 +167,7 @@ class _TodayPageState extends State<TodayPage> {
           body: ListView(
             padding: const EdgeInsets.all(20),
             children: [
+              _buildQueueCard(),
               if (entries.isEmpty)
                 _NewDiaryCard(onTap: () => _openEditor())
               else
@@ -117,12 +180,7 @@ class _TodayPageState extends State<TodayPage> {
                 ],
               if (latestEntry != null) ...[
                 const SizedBox(height: 16),
-                _TodayAnalysisCard(
-                  entry: latestEntry,
-                  insightRepository: insightRepository,
-                  isAnalyzing: _analyzingEntryId == latestEntry.id,
-                  error: _analysisError,
-                ),
+                _buildAnalysisCard(latestEntry),
               ],
             ],
           ),
@@ -130,6 +188,13 @@ class _TodayPageState extends State<TodayPage> {
       },
     );
   }
+}
+
+class _AnalysisData {
+  const _AnalysisData({required this.status, required this.insight});
+
+  final DiaryAnalysisStatus? status;
+  final DiaryInsight? insight;
 }
 
 class _TodayTitle extends StatelessWidget {
@@ -207,31 +272,92 @@ class _DiaryPreviewCard extends StatelessWidget {
   }
 }
 
-class _TodayAnalysisCard extends StatelessWidget {
-  const _TodayAnalysisCard({
-    required this.entry,
-    required this.insightRepository,
-    required this.isAnalyzing,
-    required this.error,
+class _AiQueueCard extends StatelessWidget {
+  const _AiQueueCard({
+    required this.snapshot,
+    required this.onRetry,
   });
 
-  final DiaryEntry entry;
-  final InsightRepository insightRepository;
-  final bool isAnalyzing;
-  final String? error;
+  final AiAnalysisQueueSnapshot snapshot;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    if (isAnalyzing) return const _AnalysisLoadingCard();
-    if (error != null) return _AnalysisErrorCard(message: error!);
-    return FutureBuilder<DiaryInsight?>(
-      future: insightRepository.getInsight(entry.id),
-      builder: (context, snapshot) {
-        final insight = snapshot.data;
-        if (insight == null) return const _AnalysisEmptyCard();
-        return _AnalysisResultCard(insight: insight);
-      },
+    final job = snapshot.currentJob;
+    final theme = Theme.of(context);
+    final hasRunning = job?.state == AiAnalysisJobState.running;
+    final hasFailed = snapshot.failedCount > 0 && !hasRunning;
+    final title = hasFailed ? '有日记整理失败' : '正在整理记忆';
+    final stage = job?.stageLabel ?? '等待继续';
+    final remaining = snapshot.pendingCount;
+
+    return _HomeCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hasFailed
+                    ? Icons.error_outline
+                    : Icons.auto_awesome_motion_outlined,
+                color: hasFailed
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(title,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w600)),
+              ),
+              if (hasFailed)
+                TextButton(onPressed: onRetry, child: const Text('重试')),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (hasRunning) const LinearProgressIndicator(minHeight: 3),
+          if (hasRunning) const SizedBox(height: 10),
+          Text(stage),
+          if (remaining > 0) ...[
+            const SizedBox(height: 4),
+            Text('剩余 $remaining 篇，会在后台串行继续。', style: theme.textTheme.bodySmall),
+          ],
+          if (job?.lastError != null && job!.lastError!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(job.lastError!,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.error)),
+          ],
+        ],
+      ),
     );
+  }
+}
+
+class _TodayAnalysisCard extends StatelessWidget {
+  const _TodayAnalysisCard({
+    required this.entry,
+    required this.data,
+  });
+
+  final DiaryEntry entry;
+  final _AnalysisData? data;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = data?.status;
+    final insight = data?.insight;
+    if (status?.state == DiaryAnalysisState.queued ||
+        status?.state == DiaryAnalysisState.analyzing ||
+        status?.state == DiaryAnalysisState.incomplete) {
+      return _AnalysisLoadingCard(message: status?.message);
+    }
+    if (status?.state == DiaryAnalysisState.failed) {
+      return _AnalysisErrorCard(message: status?.message ?? '分析失败');
+    }
+    if (insight == null) return const _AnalysisEmptyCard();
+    return _AnalysisResultCard(insight: insight);
   }
 }
 
@@ -276,7 +402,9 @@ class _AnalysisErrorCard extends StatelessWidget {
 }
 
 class _AnalysisLoadingCard extends StatefulWidget {
-  const _AnalysisLoadingCard();
+  const _AnalysisLoadingCard({this.message});
+
+  final String? message;
 
   @override
   State<_AnalysisLoadingCard> createState() => _AnalysisLoadingCardState();
@@ -304,10 +432,10 @@ class _AnalysisLoadingCardState extends State<_AnalysisLoadingCard>
           final opacity = 0.45 + _controller.value * 0.35;
           return Opacity(
             opacity: opacity,
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                const Row(
                   children: [
                     SizedBox(
                       width: 18,
@@ -320,8 +448,8 @@ class _AnalysisLoadingCardState extends State<_AnalysisLoadingCard>
                             fontSize: 20, fontWeight: FontWeight.w600)),
                   ],
                 ),
-                SizedBox(height: 10),
-                Text('正在结合今天的日记和曾经的经历，生成分析和建议。'),
+                const SizedBox(height: 10),
+                Text(widget.message ?? '正在结合今天的日记和曾经的经历，生成分析和建议。'),
               ],
             ),
           );
@@ -345,7 +473,8 @@ class _AnalysisResultCard extends StatelessWidget {
           const Text('今日日记分析',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
           const SizedBox(height: 10),
-          if (insight.reflection.isNotEmpty) Text(insight.reflection),
+          if (insight.reflection.isNotEmpty)
+            SimpleMarkdownText(text: insight.reflection),
           if (insight.relatedMemories.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text('和过去的关联', style: Theme.of(context).textTheme.titleSmall),
@@ -366,8 +495,10 @@ class _AnalysisResultCard extends StatelessWidget {
               Text(insight.stoneTitle,
                   style: const TextStyle(fontWeight: FontWeight.w600)),
             if (insight.stoneDescription.isNotEmpty)
-              Text(insight.stoneDescription),
+              SimpleMarkdownText(text: insight.stoneDescription),
           ],
+          const SizedBox(height: 12),
+          AiFeedbackBar(entryId: insight.entryId),
         ],
       ),
     );

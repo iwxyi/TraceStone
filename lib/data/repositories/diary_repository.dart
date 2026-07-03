@@ -3,15 +3,25 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/diary_entry.dart';
+import 'ai_analysis_queue_repository.dart';
+import 'ai_embedding_repository.dart';
+import 'ai_feedback_repository.dart';
+import 'ai_prompt_trace_repository.dart';
+import 'ai_retrieval_trace_repository.dart';
 import 'diary_change_bus.dart';
+import 'entry_summary_repository.dart';
+import 'insight_repository.dart';
+import 'memory_repository.dart';
 
 class DiaryRepository {
   const DiaryRepository();
 
   static const _indexKey = 'diary.entries.index';
+  static const _trashIndexKey = 'diary.trash.index';
   static const _entryPrefix = 'diary.entries.';
   static const _trashPrefix = 'diary.trash.';
   static const _recoveryPrefix = 'diary.recovery.';
+  static const trashRetention = Duration(days: 90);
 
   Future<void> saveEntry(DiaryEntry entry) async {
     final prefs = await SharedPreferences.getInstance();
@@ -78,18 +88,99 @@ class DiaryRepository {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('$_entryPrefix$id');
     if (raw == null) return;
-    await prefs.setString('$_trashPrefix$id', raw);
+    final deletedAt = DateTime.now();
+    final trashPayload = {
+      'entry': jsonDecode(raw),
+      'deletedAt': deletedAt.toIso8601String(),
+    };
+    await prefs.setString('$_trashPrefix$id', jsonEncode(trashPayload));
     await prefs.remove('$_entryPrefix$id');
     final index = prefs.getStringList(_indexKey) ?? [];
     index.remove(id);
     await prefs.setStringList(_indexKey, index);
+    final trashIndex = prefs.getStringList(_trashIndexKey) ?? [];
+    if (!trashIndex.contains(id)) {
+      trashIndex.add(id);
+      await prefs.setStringList(_trashIndexKey, trashIndex);
+    }
     await prefs.remove('$_recoveryPrefix$id');
+    await const InsightRepository().deleteForEntry(id);
+    await const MemoryRepository().deleteForSourceEntry(id);
+    await const AiAnalysisQueueRepository().deleteJob(id);
+    await const AiEmbeddingRepository().deleteForEntry(id);
+    await const AiFeedbackRepository().deleteFeedback(id);
+    await const AiPromptTraceRepository().deleteTrace(id);
+    await const EntrySummaryRepository().deleteForEntry(id);
+    await const AiRetrievalTraceRepository().deleteForEntry(id);
     DiaryChangeBus.bump();
   }
 
   Future<void> moveManyToTrash(Iterable<String> ids) async {
     for (final id in ids) {
       await moveToTrash(id);
+    }
+  }
+
+  Future<List<DiaryTrashItem>> listTrashEntries() async {
+    await purgeExpiredTrash();
+    final prefs = await SharedPreferences.getInstance();
+    final ids = await _trashIds(prefs);
+    final items = <DiaryTrashItem>[];
+    for (final id in ids) {
+      final item = await _trashItem(prefs, id);
+      if (item != null) items.add(item);
+    }
+    items.sort((a, b) => b.deletedAt.compareTo(a.deletedAt));
+    return items;
+  }
+
+  Future<void> restoreFromTrash(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final item = await _trashItem(prefs, id);
+    if (item == null) return;
+    await prefs.setString(
+        '$_entryPrefix${item.entry.id}', jsonEncode(item.entry.toJson()));
+    final index = prefs.getStringList(_indexKey) ?? [];
+    if (!index.contains(item.entry.id)) {
+      index.add(item.entry.id);
+      await prefs.setStringList(_indexKey, index);
+    }
+    await _removeTrashItem(prefs, id);
+    DiaryChangeBus.bump();
+  }
+
+  Future<void> permanentlyDeleteFromTrash(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await _removeTrashItem(prefs, id);
+    await const InsightRepository().deleteForEntry(id);
+    await const MemoryRepository().deleteForSourceEntry(id);
+    await const AiAnalysisQueueRepository().deleteJob(id);
+    await const AiEmbeddingRepository().deleteForEntry(id);
+    await const AiFeedbackRepository().deleteFeedback(id);
+    await const AiPromptTraceRepository().deleteTrace(id);
+    await const EntrySummaryRepository().deleteForEntry(id);
+    await const AiRetrievalTraceRepository().deleteForEntry(id);
+    DiaryChangeBus.bump();
+  }
+
+  Future<void> purgeExpiredTrash() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = await _trashIds(prefs);
+    final now = DateTime.now();
+    for (final id in ids) {
+      final item = await _trashItem(prefs, id);
+      if (item == null) continue;
+      if (now.isAfter(item.expiresAt)) {
+        await _removeTrashItem(prefs, id);
+        await const InsightRepository().deleteForEntry(id);
+        await const MemoryRepository().deleteForSourceEntry(id);
+        await const AiAnalysisQueueRepository().deleteJob(id);
+        await const AiEmbeddingRepository().deleteForEntry(id);
+        await const AiFeedbackRepository().deleteFeedback(id);
+        await const AiPromptTraceRepository().deleteTrace(id);
+        await const EntrySummaryRepository().deleteForEntry(id);
+        await const AiRetrievalTraceRepository().deleteForEntry(id);
+      }
     }
   }
 
@@ -123,5 +214,57 @@ class DiaryRepository {
     }
     snapshots.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return snapshots.firstOrNull;
+  }
+
+  Future<List<String>> _trashIds(SharedPreferences prefs) async {
+    final indexed = prefs.getStringList(_trashIndexKey) ?? [];
+    final scanned = prefs
+        .getKeys()
+        .where((key) => key.startsWith(_trashPrefix))
+        .map((key) => key.substring(_trashPrefix.length));
+    final ids = <String>{...indexed, ...scanned}.toList();
+    await prefs.setStringList(_trashIndexKey, ids);
+    return ids;
+  }
+
+  Future<DiaryTrashItem?> _trashItem(SharedPreferences prefs, String id) async {
+    final raw = prefs.getString('$_trashPrefix$id');
+    if (raw == null) return null;
+    final parsed = jsonDecode(raw) as Map<String, dynamic>;
+    final hasMetadata = parsed['entry'] is Map<String, dynamic>;
+    final entryJson =
+        hasMetadata ? parsed['entry'] as Map<String, dynamic> : parsed;
+    final entry = DiaryEntry.fromJson(entryJson);
+    final deletedAt = DateTime.tryParse(parsed['deletedAt'] as String? ?? '') ??
+        entry.updatedAt;
+    return DiaryTrashItem(
+      entry: entry,
+      deletedAt: deletedAt,
+      expiresAt: deletedAt.add(trashRetention),
+    );
+  }
+
+  Future<void> _removeTrashItem(SharedPreferences prefs, String id) async {
+    await prefs.remove('$_trashPrefix$id');
+    final trashIndex = prefs.getStringList(_trashIndexKey) ?? [];
+    trashIndex.remove(id);
+    await prefs.setStringList(_trashIndexKey, trashIndex);
+  }
+}
+
+class DiaryTrashItem {
+  const DiaryTrashItem({
+    required this.entry,
+    required this.deletedAt,
+    required this.expiresAt,
+  });
+
+  final DiaryEntry entry;
+  final DateTime deletedAt;
+  final DateTime expiresAt;
+
+  int get daysRemaining {
+    final remaining = expiresAt.difference(DateTime.now()).inDays + 1;
+    return remaining < 0 ? 0 : remaining;
   }
 }

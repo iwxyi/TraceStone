@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app/theme_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../data/repositories/developer_settings_repository.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -21,13 +22,41 @@ class SettingsPage extends StatelessWidget {
           const _PaletteSection(),
           const SizedBox(height: 18),
           Card(
-            child: ListTile(
-              title: const Text('自定义 AI'),
-              subtitle: const Text('官方 AI / OpenAI 兼容接口'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).pushNamed(AppRoutes.customAi),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome_outlined),
+                  title: const Text('自定义 AI'),
+                  subtitle: const Text('官方 AI / OpenAI 兼容接口'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.customAi),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.psychology_alt_outlined),
+                  title: const Text('AI 记忆'),
+                  subtitle: const Text('查看和删除 AI 记住的长期信息'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context)
+                      .pushNamed(AppRoutes.memoryManagement),
+                ),
+              ],
             ),
           ),
+          const SizedBox(height: 18),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('回收站'),
+              subtitle: const Text('删除的日记保留 90 天'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  Navigator.of(context).pushNamed(AppRoutes.recycleBin),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const _DeveloperModeSection(),
           const SizedBox(height: 18),
           Card(
             child: ListView.separated(
@@ -48,6 +77,60 @@ class SettingsPage extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _DeveloperModeSection extends StatefulWidget {
+  const _DeveloperModeSection();
+
+  @override
+  State<_DeveloperModeSection> createState() => _DeveloperModeSectionState();
+}
+
+class _DeveloperModeSectionState extends State<_DeveloperModeSection> {
+  final _repository = const DeveloperSettingsRepository();
+  late Future<bool> _enabledFuture = _repository.isDeveloperModeEnabled();
+
+  Future<void> _setEnabled(bool value) async {
+    await _repository.setDeveloperModeEnabled(value);
+    if (!mounted) return;
+    setState(() {
+      _enabledFuture = Future.value(value);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _enabledFuture,
+      builder: (context, snapshot) {
+        final enabled = snapshot.data ?? false;
+        return Card(
+          child: Column(
+            children: [
+              SwitchListTile(
+                secondary: const Icon(Icons.bug_report_outlined),
+                title: const Text('开发者模式'),
+                subtitle: const Text('显示 AI 队列、来源、错误和调试信息'),
+                value: enabled,
+                onChanged: _setEnabled,
+              ),
+              if (enabled) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome_motion_outlined),
+                  title: const Text('AI 调试'),
+                  subtitle: const Text('查看后台队列、阶段日志和失败任务'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.aiDebug),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

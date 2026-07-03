@@ -9,13 +9,15 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
+import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../../data/services/ai_repair_service.dart';
-import '../../../data/services/diary_analysis_service.dart';
 import '../../../data/services/location_weather_service.dart';
+import '../../ai_insight/presentation/ai_feedback_bar.dart';
 import 'map_picker_page.dart';
 
 class DiaryEditPage extends StatefulWidget {
@@ -33,7 +35,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   final _picker = ImagePicker();
   final _repository = const DiaryRepository();
   final _insightRepository = const InsightRepository();
-  final _analysisService = const DiaryAnalysisService();
+  final _analysisQueueRunner = const AiAnalysisQueueRunner();
   final _aiRepairService = const AiRepairService();
   final _locationWeatherService = const LocationWeatherService();
   final _images = <XFile>[];
@@ -207,9 +209,6 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _analysisError = null;
       _insightFuture = _insightRepository.getInsight(entry.id);
     });
-    final existing = await _insightFuture;
-    if (!mounted || existing != null) return;
-    await _refreshInsight(entry);
   }
 
   Future<void> _refreshInsight([DiaryEntry? source]) async {
@@ -220,10 +219,12 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _analysisError = null;
     });
     try {
-      final insight = await _analysisService.analyzeEntry(entry);
+      await _repository.saveEntry(entry);
+      await _analysisQueueRunner.enqueue(entry, start: false);
+      unawaited(_analysisQueueRunner.processNext());
       if (!mounted) return;
       setState(() {
-        _insightFuture = Future.value(insight);
+        _insightFuture = _insightRepository.getInsight(entry.id);
       });
     } on Object catch (error) {
       if (!mounted) return;
@@ -1070,6 +1071,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
         body: Column(
           children: [
             _DiaryMetaBar(
+              isEditing: _isEditing,
               dateLabel: _dateLabel,
               location: _selectedLocation,
               weather: _weather,
@@ -1083,19 +1085,32 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
               child: _isEditing
                   ? (_isPreview
                       ? _MarkdownPreview(text: _controller.text)
-                      : TextField(
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          expands: true,
-                          maxLines: null,
-                          minLines: null,
-                          keyboardType: TextInputType.multiline,
-                          textAlignVertical: TextAlignVertical.top,
-                          decoration: InputDecoration(
-                            contentPadding:
-                                const EdgeInsets.fromLTRB(24, 20, 24, 20),
-                            border: InputBorder.none,
-                            hintText: _placeholder,
+                      : Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 760),
+                            child: TextField(
+                              controller: _controller,
+                              focusNode: _focusNode,
+                              expands: true,
+                              maxLines: null,
+                              minLines: null,
+                              keyboardType: TextInputType.multiline,
+                              textAlignVertical: TextAlignVertical.top,
+                              style: const TextStyle(
+                                fontSize: 17,
+                                height: 1.72,
+                                letterSpacing: 0,
+                              ),
+                              decoration: InputDecoration(
+                                contentPadding:
+                                    const EdgeInsets.fromLTRB(22, 22, 22, 28),
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                filled: false,
+                                hintText: _placeholder,
+                              ),
+                            ),
                           ),
                         ))
                   : _DiaryReadView(
@@ -1144,6 +1159,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
 
 class _DiaryMetaBar extends StatelessWidget {
   const _DiaryMetaBar({
+    required this.isEditing,
     required this.dateLabel,
     required this.location,
     required this.weather,
@@ -1154,6 +1170,7 @@ class _DiaryMetaBar extends StatelessWidget {
     required this.onOpenWeather,
   });
 
+  final bool isEditing;
   final String dateLabel;
   final String location;
   final String weather;
@@ -1170,82 +1187,175 @@ class _DiaryMetaBar extends StatelessWidget {
         ? baseWeather
         : '$baseWeather ${temperature!.replaceAll('℃', '°')}';
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-        child: Wrap(
-          alignment: WrapAlignment.start,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            _HoverChip(
-                onTap: onOpenDate,
-                child: Text(dateLabel,
-                    style: Theme.of(context).textTheme.bodySmall)),
-            Text(' · ', style: Theme.of(context).textTheme.bodySmall),
-            _HoverChip(
-              onTap: isLoadingLocation ? null : onOpenLocation,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (isLoadingLocation) ...[
-                    const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 1.4)),
-                    const SizedBox(width: 4),
-                  ],
-                  Text(location, style: Theme.of(context).textTheme.bodySmall),
-                ],
-              ),
+    final locationLabel = location.trim().isEmpty ? '未选择地点' : location;
+
+    if (!isEditing) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(22, 2, 22, 10),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: _ReadMetaTags(
+              dateLabel: dateLabel,
+              locationLabel: locationLabel,
+              weatherLabel: weatherLabel.trim().isEmpty ? '天气' : weatherLabel,
             ),
-            if (weatherLabel.trim().isNotEmpty) ...[
-              Text(' · ', style: Theme.of(context).textTheme.bodySmall),
-              _HoverChip(
-                onTap: onOpenWeather,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_weatherIcon(weather),
-                        style: Theme.of(context).textTheme.bodySmall),
-                    Text(weatherLabel,
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
-              ),
-            ],
+          ),
+        ),
+      );
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(
+          bottom:
+              BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+        ),
+      ),
+      child: SizedBox(
+        height: 48,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          children: [
+            _MetaPill(
+              icon: Icons.calendar_today_outlined,
+              label: dateLabel,
+              onTap: onOpenDate,
+            ),
+            const SizedBox(width: 8),
+            _MetaPill(
+              icon: Icons.place_outlined,
+              label: locationLabel,
+              isLoading: isLoadingLocation,
+              onTap: isLoadingLocation ? null : onOpenLocation,
+            ),
+            const SizedBox(width: 8),
+            _MetaPill(
+              icon: _weatherMaterialIcon(weather),
+              label: weatherLabel.trim().isEmpty ? '天气' : weatherLabel,
+              onTap: onOpenWeather,
+            ),
           ],
         ),
       ),
     );
   }
 
-  String _weatherIcon(String weather) {
-    if (weather.contains('雨')) return '🌧';
-    if (weather.contains('雪')) return '❄️';
-    if (weather.contains('云')) return '⛅';
-    if (weather.contains('雾')) return '🌫';
-    if (weather.contains('雷')) return '⛈';
-    if (weather.contains('晴')) return '☀️';
-    return '';
+  IconData _weatherMaterialIcon(String weather) {
+    if (weather.contains('雨')) return Icons.water_drop_outlined;
+    if (weather.contains('雪')) return Icons.ac_unit;
+    if (weather.contains('云')) return Icons.cloud_outlined;
+    if (weather.contains('雾')) return Icons.blur_on;
+    if (weather.contains('雷')) return Icons.thunderstorm_outlined;
+    if (weather.contains('晴')) return Icons.wb_sunny_outlined;
+    return Icons.thermostat_outlined;
   }
 }
 
-class _HoverChip extends StatelessWidget {
-  const _HoverChip({required this.child, required this.onTap});
+class _MetaPill extends StatelessWidget {
+  const _MetaPill({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isLoading = false,
+  });
 
-  final Widget child;
+  final IconData icon;
+  final String label;
   final VoidCallback? onTap;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: child,
+    final theme = Theme.of(context);
+    final enabled = onTap != null;
+    return Material(
+      color: theme.colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(999),
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isLoading)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 1.6),
+                )
+              else
+                Icon(
+                  icon,
+                  size: 15,
+                  color: enabled
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 220),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: enabled
+                        ? theme.colorScheme.onSurface
+                        : theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReadMetaTags extends StatelessWidget {
+  const _ReadMetaTags({
+    required this.dateLabel,
+    required this.locationLabel,
+    required this.weatherLabel,
+  });
+
+  final String dateLabel;
+  final String locationLabel;
+  final String weatherLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.78),
+      height: 1.45,
+      fontWeight: FontWeight.w400,
+    );
+    final items = [
+      dateLabel,
+      locationLabel,
+      if (weatherLabel.trim().isNotEmpty) weatherLabel,
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0)
+            Text('/', style: style?.copyWith(color: theme.colorScheme.outline)),
+          Text(items[i], style: style),
+        ],
+      ],
     );
   }
 }
@@ -1291,106 +1401,145 @@ class _EditorAccessoryBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onSecondaryTapDown: (details) =>
-                        onHeadingLongPress(details.globalPosition),
-                    onLongPressStart: (details) =>
-                        onHeadingLongPress(details.globalPosition),
-                    child: IconButton(
-                      tooltip: '小标题',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: onHeading,
-                      icon: Text('H$headingLevel',
-                          style: const TextStyle(fontWeight: FontWeight.w700)),
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: 0.96),
+        border: Border(top: BorderSide(color: colors.outlineVariant)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
+        child: Row(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onSecondaryTapDown: (details) =>
+                          onHeadingLongPress(details.globalPosition),
+                      onLongPressStart: (details) =>
+                          onHeadingLongPress(details.globalPosition),
+                      child: _ToolButton(
+                        tooltip: '小标题',
+                        onPressed: onHeading,
+                        child: Text('H$headingLevel',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: '加粗',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onBold,
-                    icon: const Icon(Icons.format_bold),
-                  ),
-                  IconButton(
-                    tooltip: '斜体',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onItalic,
-                    icon: const Icon(Icons.format_italic),
-                  ),
-                  IconButton(
-                    tooltip: '引用',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onQuote,
-                    icon: const Icon(Icons.format_quote),
-                  ),
-                  GestureDetector(
-                    onSecondaryTapDown: (details) =>
-                        onListLongPress(details.globalPosition),
-                    onLongPressStart: (details) =>
-                        onListLongPress(details.globalPosition),
-                    child: IconButton(
-                      tooltip: '列表',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: onList,
-                      icon: const Icon(Icons.format_list_bulleted),
+                    _ToolButton(
+                      tooltip: '加粗',
+                      onPressed: onBold,
+                      icon: Icons.format_bold,
                     ),
-                  ),
-                  IconButton(
-                    tooltip: '分割线',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onDivider,
-                    icon: const Icon(Icons.horizontal_rule),
-                  ),
-                  IconButton(
-                    tooltip: '图片',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onImage,
-                    icon: const Icon(Icons.image_outlined),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: '撤销',
-                visualDensity: VisualDensity.compact,
-                onPressed: canUndo ? onUndo : null,
-                icon: const Icon(Icons.undo),
-              ),
-              IconButton(
-                tooltip: '重做',
-                visualDensity: VisualDensity.compact,
-                onPressed: canRedo ? onRedo : null,
-                icon: const Icon(Icons.redo),
-              ),
-              GestureDetector(
-                onSecondaryTapDown: (details) =>
-                    onAiFixLongPress(details.globalPosition),
-                onLongPressStart: (details) =>
-                    onAiFixLongPress(details.globalPosition),
-                child: IconButton(
-                  tooltip: 'AI修复',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: canAiFix ? onAiFix : null,
-                  icon: const Icon(Icons.auto_fix_high),
+                    _ToolButton(
+                      tooltip: '斜体',
+                      onPressed: onItalic,
+                      icon: Icons.format_italic,
+                    ),
+                    _ToolButton(
+                      tooltip: '引用',
+                      onPressed: onQuote,
+                      icon: Icons.format_quote,
+                    ),
+                    GestureDetector(
+                      onSecondaryTapDown: (details) =>
+                          onListLongPress(details.globalPosition),
+                      onLongPressStart: (details) =>
+                          onListLongPress(details.globalPosition),
+                      child: _ToolButton(
+                        tooltip: '列表',
+                        onPressed: onList,
+                        icon: Icons.format_list_bulleted,
+                      ),
+                    ),
+                    _ToolButton(
+                      tooltip: '分割线',
+                      onPressed: onDivider,
+                      icon: Icons.horizontal_rule,
+                    ),
+                    _ToolButton(
+                      tooltip: '图片',
+                      onPressed: onImage,
+                      icon: Icons.image_outlined,
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+            const SizedBox(width: 8),
+            _ToolButton(
+              tooltip: '撤销',
+              onPressed: canUndo ? onUndo : null,
+              icon: Icons.undo,
+            ),
+            _ToolButton(
+              tooltip: '重做',
+              onPressed: canRedo ? onRedo : null,
+              icon: Icons.redo,
+            ),
+            GestureDetector(
+              onSecondaryTapDown: (details) =>
+                  onAiFixLongPress(details.globalPosition),
+              onLongPressStart: (details) =>
+                  onAiFixLongPress(details.globalPosition),
+              child: _ToolButton(
+                tooltip: 'AI修复',
+                onPressed: canAiFix ? onAiFix : null,
+                icon: Icons.auto_fix_high,
+                isProminent: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ToolButton extends StatelessWidget {
+  const _ToolButton({
+    required this.tooltip,
+    required this.onPressed,
+    this.icon,
+    this.child,
+    this.isProminent = false,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+  final Widget? child;
+  final bool isProminent;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final enabled = onPressed != null;
+    final foreground = isProminent && enabled
+        ? colors.primary
+        : enabled
+            ? colors.onSurfaceVariant
+            : colors.onSurface.withValues(alpha: 0.32);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 1),
+      child: IconButton(
+        tooltip: tooltip,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+        style: IconButton.styleFrom(
+          foregroundColor: foreground,
+          backgroundColor: isProminent && enabled
+              ? colors.primary.withValues(alpha: 0.10)
+              : Colors.transparent,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        onPressed: onPressed,
+        icon: child ?? Icon(icon, size: 21),
       ),
     );
   }
@@ -1504,6 +1653,7 @@ class _WeatherSheetState extends State<_WeatherSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return SafeArea(
       top: false,
       child: Padding(
@@ -1515,9 +1665,10 @@ class _WeatherSheetState extends State<_WeatherSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('天气温度',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
+            Text('天气温度',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 14),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1530,7 +1681,7 @@ class _WeatherSheetState extends State<_WeatherSheet> {
                   ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             TextField(
               controller: _temperatureController,
               enabled: _showTemperature,
@@ -1544,11 +1695,14 @@ class _WeatherSheetState extends State<_WeatherSheet> {
               value: _showTemperature,
               onChanged: (value) => setState(() => _showTemperature = value),
             ),
+            const SizedBox(height: 8),
             Row(
               children: [
-                TextButton(
-                    onPressed: () => _submit(weather: '昨日'),
-                    child: const Text('改为昨日')),
+                TextButton.icon(
+                  onPressed: () => _submit(weather: ''),
+                  icon: const Icon(Icons.clear),
+                  label: const Text('清空'),
+                ),
                 const Spacer(),
                 TextButton(
                     onPressed: () => Navigator.of(context).pop(),
@@ -1589,10 +1743,24 @@ class _LocationSheet extends StatefulWidget {
 }
 
 class _LocationSheetState extends State<_LocationSheet> {
+  late final TextEditingController _manualController;
+
   String get _initialLocation =>
       widget.currentLocation == '未选择地点' || widget.currentLocation == '点击选择地点'
           ? ''
           : widget.currentLocation;
+
+  @override
+  void initState() {
+    super.initState();
+    _manualController = TextEditingController(text: _initialLocation);
+  }
+
+  @override
+  void dispose() {
+    _manualController.dispose();
+    super.dispose();
+  }
 
   Future<void> _openMapPicker() async {
     final result = await Navigator.of(context).push<LocationWeather>(
@@ -1607,8 +1775,21 @@ class _LocationSheetState extends State<_LocationSheet> {
     Navigator.of(context).pop(result);
   }
 
+  void _submitManualLocation() {
+    final location = _manualController.text.trim();
+    if (location.isEmpty) return;
+    Navigator.of(context).pop(LocationWeather(
+      latitude: 0,
+      longitude: 0,
+      locationName: location,
+      weather: widget.weather,
+      temperature: widget.temperature ?? '',
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return SafeArea(
       top: false,
       child: Padding(
@@ -1620,11 +1801,30 @@ class _LocationSheetState extends State<_LocationSheet> {
         child: ListView(
           shrinkWrap: true,
           children: [
-            const Text('选择地点',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+            Text('选择地点',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _manualController,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submitManualLocation(),
+              decoration: InputDecoration(
+                labelText: '手动输入地点',
+                hintText: '例如：上海 · 徐汇，或者家附近的咖啡店',
+                prefixIcon: const Icon(Icons.edit_location_alt_outlined),
+                suffixIcon: IconButton(
+                  tooltip: '使用输入地点',
+                  onPressed: _submitManualLocation,
+                  icon: const Icon(Icons.check),
+                ),
+              ),
+            ),
             const SizedBox(height: 12),
             ListTile(
-              contentPadding: EdgeInsets.zero,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
               leading: const Icon(Icons.my_location_outlined),
               title: Text(
                   '当前（${_initialLocation.isEmpty ? '未选择地点' : _initialLocation}）'),
@@ -1643,19 +1843,35 @@ class _LocationSheetState extends State<_LocationSheet> {
                         temperature: widget.temperature ?? '',
                       )),
             ),
+            const SizedBox(height: 10),
+            ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              leading: const Icon(Icons.map_outlined),
+              title: const Text('地图选点'),
+              subtitle: const Text('搜索地点、定位或移动地图中心点'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _openMapPicker,
+            ),
             const Divider(height: 28),
             Text('最近使用', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 6),
             if (widget.recentLocations.isEmpty)
-              Text('无最近使用的地点',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Theme.of(context).disabledColor))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text('无最近使用的地点',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Theme.of(context).disabledColor)),
+              )
             else
               for (final item in widget.recentLocations)
                 ListTile(
-                  contentPadding: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   leading: const Icon(Icons.history),
                   title: Text(item.locationName),
                   subtitle: Text([
@@ -1664,15 +1880,6 @@ class _LocationSheetState extends State<_LocationSheet> {
                   ].join(' · ')),
                   onTap: () => Navigator.of(context).pop(item),
                 ),
-            const Divider(height: 28),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.map_outlined),
-              title: const Text('地图选点'),
-              subtitle: const Text('打开地图页面搜索或定位'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _openMapPicker,
-            ),
             const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerLeft,
@@ -1755,47 +1962,82 @@ class _DiaryReadView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lines = text.isEmpty ? ['还没有内容。'] : text.split('\n');
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
-      children: [
-        for (final line in lines) _PreviewLine(line: line),
-        const SizedBox(height: 22),
-        Center(
-          child: Container(
-            width: 56,
-            height: 1,
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(22, 18, 22, 34),
+          children: [
+            for (final line in lines) _PreviewLine(line: line),
+            const SizedBox(height: 26),
+            _SoftDivider(),
+            const SizedBox(height: 20),
+            _ReadInsightSection(
+              isAnalyzing: isAnalyzing,
+              insightFuture: insightFuture,
+              error: error,
+            ),
+            const SizedBox(height: 24),
+            _ReadEndMark(
+              onRefresh: isAnalyzing ? null : onRefresh,
+            ),
+          ],
         ),
-        const SizedBox(height: 22),
-        _ReadInsightSection(
-          isAnalyzing: isAnalyzing,
-          insightFuture: insightFuture,
-          error: error,
-        ),
-        const SizedBox(height: 28),
-        Center(
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'END · 仅供参考',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Theme.of(context).colorScheme.outline),
+      ),
+    );
+  }
+}
+
+class _SoftDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 42,
+        height: 1,
+        color:
+            Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.7),
+      ),
+    );
+  }
+}
+
+class _ReadEndMark extends StatelessWidget {
+  const _ReadEndMark({required this.onRefresh});
+
+  final VoidCallback? onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.outline.withValues(alpha: 0.72);
+    return Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 18, height: 1, color: color.withValues(alpha: 0.42)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              'END',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: color,
+                letterSpacing: 1.8,
+                fontWeight: FontWeight.w500,
               ),
-              IconButton(
-                tooltip: '重新分析',
-                visualDensity: VisualDensity.compact,
-                onPressed: isAnalyzing ? null : onRefresh,
-                icon: Icon(Icons.refresh,
-                    size: 16, color: Theme.of(context).colorScheme.outline),
-              ),
-            ],
+            ),
           ),
-        ),
-      ],
+          Container(width: 18, height: 1, color: color.withValues(alpha: 0.42)),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: '重新分析',
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            onPressed: onRefresh,
+            icon: Icon(Icons.refresh, size: 14, color: color),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1865,7 +2107,7 @@ class _InsightLoadingBlockState extends State<_InsightLoadingBlock>
                 SizedBox(width: 10),
                 Text('正在分析这篇日记',
                     style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
               ],
             ),
             SizedBox(height: 10),
@@ -1906,10 +2148,8 @@ class _InsightResultBlock extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('日记 AI 分析',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 10),
-        if (insight.reflection.isNotEmpty) Text(insight.reflection),
+        if (insight.reflection.isNotEmpty)
+          SimpleMarkdownText(text: insight.reflection),
         if (insight.relatedMemories.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text('关联日记', style: Theme.of(context).textTheme.titleSmall),
@@ -1930,8 +2170,10 @@ class _InsightResultBlock extends StatelessWidget {
             Text(insight.stoneTitle,
                 style: const TextStyle(fontWeight: FontWeight.w600)),
           if (insight.stoneDescription.isNotEmpty)
-            Text(insight.stoneDescription),
+            SimpleMarkdownText(text: insight.stoneDescription),
         ],
+        const SizedBox(height: 12),
+        AiFeedbackBar(entryId: insight.entryId),
       ],
     );
   }

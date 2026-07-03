@@ -5,53 +5,182 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AMap Picker</title>
   <style>
-    html, body, #map { margin:0; padding:0; width:100%; height:100%; overflow:hidden; font-family: Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body, #map {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #222;
+    }
+    body { background: #f7f3ec; }
+    #map { position: absolute; inset: 0; }
     #topbar {
-      position:absolute; left:12px; right:12px; top:12px; z-index:10; display:flex; gap:8px;
-      background:rgba(255,255,255,.96); padding:10px; border-radius:12px; box-shadow:0 4px 14px rgba(0,0,0,.12);
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      top: 14px;
+      z-index: 20;
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid rgba(40, 36, 30, .08);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, .14);
+      backdrop-filter: blur(12px);
     }
-    #search { flex:1; height:38px; border:1px solid #ddd; border-radius:10px; padding:0 12px; }
-    #locate { width:44px; border:none; border-radius:10px; background:#f1f3f5; cursor:pointer; }
+    #searchWrap { position: relative; flex: 1; }
+    #search {
+      width: 100%;
+      height: 42px;
+      border: 0;
+      outline: none;
+      border-radius: 12px;
+      background: #f6f3ef;
+      padding: 0 38px 0 14px;
+      font-size: 15px;
+      color: #27231f;
+    }
+    #search:focus { box-shadow: inset 0 0 0 1.4px #5b8c85; background: #fff; }
+    #clear {
+      position: absolute;
+      right: 4px;
+      top: 4px;
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: #8c867f;
+      cursor: pointer;
+      display: none;
+    }
+    #locate {
+      width: 44px;
+      height: 42px;
+      border: 0;
+      border-radius: 12px;
+      background: #eef3f1;
+      color: #446f69;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    #locate.loading { opacity: .55; cursor: wait; }
     #results {
-      position:absolute; left:12px; right:12px; top:72px; max-height:220px; overflow:auto; z-index:10;
-      background:rgba(255,255,255,.98); border-radius:12px; box-shadow:0 4px 14px rgba(0,0,0,.12); display:none;
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      top: 76px;
+      z-index: 20;
+      max-height: min(42vh, 360px);
+      overflow: auto;
+      border: 1px solid rgba(40, 36, 30, .08);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .98);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, .16);
+      display: none;
     }
-    .item { padding:10px 12px; border-bottom:1px solid #eee; cursor:pointer; }
-    .item:last-child { border-bottom:none; }
-    .title { font-size:14px; color:#222; }
-    .sub { font-size:12px; color:#666; margin-top:3px; }
+    .results-head {
+      padding: 10px 14px 6px;
+      font-size: 12px;
+      color: #8a8279;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px 12px;
+      padding: 12px 14px;
+      border-top: 1px solid #eee9e3;
+      cursor: pointer;
+    }
+    .item:hover { background: #f8f5f1; }
+    .title { min-width: 0; font-size: 14px; font-weight: 650; color: #25221e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sub { grid-column: 1 / 3; font-size: 12px; color: #746d65; line-height: 1.45; }
+    .distance { font-size: 12px; color: #5b8c85; white-space: nowrap; }
+    .empty { padding: 18px 14px; color: #8a8279; font-size: 13px; text-align: center; }
     #pin {
-      position:absolute; left:50%; top:50%; transform:translate(-50%, -100%); z-index:9; pointer-events:none;
-      width:18px; height:18px; background:#ff4d4f; border:3px solid #fff; border-radius:999px; box-shadow:0 2px 6px rgba(0,0,0,.2);
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 10;
+      transform: translate(-50%, -100%);
+      pointer-events: none;
+      color: #5b8c85;
+      filter: drop-shadow(0 3px 8px rgba(0, 0, 0, .28));
+      font-size: 38px;
+      line-height: 1;
     }
     #card {
-      position:absolute; left:12px; right:12px; bottom:12px; z-index:10;
-      background:rgba(255,255,255,.97); border-radius:14px; box-shadow:0 4px 14px rgba(0,0,0,.12); padding:12px;
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: calc(14px + env(safe-area-inset-bottom));
+      z-index: 20;
+      padding: 14px;
+      border: 1px solid rgba(40, 36, 30, .10);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .97);
+      box-shadow: 0 18px 44px rgba(0, 0, 0, .18);
+      backdrop-filter: blur(12px);
     }
-    #name { font-size:16px; font-weight:600; color:#222; }
-    #addr, #coord, #err { margin-top:6px; font-size:12px; color:#666; line-height:1.5; }
-    #err { color:#d93025; }
-    #confirm {
-      margin-top:10px; width:100%; height:40px; border:none; border-radius:10px;
-      background:#1677ff; color:#fff; cursor:pointer; font-size:14px;
+    #name { font-size: 16px; font-weight: 720; color: #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #addr, #coord, #err {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #746d65;
     }
-    #confirm:disabled { background:#b7c6d9; cursor:not-allowed; }
+    #err { color: #b14b3a; }
+    #actions {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    #confirm, #useCenter {
+      height: 42px;
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    #confirm { background: #5b8c85; color: #fff; }
+    #confirm:disabled { background: #c3cfcb; cursor: not-allowed; }
+    #useCenter { padding: 0 14px; background: #f1eee9; color: #514b45; }
+    @media (min-width: 720px) {
+      #topbar, #results, #card { left: 24px; right: auto; width: 420px; }
+      #card { bottom: 24px; }
+      #results { top: 86px; }
+    }
   </style>
 </head>
 <body>
+  <div id="map"></div>
+  <div id="pin">⌖</div>
   <div id="topbar">
-    <input id="search" placeholder="搜索地点" />
-    <button id="locate">◎</button>
+    <div id="searchWrap">
+      <input id="search" placeholder="搜索地点、店铺或地址" autocomplete="off" />
+      <button id="clear" title="清空">×</button>
+    </div>
+    <button id="locate" title="重新定位">◎</button>
   </div>
   <div id="results"></div>
-  <div id="pin"></div>
-  <div id="map"></div>
   <div id="card">
-    <div id="name">定位中</div>
+    <div id="name">正在准备地图</div>
     <div id="addr"></div>
     <div id="coord"></div>
     <div id="err"></div>
-    <button id="confirm" disabled>使用此地点</button>
+    <div id="actions">
+      <button id="confirm" disabled>使用此地点</button>
+      <button id="useCenter">取中心点</button>
+    </div>
   </div>
   <script>
     const params = new URLSearchParams(location.search);
@@ -60,6 +189,7 @@
     if (code) window._AMapSecurityConfig = { securityJsCode: code };
 
     const searchInput = document.getElementById('search');
+    const clearBtn = document.getElementById('clear');
     const locateBtn = document.getElementById('locate');
     const resultsBox = document.getElementById('results');
     const nameBox = document.getElementById('name');
@@ -67,11 +197,17 @@
     const coordBox = document.getElementById('coord');
     const errBox = document.getElementById('err');
     const confirmBtn = document.getElementById('confirm');
+    const useCenterBtn = document.getElementById('useCenter');
 
+    const fallbackCenter = [116.397428, 39.90923];
+    const recentKey = 'trace_stone_amap_recent_v2';
     let map = null;
     let geocoder = null;
     let geolocation = null;
     let selected = null;
+    let searchTimer = null;
+    let lastSearch = '';
+    let isReversePending = false;
 
     function emit(type, payload) {
       parent.postMessage(JSON.stringify({ source: 'trace_stone_amap', type, payload }), '*');
@@ -87,14 +223,46 @@
       });
     }
 
-    function setError(message) {
+    function setStatus(message, blocking = false) {
       errBox.textContent = message || '';
-      if (message) {
-        nameBox.textContent = '定位失败';
+      if (blocking) {
+        nameBox.textContent = message || '地图暂不可用';
         addrBox.textContent = '';
         coordBox.textContent = '';
         confirmBtn.disabled = true;
       }
+      if (message) emit('error', message);
+    }
+
+    function clearStatus() {
+      errBox.textContent = '';
+    }
+
+    function coordText(lat, lng) {
+      return `${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`;
+    }
+
+    function addressOfPoi(item) {
+      return `${item.pname || ''}${item.cityname || ''}${item.adname || ''}${item.address || ''}`;
+    }
+
+    function distanceText(lat, lng) {
+      if (!map) return '';
+      const center = map.getCenter();
+      const meters = haversine(center.lat, center.lng, lat, lng);
+      if (!Number.isFinite(meters)) return '';
+      if (meters < 1000) return `${Math.max(1, Math.round(meters))}m`;
+      return `${(meters / 1000).toFixed(meters < 10000 ? 1 : 0)}km`;
+    }
+
+    function haversine(lat1, lng1, lat2, lng2) {
+      const toRad = (value) => value * Math.PI / 180;
+      const r = 6371000;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     function normalizeAddress(regeocode, lng, lat) {
@@ -102,7 +270,7 @@
       const street = c.streetNumber || {};
       const poi = (regeocode.pois || [])[0] || {};
       return {
-        locationName: poi.name || regeocode.formatted_address || '当前位置',
+        locationName: poi.name || regeocode.formatted_address || '地图选点',
         latitude: lat,
         longitude: lng,
         weather: '',
@@ -131,146 +299,237 @@
       selected = location;
       nameBox.textContent = location.locationName || '未命名地点';
       addrBox.textContent = location.details?.formattedAddress || '';
-      coordBox.textContent = `${Number(location.latitude).toFixed(6)}, ${Number(location.longitude).toFixed(6)}`;
-      errBox.textContent = '';
+      coordBox.textContent = coordText(location.latitude, location.longitude);
       confirmBtn.disabled = false;
+      clearStatus();
       emit('select', location);
     }
 
-    function reverseAt(lng, lat) {
+    function reverseAt(lng, lat, options = {}) {
+      if (!geocoder || isReversePending) return;
+      isReversePending = true;
+      if (options.status) setStatus(options.status);
       geocoder.getAddress([lng, lat], (status, result) => {
+        isReversePending = false;
         if (status === 'complete' && result.regeocode) {
           renderSelected(normalizeAddress(result.regeocode, lng, lat));
         } else {
-          setError('无法解析当前位置，请移动地图或搜索地点。');
-          emit('error', '无法解析当前位置，请移动地图或搜索地点。');
+          renderSelected({
+            locationName: '地图选点',
+            latitude: lat,
+            longitude: lng,
+            weather: '',
+            temperature: '',
+            details: { source: 'amap', formattedAddress: '', latitude: lat, longitude: lng },
+          });
+          setStatus('无法解析地址，仍可使用当前坐标。');
         }
       });
     }
 
-    function renderResults(list) {
+    function readRecent() {
+      try {
+        return JSON.parse(localStorage.getItem(recentKey) || '[]');
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function saveRecent(keyword, items) {
+      if (!keyword || !items.length) return;
+      const current = readRecent().filter((item) => item.keyword !== keyword);
+      current.unshift({ keyword, time: Date.now(), items: items.slice(0, 3) });
+      localStorage.setItem(recentKey, JSON.stringify(current.slice(0, 6)));
+    }
+
+    function renderRecent() {
+      const recent = readRecent();
+      if (!recent.length || searchInput.value.trim()) return;
+      const rows = recent.flatMap((group) => group.items.map((item) => ({ ...item, keyword: group.keyword })));
+      renderResults(rows, { title: '最近搜索', hint: recent[0] ? `上次：${recent[0].keyword}` : '' });
+    }
+
+    function renderResults(list, meta = {}) {
       resultsBox.innerHTML = '';
       if (!list.length) {
         resultsBox.style.display = 'none';
         return;
       }
+      const head = document.createElement('div');
+      head.className = 'results-head';
+      head.innerHTML = `<span>${meta.title || `搜索结果 · ${list.length}`}</span><span>${meta.hint || (lastSearch ? `当前：${lastSearch}` : '')}</span>`;
+      resultsBox.appendChild(head);
       list.forEach((item) => {
-        if (!item.location) return;
+        const lng = Number(item.longitude ?? item.lng);
+        const lat = Number(item.latitude ?? item.lat);
+        if (!lng || !lat) return;
         const row = document.createElement('div');
         row.className = 'item';
-        row.innerHTML = `<div class="title">${item.name || ''}</div><div class="sub">${(item.pname || '')}${(item.cityname || '')}${(item.adname || '')}${(item.address || '')}</div>`;
+        row.innerHTML = `
+          <div class="title">${escapeHtml(item.name || '')}</div>
+          <div class="distance">${distanceText(lat, lng)}</div>
+          <div class="sub">${escapeHtml(item.address || '')}${item.keyword ? ` · 来自“${escapeHtml(item.keyword)}”` : ''}</div>
+        `;
         row.onclick = () => {
           resultsBox.style.display = 'none';
-          const [lng, lat] = String(item.location).split(',').map(Number);
-          if (!lng || !lat) return;
+          searchInput.value = item.name || lastSearch;
+          clearBtn.style.display = searchInput.value ? 'block' : 'none';
           map.setCenter([lng, lat]);
           map.setZoom(17);
-          reverseAt(lng, lat);
+          reverseAt(lng, lat, { status: '正在解析地点...' });
         };
         resultsBox.appendChild(row);
       });
+      if (resultsBox.children.length === 1) {
+        resultsBox.innerHTML = '<div class="empty">没有可用结果</div>';
+      }
       resultsBox.style.display = 'block';
     }
 
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[char]));
+    }
+
     async function searchPlaces(keyword) {
-      const url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(keyword)}&offset=10&page=1&extensions=all`;
+      lastSearch = keyword;
+      if (!keyword) {
+        renderRecent();
+        emit('results', { keyword, items: [] });
+        return;
+      }
+      resultsBox.innerHTML = '<div class="empty">正在搜索...</div>';
+      resultsBox.style.display = 'block';
+      const center = map ? map.getCenter() : null;
+      const cityLimit = '';
+      const location = center ? `&location=${center.lng},${center.lat}` : '';
+      const url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(keyword)}&offset=12&page=1&extensions=all${location}${cityLimit}`;
       const response = await fetch(url);
       const data = await response.json();
-      renderResults(data.pois || []);
+      const items = (data.pois || [])
+        .filter((item) => item.location)
+        .map((item) => {
+          const [lng, lat] = String(item.location).split(',').map(Number);
+          return {
+            name: item.name || '',
+            address: addressOfPoi(item),
+            latitude: lat || 0,
+            longitude: lng || 0,
+          };
+        });
+      saveRecent(keyword, items);
+      renderResults(items, { title: `搜索结果 · ${items.length}`, hint: `当前：${keyword}` });
+      emit('results', { keyword, items });
     }
 
     function locate() {
+      if (!geolocation) return;
+      locateBtn.classList.add('loading');
+      setStatus('正在定位...');
       geolocation.getCurrentPosition((status, result) => {
+        locateBtn.classList.remove('loading');
         if (status === 'complete' && result.position) {
           const lng = result.position.lng;
           const lat = result.position.lat;
           map.setCenter([lng, lat]);
           map.setZoom(17);
-          reverseAt(lng, lat);
+          reverseAt(lng, lat, { status: '正在解析当前位置...' });
         } else {
-          setError('定位失败');
-          emit('error', '定位失败');
+          const center = map.getCenter();
+          setStatus('当前浏览器无法定位，可搜索地点或移动地图中心点。');
+          reverseAt(center.lng, center.lat);
         }
       });
     }
 
+    function debounceSearch() {
+      clearTimeout(searchTimer);
+      const keyword = searchInput.value.trim();
+      clearBtn.style.display = keyword ? 'block' : 'none';
+      searchTimer = setTimeout(() => {
+        searchPlaces(keyword).catch(() => {
+          resultsBox.innerHTML = '<div class="empty">搜索失败，请稍后重试</div>';
+          resultsBox.style.display = 'block';
+          setStatus('搜索失败，请稍后重试。');
+          emit('results', { keyword, items: [] });
+        });
+      }, keyword ? 260 : 0);
+    }
+
     async function boot() {
       if (!key) {
-        setError('缺少高德 Key');
-        emit('error', '缺少高德 Key');
+        setStatus('缺少高德 Key', true);
         return;
       }
       try {
         await loadScript(`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geocoder,AMap.Geolocation`);
       } catch (_) {
-        setError('高德地图脚本加载失败');
-        emit('error', '高德地图脚本加载失败');
+        setStatus('高德地图脚本加载失败', true);
         return;
       }
 
       map = new AMap.Map('map', {
         resizeEnable: true,
         zoom: 15,
-        center: [116.397428, 39.90923],
+        center: fallbackCenter,
         dragEnable: true,
         zoomEnable: true,
         doubleClickZoom: true,
         scrollWheel: true,
       });
       geocoder = new AMap.Geocoder({ radius: 1000, extensions: 'all' });
-      geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000, zoomToAccuracy: true });
-      map.addControl(geolocation);
-
-      searchInput.addEventListener('input', async () => {
-        const value = searchInput.value.trim();
-        if (!value) {
-          renderResults([]);
-          return;
-        }
-        try {
-          await searchPlaces(value);
-        } catch (_) {
-          setError('搜索失败');
-        }
+      geolocation = new AMap.Geolocation({
+        enableHighAccuracy: true,
+        timeout: 8000,
+        zoomToAccuracy: true,
+        showButton: false,
       });
 
+      searchInput.addEventListener('focus', renderRecent);
+      searchInput.addEventListener('input', debounceSearch);
+      clearBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        clearBtn.style.display = 'none';
+        renderRecent();
+        searchInput.focus();
+      });
       locateBtn.addEventListener('click', locate);
+      useCenterBtn.addEventListener('click', () => {
+        const center = map.getCenter();
+        reverseAt(center.lng, center.lat, { status: '正在解析中心点...' });
+      });
       confirmBtn.addEventListener('click', () => {
         if (!selected) return;
         emit('confirm', selected);
       });
-
+      document.addEventListener('click', (event) => {
+        if (!resultsBox.contains(event.target) && event.target !== searchInput) {
+          resultsBox.style.display = 'none';
+        }
+      });
       map.on('moveend', () => {
         const center = map.getCenter();
         reverseAt(center.lng, center.lat);
       });
-
       map.on('click', (event) => {
         const lng = event.lnglat.lng;
         const lat = event.lnglat.lat;
         map.setCenter([lng, lat]);
         reverseAt(lng, lat);
       });
-
       window.addEventListener('message', (event) => {
         try {
           const data = JSON.parse(event.data || '{}');
           if (data.source !== 'trace_stone_flutter') return;
           if (data.type === 'locate') locate();
-          if (data.type === 'focus') {
-            const payload = data.payload || {};
-            const lng = Number(payload.longitude || 0);
-            const lat = Number(payload.latitude || 0);
-            if (lng && lat) {
-              map.setCenter([lng, lat]);
-              map.setZoom(17);
-              reverseAt(lng, lat);
-            }
-          }
         } catch (_) {}
       });
 
-      setTimeout(locate, 120);
+      emit('ready', true);
+      nameBox.textContent = '可搜索地点或移动地图';
+      setStatus('若服务器浏览器无法定位，请直接搜索地点。');
+      reverseAt(fallbackCenter[0], fallbackCenter[1]);
     }
 
     boot();

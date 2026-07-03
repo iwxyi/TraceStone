@@ -51,4 +51,13 @@ class InsightRepository {
     return DiaryAnalysisStatus.fromJson(
         jsonDecode(raw) as Map<String, dynamic>);
   }
+
+  Future<void> deleteForEntry(String entryId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_prefix$entryId');
+    await prefs.remove('$_statusPrefix$entryId');
+    if (prefs.getString(_latestKey) == entryId) {
+      await prefs.remove(_latestKey);
+    }
+  }
 }
