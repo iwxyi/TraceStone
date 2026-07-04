@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/ai_analysis_job.dart';
 import '../models/ai_profile_preference.dart';
 import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
@@ -86,6 +87,7 @@ class AiDataInventoryService {
         backupPolicy: '不要求跨设备恢复，可本地保留',
         deletePolicy: '任务完成、重建或来源删除时清理',
         exportPolicy: '开发者导出任务状态和错误摘要',
+        details: _queueDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -452,6 +454,124 @@ class AiDataInventoryService {
     ];
   }
 
+  List<String> _queueDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const prefix = 'ai.analysis.jobs.';
+    const indexKey = 'ai.analysis.jobs.index';
+    const pausedKey = 'ai.analysis.jobs.paused';
+    final objectKeys = keys
+        .where((key) =>
+            key.startsWith(prefix) && key != indexKey && key != pausedKey)
+        .toList(growable: false)
+      ..sort();
+    if (objectKeys.isEmpty &&
+        !keys.contains(indexKey) &&
+        !keys.contains(pausedKey)) {
+      return const [];
+    }
+
+    final stateCounts = <AiAnalysisJobState, int>{
+      for (final state in AiAnalysisJobState.values) state: 0,
+    };
+    final stageCounts = <AiAnalysisStage, int>{};
+    final batchIds = <String>{};
+    var retryableFailed = 0;
+    var blockedFailed = 0;
+    var retrying = 0;
+    var jobsWithError = 0;
+    var stageLogs = 0;
+    var stageLogErrors = 0;
+    var artifactRefs = 0;
+    var invalidRequired = 0;
+    var malformed = 0;
+
+    for (final key in objectKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final job = AiAnalysisJob.fromJson(decoded);
+        stateCounts.update(job.state, (value) => value + 1);
+        stageCounts.update(job.currentStage, (value) => value + 1,
+            ifAbsent: () => 1);
+        if (job.state == AiAnalysisJobState.failed) {
+          if (job.canRun) {
+            retryableFailed += 1;
+          } else {
+            blockedFailed += 1;
+          }
+        }
+        if (job.retryCount > 0) retrying += 1;
+        if ((job.lastError ?? '').trim().isNotEmpty) jobsWithError += 1;
+        stageLogs += job.stageLogs.length;
+        stageLogErrors += job.stageLogs
+            .where((log) => (log.error ?? '').trim().isNotEmpty)
+            .length;
+        artifactRefs += [
+          job.summaryId,
+          job.insightId,
+          job.retrievalTraceId,
+          ...job.segmentIds,
+          ...job.embeddingIds,
+        ].where((value) => (value ?? '').trim().isNotEmpty).length;
+        final batchId = job.batchId?.trim() ?? '';
+        if (batchId.isNotEmpty) batchIds.add(batchId);
+        final keyId = key.substring(prefix.length);
+        if (job.id.trim().isEmpty ||
+            job.entryId.trim().isEmpty ||
+            keyId != job.id) {
+          invalidRequired += 1;
+        }
+      } on Object {
+        malformed += 1;
+      }
+    }
+
+    final index = _safeGetInventoryStringList(prefs, indexKey) ?? const [];
+    final objectIds =
+        objectKeys.map((key) => key.substring(prefix.length)).toSet();
+    final staleIndex = index.where((id) => !objectIds.contains(id)).length;
+    final topStages = stageCounts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.name.compareTo(b.key.name);
+      });
+    final paused = _safeGetInventoryBool(prefs, pausedKey);
+    return [
+      'objects=${objectKeys.length}',
+      'indexed=${index.length}',
+      if (paused != null) 'paused=$paused',
+      'pending=${stateCounts[AiAnalysisJobState.pending] ?? 0}',
+      'running=${stateCounts[AiAnalysisJobState.running] ?? 0}',
+      'incomplete=${stateCounts[AiAnalysisJobState.incomplete] ?? 0}',
+      'failed=${stateCounts[AiAnalysisJobState.failed] ?? 0}',
+      'completed=${stateCounts[AiAnalysisJobState.completed] ?? 0}',
+      'retryableFailed=$retryableFailed',
+      'blockedFailed=$blockedFailed',
+      'retrying=$retrying',
+      'batches=${batchIds.length}',
+      'stageLogs=$stageLogs',
+      'stageLogErrors=$stageLogErrors',
+      'jobsWithError=$jobsWithError',
+      'artifactRefs=$artifactRefs',
+      if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+      if (malformed > 0) 'malformed=$malformed',
+      if (staleIndex > 0) 'staleIndex=$staleIndex',
+      if (topStages.isNotEmpty)
+        'topStages=${topStages.take(4).map((entry) => '${entry.key.name}:${entry.value}').join(',')}',
+    ];
+  }
+
   List<String> _relationshipMergeHistoryDetails(
     SharedPreferences prefs,
     Set<String> keys,
@@ -625,6 +745,15 @@ List<String>? _safeGetInventoryStringList(SharedPreferences prefs, String key) {
     if (value is List<String>) return List<String>.from(value);
     if (value is List) return value.whereType<String>().toList();
     return null;
+  } on Object {
+    return null;
+  }
+}
+
+bool? _safeGetInventoryBool(SharedPreferences prefs, String key) {
+  try {
+    final value = prefs.get(key);
+    return value is bool ? value : null;
   } on Object {
     return null;
   }

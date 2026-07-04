@@ -732,7 +732,46 @@ void main() {
             createdAt: DateTime(2026, 7, 3),
           ).toJson(),
         ),
-        'ai.analysis.jobs.entry-1': '{}',
+        'ai.analysis.jobs.paused': true,
+        'ai.analysis.jobs.index': <String>['entry-1', 'missing-job'],
+        'ai.analysis.jobs.entry-1': jsonEncode(
+          AiAnalysisJob(
+            id: 'entry-1',
+            entryId: 'entry-1',
+            pipelineVersion: 1,
+            state: AiAnalysisJobState.failed,
+            currentStage: AiAnalysisStage.generatingInsight,
+            createdAt: DateTime(2026, 7, 3),
+            updatedAt: DateTime(2026, 7, 3, 0, 2),
+            completedStages: const [
+              AiAnalysisStage.generatingSummary,
+              AiAnalysisStage.segmenting,
+            ],
+            stageLogs: [
+              AiAnalysisStageLog(
+                stage: AiAnalysisStage.generatingSummary,
+                startedAt: DateTime(2026, 7, 3),
+                message: '摘要完成',
+                outputSummary: 'summaryId=entry-1',
+              ),
+              AiAnalysisStageLog(
+                stage: AiAnalysisStage.generatingInsight,
+                startedAt: DateTime(2026, 7, 3, 0, 1),
+                message: '洞察失败',
+                error: 'AI unavailable',
+                retryCount: 1,
+              ),
+            ],
+            summaryId: 'entry-1',
+            segmentIds: const ['entry-1#s1'],
+            embeddingIds: const ['summary:entry-1'],
+            retrievalTraceId: 'trace-1',
+            retryCount: 1,
+            lastError: 'AI unavailable',
+            batchId: 'batch-import-1',
+            batchLabel: '导入补建',
+          ).toJson(),
+        ),
         'ai.promptTraces.companion:last': '{}',
         'ai.retrievalTraces.search:last': '{}',
         'ai.feedback.entry-1': '{}',
@@ -804,7 +843,27 @@ void main() {
       expect(memorySection.details, contains('topTags=恢复:1'));
       expect(memorySection.details, contains('topPeople=小王:1'));
       expect(counts['调试记录'], 3);
-      expect(counts['后台队列'], 1);
+      expect(counts['后台队列'], 3);
+      final queueSection =
+          inventory.sections.firstWhere((section) => section.label == '后台队列');
+      expect(queueSection.details, contains('objects=1'));
+      expect(queueSection.details, contains('indexed=2'));
+      expect(queueSection.details, contains('paused=true'));
+      expect(queueSection.details, contains('pending=0'));
+      expect(queueSection.details, contains('failed=1'));
+      expect(queueSection.details, contains('retryableFailed=1'));
+      expect(queueSection.details, contains('blockedFailed=0'));
+      expect(queueSection.details, contains('retrying=1'));
+      expect(queueSection.details, contains('batches=1'));
+      expect(queueSection.details, contains('stageLogs=2'));
+      expect(queueSection.details, contains('stageLogErrors=1'));
+      expect(queueSection.details, contains('jobsWithError=1'));
+      expect(queueSection.details, contains('artifactRefs=4'));
+      expect(queueSection.details, contains('staleIndex=1'));
+      expect(
+        queueSection.details,
+        contains('topStages=generatingInsight:1'),
+      );
       final profilePreferenceSection =
           inventory.sections.firstWhere((section) => section.label == '画像偏好');
       expect(profilePreferenceSection.details, contains('objects=1'));
@@ -842,7 +901,7 @@ void main() {
       expect(stoneSection.details, contains('sourcedTasks=1'));
       expect(stoneSection.details, contains('sourcedCheckIns=1'));
       expect(stoneSection.details, contains('topTags=恢复:1,运动:1'));
-      expect(inventory.totalCount, 17);
+      expect(inventory.totalCount, 19);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
@@ -851,6 +910,8 @@ void main() {
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
       expect(inventory.toDebugText(), contains('averageConfidence=0.30'));
       expect(inventory.toDebugText(), contains('topPeople=小王:1'));
+      expect(inventory.toDebugText(), contains('retryableFailed=1'));
+      expect(inventory.toDebugText(), contains('stageLogErrors=1'));
       expect(inventory.toDebugText(), contains('profileFacts=1'));
       expect(inventory.toDebugText(), contains('topPairs=小王->王同学:1'));
       expect(inventory.toDebugText(), contains('topMonths=lunar-5:1'));
