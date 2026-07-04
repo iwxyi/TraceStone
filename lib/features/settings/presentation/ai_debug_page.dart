@@ -21,6 +21,7 @@ import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
 import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/ai_artifact_rebuild_service.dart';
 import '../../../data/services/ai_data_inventory_service.dart';
 import '../../../data/services/ai_embedding_text_builder.dart';
 import '../../../data/services/embedding_service.dart';
@@ -806,6 +807,13 @@ class _JobCard extends StatelessWidget {
                       TextButton.icon(
                         onPressed: job.state == AiAnalysisJobState.running
                             ? null
+                            : () => _showPartialRebuildDialog(context),
+                        icon: const Icon(Icons.tune_outlined),
+                        label: const Text('局部重建'),
+                      ),
+                      TextButton.icon(
+                        onPressed: job.state == AiAnalysisJobState.running
+                            ? null
                             : () => _deleteJob(context),
                         icon: const Icon(Icons.delete_outline),
                         label: const Text('删除任务'),
@@ -886,6 +894,79 @@ class _JobCard extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _showPartialRebuildDialog(BuildContext context) async {
+    final target = await showDialog<AiArtifactRebuildTarget>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('局部重建本篇资料'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context)
+                .pop(AiArtifactRebuildTarget.summaryPackage),
+            child: const ListTile(
+              leading: Icon(Icons.summarize_outlined),
+              title: Text('摘要和片段'),
+              subtitle: Text('重建摘要包、日记片段，并刷新关联向量'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.of(context).pop(AiArtifactRebuildTarget.embeddings),
+            child: const ListTile(
+              leading: Icon(Icons.hub_outlined),
+              title: Text('多级向量'),
+              subtitle: Text('保留摘要和洞察，只重建 entry/summary/segment 向量'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.of(context).pop(AiArtifactRebuildTarget.insight),
+            child: const ListTile(
+              leading: Icon(Icons.auto_awesome_outlined),
+              title: Text('今日洞察'),
+              subtitle: Text('重新检索上下文并生成洞察，不改原始日记'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (target == null) return;
+    if (!context.mounted) return;
+    await _partialRebuild(context, target);
+  }
+
+  Future<void> _partialRebuild(
+    BuildContext context,
+    AiArtifactRebuildTarget target,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      const service = AiArtifactRebuildService();
+      final result = switch (target) {
+        AiArtifactRebuildTarget.summaryPackage =>
+          await service.rebuildSummaryPackage(job.entryId),
+        AiArtifactRebuildTarget.embeddings =>
+          await service.rebuildEmbeddings(job.entryId),
+        AiArtifactRebuildTarget.insight =>
+          await service.rebuildInsight(job.entryId),
+      };
+      if (!context.mounted) return;
+      if (result == null) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('日记不存在或内容为空，无法局部重建')),
+        );
+        return;
+      }
+      onChanged();
+      messenger.showSnackBar(SnackBar(content: Text(result.message)));
+    } on Object catch (error) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('局部重建失败：$error')),
+      );
+    }
   }
 
   Future<void> _reenqueue(BuildContext context) async {

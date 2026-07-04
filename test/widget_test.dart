@@ -1741,6 +1741,56 @@ void main() {
     expect(copiedText, contains('note=把情绪判断错了'));
   });
 
+  testWidgets('AI debug page rebuilds embeddings from job actions',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const diaryRepository = DiaryRepository();
+    const summaryRepository = EntrySummaryRepository();
+    const queueRepository = AiAnalysisQueueRepository();
+    final date = DateTime(2026, 7, 3);
+    final entry = DiaryEntry(
+      id: 'debug-partial-rebuild-entry',
+      date: date,
+      createdAt: date,
+      content: '今天散步以后，焦虑下降了一些。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    );
+    await diaryRepository.saveEntry(entry);
+    final segments = const EntrySummaryService().buildSegments(entry);
+    await summaryRepository.saveSegments(entry.id, segments);
+    await summaryRepository.saveSummary(
+      const EntrySummaryService().buildSummary(entry, segments),
+    );
+    await queueRepository.enqueueEntry(entry);
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('局部重建'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -120));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '局部重建'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('局部重建本篇资料'), findsOneWidget);
+    expect(find.text('摘要和片段'), findsOneWidget);
+    expect(find.text('多级向量'), findsOneWidget);
+    expect(find.text('今日洞察'), findsOneWidget);
+    await tester.tap(find.text('多级向量'));
+    await tester.pumpAndSettle();
+
+    final job = await queueRepository.getJob(entry.id);
+    expect(find.text('已重建多级向量'), findsOneWidget);
+    expect(job?.stageLogs.last.message, '开发者重建多级向量');
+    expect(job?.embeddingIds, contains('entry:${entry.id}'));
+  });
+
   testWidgets('corrects entry summary from AI debug page', (tester) async {
     SharedPreferences.setMockInitialValues({});
     String? copiedText;

@@ -36,6 +36,7 @@ import 'package:trace_stone/data/repositories/period_summary_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_analysis_queue_runner.dart';
+import 'package:trace_stone/data/services/ai_artifact_rebuild_service.dart';
 import 'package:trace_stone/data/services/ai_client_service.dart';
 import 'package:trace_stone/data/services/ai_data_inventory_service.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
@@ -697,6 +698,117 @@ void main() {
       expect(inventory.totalCount, 13);
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
+    });
+  });
+
+  group('AiArtifactRebuildService', () {
+    test('rebuilds summary package and multi-level embeddings', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const service = AiArtifactRebuildService();
+      final entry = _entry(
+        id: 'rebuild-summary-entry',
+        date: DateTime(2026, 7, 3),
+        content: '上午处理工作压力。\n\n---\n\n晚上散步以后恢复了一点。',
+      );
+      await diaryRepository.saveEntry(entry);
+
+      final result = await service.rebuildSummaryPackage(entry.id);
+      final summary = await summaryRepository.getSummary(entry.id);
+      final segments = await summaryRepository.listSegments(entry.id);
+      final embeddings = await embeddingRepository.listForEntry(entry.id);
+      final job = await queueRepository.getJob(entry.id);
+
+      expect(result?.target, AiArtifactRebuildTarget.summaryPackage);
+      expect(summary, isNotNull);
+      expect(segments.length, greaterThan(1));
+      expect(
+          embeddings.map((embedding) => embedding.sourceType),
+          containsAll([
+            AiEmbeddingSourceType.entry,
+            AiEmbeddingSourceType.summary,
+            AiEmbeddingSourceType.segment,
+          ]));
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.stageLogs.last.message, '开发者重建摘要包和日记片段');
+      expect(job?.stageLogs.last.outputSummary, contains('embeddings='));
+    });
+
+    test('rebuilds embeddings without replacing the summary package', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const summaryService = EntrySummaryService();
+      const embeddingService = EmbeddingService();
+      const service = AiArtifactRebuildService();
+      final entry = _entry(
+        id: 'rebuild-embedding-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天散步以后，焦虑下降了一些。',
+      );
+      await diaryRepository.saveEntry(entry);
+      final segments = summaryService.buildSegments(entry);
+      final summary = summaryService.buildSummary(entry, segments);
+      await summaryRepository.saveSegments(entry.id, segments);
+      await summaryRepository.saveSummary(summary);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: entry.id,
+        text: '旧向量内容',
+        generatedAt: DateTime(2026, 7, 1),
+      );
+
+      final before = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: entry.id,
+      );
+      final result = await service.rebuildEmbeddings(entry.id);
+      final after = await embeddingRepository.getBySource(
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: entry.id,
+      );
+      final savedSummary = await summaryRepository.getSummary(entry.id);
+      final job = await queueRepository.getJob(entry.id);
+
+      expect(result?.target, AiArtifactRebuildTarget.embeddings);
+      expect(savedSummary?.generatedAt, summary.generatedAt);
+      expect(after?.textHash, isNot(before?.textHash));
+      expect((await embeddingRepository.listForEntry(entry.id)).length,
+          2 + segments.length);
+      expect(job?.stageLogs.last.message, '开发者重建多级向量');
+    });
+
+    test('rebuilds today insight and records the debug action', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const insightRepository = InsightRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'rebuild-insight-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天写了一条适合重新生成洞察的日记。',
+      );
+      await diaryRepository.saveEntry(entry);
+
+      final result = await const AiArtifactRebuildService(
+        analysisService: _FakeDiaryAnalysisService(),
+      ).rebuildInsight(entry.id);
+      final insight = await insightRepository.getInsight(entry.id);
+      final job = await queueRepository.getJob(entry.id);
+
+      expect(result?.target, AiArtifactRebuildTarget.insight);
+      expect(insight?.reflection, '本地测试洞察');
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.stageLogs.last.message, '开发者重建今日洞察');
+      expect(job?.stageLogs.last.outputSummary, contains('facts=1'));
     });
   });
 
