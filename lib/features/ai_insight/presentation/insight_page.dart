@@ -262,7 +262,7 @@ class _InsightBody extends StatelessWidget {
   String _dateLabel(DateTime date) => '${date.year}年${date.month}月${date.day}日';
 }
 
-class _EntrySummaryCard extends StatelessWidget {
+class _EntrySummaryCard extends StatefulWidget {
   const _EntrySummaryCard({
     required this.summary,
     required this.onChanged,
@@ -274,7 +274,31 @@ class _EntrySummaryCard extends StatelessWidget {
   final bool developerMode;
 
   @override
+  State<_EntrySummaryCard> createState() => _EntrySummaryCardState();
+}
+
+class _EntrySummaryCardState extends State<_EntrySummaryCard> {
+  late Future<List<EntrySummaryRevision>> _revisionsFuture = _loadRevisions();
+
+  @override
+  void didUpdateWidget(covariant _EntrySummaryCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.summary.entryId != widget.summary.entryId ||
+        oldWidget.summary.revision != widget.summary.revision ||
+        oldWidget.developerMode != widget.developerMode) {
+      _revisionsFuture = _loadRevisions();
+    }
+  }
+
+  Future<List<EntrySummaryRevision>> _loadRevisions() {
+    if (!widget.developerMode) return Future.value(const []);
+    return const EntrySummaryRepository()
+        .listSummaryRevisions(widget.summary.entryId);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final summary = widget.summary;
     final title = summary.title.trim();
     return _SectionCard(
       title: '日记摘要',
@@ -311,7 +335,7 @@ class _EntrySummaryCard extends StatelessWidget {
                 child: Text('“$quote”'),
               ),
           ],
-          if (developerMode) ...[
+          if (widget.developerMode) ...[
             const SizedBox(height: 8),
             Text(
               'generator=${summary.generator} revision=${summary.revision}'
@@ -324,6 +348,17 @@ class _EntrySummaryCard extends StatelessWidget {
                 'qualityWarnings=${summary.qualityWarnings.join('、')}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
+            FutureBuilder<List<EntrySummaryRevision>>(
+              future: _revisionsFuture,
+              builder: (context, snapshot) {
+                final revisions = snapshot.data ?? const [];
+                if (revisions.isEmpty) return const SizedBox.shrink();
+                return _SummaryRevisionAudit(
+                  revisions: revisions,
+                  summary: summary,
+                );
+              },
+            ),
           ],
         ],
       ),
@@ -333,11 +368,11 @@ class _EntrySummaryCard extends StatelessWidget {
   Future<void> _editSummary(BuildContext context) async {
     final edited = await showDialog<_SummaryEditResult>(
       context: context,
-      builder: (context) => _SummaryEditDialog(summary: summary),
+      builder: (context) => _SummaryEditDialog(summary: widget.summary),
     );
     if (edited == null || edited.brief.isEmpty) return;
     final updated = await const EntrySummaryRepository().correctSummaryPackage(
-      entryId: summary.entryId,
+      entryId: widget.summary.entryId,
       title: edited.title,
       brief: edited.brief,
       keyPoints: edited.keyPoints,
@@ -350,11 +385,94 @@ class _EntrySummaryCard extends StatelessWidget {
       );
       return;
     }
-    await onChanged();
+    await widget.onChanged();
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已修正摘要并刷新向量')),
     );
+  }
+}
+
+class _SummaryRevisionAudit extends StatelessWidget {
+  const _SummaryRevisionAudit({
+    required this.revisions,
+    required this.summary,
+  });
+
+  final List<EntrySummaryRevision> revisions;
+  final EntrySummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '修订历史 ${revisions.length}',
+                  style: theme.textTheme.labelLarge,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _copy(context),
+                icon: const Icon(Icons.copy_all_outlined),
+                label: const Text('复制修订'),
+              ),
+            ],
+          ),
+          for (final revision in revisions.take(3))
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'r${revision.revision} ${revision.previousQualityScore.toStringAsFixed(2)} -> '
+                '${revision.updatedQualityScore.toStringAsFixed(2)}｜'
+                '${_compact(revision.previousBrief)} => ${_compact(revision.updatedBrief)}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _copy(BuildContext context) async {
+    final text = [
+      '## Entry Summary Revision Audit',
+      'entryId=${summary.entryId}',
+      'currentRevision=${summary.revision}',
+      'currentQuality=${summary.qualityScore.toStringAsFixed(2)}',
+      'generator=${summary.generator}',
+      if (summary.correctedAt != null)
+        'correctedAt=${summary.correctedAt!.toIso8601String()}',
+      '',
+      for (final revision in revisions) ...[
+        '### r${revision.revision}',
+        'createdAt=${revision.createdAt.toIso8601String()}',
+        'reason=${revision.reason}',
+        'quality=${revision.previousQualityScore.toStringAsFixed(2)} -> ${revision.updatedQualityScore.toStringAsFixed(2)}',
+        if (revision.previousTitle != revision.updatedTitle)
+          'title=${revision.previousTitle} => ${revision.updatedTitle}',
+        'previousBrief=${revision.previousBrief}',
+        'updatedBrief=${revision.updatedBrief}',
+        '',
+      ],
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制摘要修订审计')),
+    );
+  }
+
+  static String _compact(String text) {
+    final normalized = text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.length <= 48) return normalized;
+    return '${normalized.substring(0, 48)}...';
   }
 }
 

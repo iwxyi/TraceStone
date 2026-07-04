@@ -399,7 +399,24 @@ void main() {
   });
 
   testWidgets('insight page edits entry summary', (tester) async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
     final date = DateTime(2026, 7, 3);
     final entry = DiaryEntry(
       id: 'insight-summary-edit-entry',
@@ -457,7 +474,7 @@ void main() {
         '晚上散步后，焦虑感有所下降',
         findRichText: true,
       ),
-      findsOneWidget,
+      findsWidgets,
     );
     expect(find.text('• 散步后焦虑下降'), findsOneWidget);
     final updated = await const EntrySummaryRepository()
@@ -465,6 +482,17 @@ void main() {
     expect(updated?.generator, 'user-corrected');
     expect(updated?.qualityScore, greaterThan(0.5));
     expect(updated?.keyPoints, ['散步后焦虑下降', '整理明天计划']);
+    expect(find.text('修订历史 1'), findsOneWidget);
+    expect(find.textContaining('r2'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '复制修订'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('## Entry Summary Revision Audit'));
+    expect(copiedText, contains('entryId=insight-summary-edit-entry'));
+    expect(copiedText, contains('currentRevision=2'));
+    expect(copiedText, contains('previousBrief='));
+    expect(copiedText, contains('updatedBrief=晚上散步后，焦虑感有所下降，也简单安排了明天。'));
   });
 
   testWidgets('insight feedback dialog keeps debug copy developer-only',
