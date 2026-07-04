@@ -2078,7 +2078,24 @@ void main() {
 
   testWidgets('AI debug page copies AI data inventory', (tester) async {
     SharedPreferences.setMockInitialValues({
-      'ai.entrySummaries.entry-1': '{}',
+      'ai.entrySummaries.entry-1': jsonEncode({
+        'entryId': 'entry-1',
+        'date': '2026-07-03T00:00:00.000',
+        'entryUpdatedAt': '2026-07-03T00:00:00.000',
+        'generatedAt': '2026-07-03T00:00:00.000',
+        'title': '散步',
+        'brief': '散步。',
+        'keyPoints': <String>[],
+        'topics': <String>[],
+        'people': <String>[],
+        'places': <String>[],
+        'emotion': '',
+        'importance': 0.4,
+        'importantQuotes': <String>[],
+        'generator': 'test',
+        'qualityScore': 0.32,
+        'qualityWarnings': <String>['摘要过短', '缺少关键点'],
+      }),
       'ai.embeddings.summary:entry-1': '{}',
       'ai.promptTraces.companion:last': '{}',
       'ai.retrievalTraces.search:last': '{}',
@@ -2113,6 +2130,9 @@ void main() {
     expect(find.text('日记摘要 1'), findsOneWidget);
     expect(find.text('向量索引 1'), findsOneWidget);
     expect(find.text('调试记录 2'), findsOneWidget);
+    expect(find.textContaining('日记摘要: summaryObjects=1'), findsOneWidget);
+    expect(find.textContaining('averageQuality=0.32'), findsOneWidget);
+    expect(find.textContaining('lowQuality=1'), findsOneWidget);
     expect(find.textContaining('向量索引: objects=1'), findsOneWidget);
     expect(find.textContaining('缺少 entry/type 索引'), findsOneWidget);
     expect(find.textContaining('高敏感类别'), findsOneWidget);
@@ -2125,6 +2145,10 @@ void main() {
 
     expect(copiedText, contains('TraceStone AI Data Inventory'));
     expect(copiedText, contains('policy=AI 衍生数据默认视为日记数据的一部分'));
+    expect(copiedText, contains('### 日记摘要'));
+    expect(copiedText, contains('summaryObjects=1'));
+    expect(copiedText, contains('warningSummaries=1'));
+    expect(copiedText, contains('warnings=摘要过短:1,缺少关键点:1'));
     expect(copiedText, contains('### 向量索引'));
     expect(copiedText, contains('details=objects=1'));
     expect(copiedText, contains('warning=存在缺少 entry/type 索引的向量对象'));

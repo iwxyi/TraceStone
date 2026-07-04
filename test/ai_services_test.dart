@@ -671,7 +671,24 @@ void main() {
   group('AiDataInventoryService', () {
     test('summarizes AI derived local data by category', () async {
       SharedPreferences.setMockInitialValues({
-        'ai.entrySummaries.entry-1': '{}',
+        'ai.entrySummaries.entry-1': jsonEncode({
+          'entryId': 'entry-1',
+          'date': '2026-07-03T00:00:00.000',
+          'entryUpdatedAt': '2026-07-03T00:00:00.000',
+          'generatedAt': '2026-07-03T00:00:00.000',
+          'title': '散步',
+          'brief': '散步。',
+          'keyPoints': <String>[],
+          'topics': <String>[],
+          'people': <String>[],
+          'places': <String>[],
+          'emotion': '',
+          'importance': 0.4,
+          'importantQuotes': <String>[],
+          'generator': 'test',
+          'qualityScore': 0.32,
+          'qualityWarnings': <String>['摘要过短', '缺少关键点'],
+        }),
         'ai.entrySummaryRevisions.entry-1:r2': '{}',
         'ai.entrySegments.index.entry-1': <String>['entry-1#s1'],
         'ai.embeddings.summary:entry-1': '{}',
@@ -697,6 +714,14 @@ void main() {
       };
 
       expect(counts['日记摘要'], 3);
+      final summarySection =
+          inventory.sections.firstWhere((section) => section.label == '日记摘要');
+      expect(summarySection.details, contains('summaryObjects=1'));
+      expect(summarySection.details, contains('averageQuality=0.32'));
+      expect(summarySection.details, contains('lowQuality=1'));
+      expect(summarySection.details, contains('warningSummaries=1'));
+      expect(summarySection.details, contains('worst=entry-1:0.32'));
+      expect(summarySection.details, contains('warnings=摘要过短:1,缺少关键点:1'));
       expect(counts['向量索引'], 3);
       final embeddingSection =
           inventory.sections.firstWhere((section) => section.label == '向量索引');
@@ -711,6 +736,8 @@ void main() {
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
+      expect(inventory.toDebugText(), contains('averageQuality=0.32'));
+      expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
       expect(inventory.toDebugText(), contains('details=objects=1'));
       expect(inventory.toDebugText(), contains('backupPolicy=默认不建议云备份'));
       expect(inventory.toDebugText(), contains('exportPolicy=复制前必须确认'));

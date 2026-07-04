@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../models/entry_summary.dart';
 
 class AiDataInventoryService {
   const AiDataInventoryService();
@@ -19,6 +23,7 @@ class AiDataInventoryService {
         backupPolicy: '随日记备份',
         deletePolicy: '日记永久删除时清理',
         exportPolicy: '可随日记导出，需提示包含 AI 摘要和片段',
+        details: _summaryQualityDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -171,6 +176,109 @@ class AiDataInventoryService {
     }
     return details;
   }
+
+  List<String> _summaryQualityDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const summaryPrefix = 'ai.entrySummaries.';
+    final summaryKeys = keys
+        .where((key) => key.startsWith(summaryPrefix))
+        .toList(growable: false)
+      ..sort();
+    if (summaryKeys.isEmpty) return const [];
+
+    final summaries = <_SummaryQualityRecord>[];
+    final warningCounts = <String, int>{};
+    var malformed = 0;
+    for (final key in summaryKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final summary = EntrySummary.fromJson(decoded);
+        final entryId = summary.entryId.isEmpty
+            ? key.substring(summaryPrefix.length)
+            : summary.entryId;
+        summaries.add(_SummaryQualityRecord(
+          id: entryId.isEmpty ? 'unknown' : entryId,
+          qualityScore: summary.qualityScore,
+          qualityWarnings: summary.qualityWarnings,
+        ));
+        for (final warning in summary.qualityWarnings) {
+          warningCounts.update(warning, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
+        if (entryId.isEmpty) malformed += 1;
+      } on Object {
+        malformed += 1;
+      }
+    }
+    if (summaries.isEmpty) {
+      return [
+        'summaryObjects=0',
+        if (malformed > 0) 'malformed=$malformed',
+      ];
+    }
+
+    final lowQuality =
+        summaries.where((summary) => summary.qualityScore < 0.55).length;
+    final warningSummaries =
+        summaries.where((summary) => summary.qualityWarnings.isNotEmpty).length;
+    final averageQuality = summaries
+            .map((summary) => summary.qualityScore)
+            .reduce((a, b) => a + b) /
+        summaries.length;
+    final sortedByQuality = [...summaries]..sort((a, b) {
+        final byQuality = a.qualityScore.compareTo(b.qualityScore);
+        if (byQuality != 0) return byQuality;
+        return a.id.compareTo(b.id);
+      });
+    final warningSummary = warningCounts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
+    return [
+      'summaryObjects=${summaries.length}',
+      'averageQuality=${averageQuality.toStringAsFixed(2)}',
+      'lowQuality=$lowQuality',
+      'warningSummaries=$warningSummaries',
+      if (malformed > 0) 'malformed=$malformed',
+      'worst=${sortedByQuality.first.id}:${sortedByQuality.first.qualityScore.toStringAsFixed(2)}',
+      if (warningSummary.isNotEmpty)
+        'warnings=${warningSummary.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+    ];
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+}
+
+class _SummaryQualityRecord {
+  const _SummaryQualityRecord({
+    required this.id,
+    required this.qualityScore,
+    required this.qualityWarnings,
+  });
+
+  final String id;
+  final double qualityScore;
+  final List<String> qualityWarnings;
 }
 
 class AiDataInventory {
