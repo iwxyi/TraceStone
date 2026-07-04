@@ -95,6 +95,36 @@ class _ProfilePageState extends State<ProfilePage> {
     await _refresh();
   }
 
+  Future<void> _mergeFacts(ProfileFact fact, List<ProfileFact> siblings) async {
+    if (siblings.isEmpty) return;
+    final merged = await showDialog<String>(
+      context: context,
+      builder: (context) => _ProfileMergeDialog(
+        primary: fact,
+        siblings: siblings,
+      ),
+    );
+    if (merged == null || merged.trim().isEmpty) return;
+    await _profilePreferences.setCorrectedValue(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: fact.id,
+      correctedValue: merged,
+    );
+    for (final sibling in siblings) {
+      await _profilePreferences.setHidden(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: sibling.id,
+        hidden: true,
+      );
+    }
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已合并同字段画像候选')),
+    );
+  }
+
   Future<void> _adoptConflict(ProfileConflictNote conflict) async {
     final target = await _factForConflict(conflict);
     if (target == null) {
@@ -232,6 +262,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               onConfirmedChanged: _setConfirmed,
                               onHide: _hideFact,
                               onCorrect: _correctFact,
+                              onMerge: _mergeFacts,
                             ),
                         ],
                       );
@@ -295,6 +326,7 @@ class _ProfileSummary extends StatelessWidget {
     required this.onConfirmedChanged,
     required this.onHide,
     required this.onCorrect,
+    required this.onMerge,
   });
 
   final List<ProfileFact> facts;
@@ -303,6 +335,8 @@ class _ProfileSummary extends StatelessWidget {
       onConfirmedChanged;
   final Future<void> Function(ProfileFact fact) onHide;
   final Future<void> Function(ProfileFact fact) onCorrect;
+  final Future<void> Function(ProfileFact fact, List<ProfileFact> siblings)
+      onMerge;
 
   @override
   Widget build(BuildContext context) {
@@ -327,10 +361,12 @@ class _ProfileSummary extends StatelessWidget {
             for (final fact in facts.take(8)) ...[
               _ProfileFactTile(
                 fact: fact,
+                mergeSiblings: _mergeSiblings(fact),
                 developerMode: developerMode,
                 onConfirmedChanged: onConfirmedChanged,
                 onHide: onHide,
                 onCorrect: onCorrect,
+                onMerge: onMerge,
               ),
               if (fact != facts.take(8).last) const Divider(height: 20),
             ],
@@ -338,6 +374,14 @@ class _ProfileSummary extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<ProfileFact> _mergeSiblings(ProfileFact fact) {
+    return facts
+        .where((item) =>
+            item.id != fact.id &&
+            item.field.toLowerCase() == fact.field.toLowerCase())
+        .toList(growable: false);
   }
 }
 
@@ -509,18 +553,23 @@ class _DecisionLine extends StatelessWidget {
 class _ProfileFactTile extends StatelessWidget {
   const _ProfileFactTile({
     required this.fact,
+    required this.mergeSiblings,
     required this.developerMode,
     required this.onConfirmedChanged,
     required this.onHide,
     required this.onCorrect,
+    required this.onMerge,
   });
 
   final ProfileFact fact;
+  final List<ProfileFact> mergeSiblings;
   final bool developerMode;
   final Future<void> Function(ProfileFact fact, bool confirmed)
       onConfirmedChanged;
   final Future<void> Function(ProfileFact fact) onHide;
   final Future<void> Function(ProfileFact fact) onCorrect;
+  final Future<void> Function(ProfileFact fact, List<ProfileFact> siblings)
+      onMerge;
 
   @override
   Widget build(BuildContext context) {
@@ -548,6 +597,8 @@ class _ProfileFactTile extends StatelessWidget {
                     onConfirmedChanged(fact, false);
                   case _ProfileFactAction.correct:
                     onCorrect(fact);
+                  case _ProfileFactAction.merge:
+                    onMerge(fact, mergeSiblings);
                   case _ProfileFactAction.hide:
                     onHide(fact);
                 }
@@ -567,6 +618,11 @@ class _ProfileFactTile extends StatelessWidget {
                   value: _ProfileFactAction.correct,
                   child: Text('修正'),
                 ),
+                if (mergeSiblings.isNotEmpty)
+                  const PopupMenuItem(
+                    value: _ProfileFactAction.merge,
+                    child: Text('合并同类画像'),
+                  ),
                 const PopupMenuItem(
                   value: _ProfileFactAction.hide,
                   child: Text('隐藏'),
@@ -585,6 +641,8 @@ class _ProfileFactTile extends StatelessWidget {
             Chip(label: Text('来自 ${fact.evidenceCount} 条记录')),
             Chip(label: Text('${fact.distinctDays} 天')),
             Chip(label: Text('最近 ${_dateLabel(fact.lastSeenAt)}')),
+            if (mergeSiblings.isNotEmpty)
+              Chip(label: Text('同字段 ${mergeSiblings.length + 1} 条')),
             if (fact.userConfirmed) const Chip(label: Text('已确认')),
             if (developerMode)
               Chip(label: Text('置信度 ${fact.confidence.toStringAsFixed(2)}')),
@@ -634,7 +692,7 @@ class _ProfileFactTile extends StatelessWidget {
       '${date.year}年${date.month}月${date.day}日';
 }
 
-enum _ProfileFactAction { confirm, unconfirm, correct, hide }
+enum _ProfileFactAction { confirm, unconfirm, correct, merge, hide }
 
 class _ProfileCorrectionDialog extends StatefulWidget {
   const _ProfileCorrectionDialog({required this.fact});
@@ -683,6 +741,78 @@ class _ProfileCorrectionDialogState extends State<_ProfileCorrectionDialog> {
         FilledButton(
           onPressed: _save,
           child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileMergeDialog extends StatefulWidget {
+  const _ProfileMergeDialog({
+    required this.primary,
+    required this.siblings,
+  });
+
+  final ProfileFact primary;
+  final List<ProfileFact> siblings;
+
+  @override
+  State<_ProfileMergeDialog> createState() => _ProfileMergeDialogState();
+}
+
+class _ProfileMergeDialogState extends State<_ProfileMergeDialog> {
+  late final _controller = TextEditingController(text: _initialValue());
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String _initialValue() {
+    final values = <String>{
+      widget.primary.value.trim(),
+      for (final sibling in widget.siblings) sibling.value.trim(),
+    }..remove('');
+    return values.join('；');
+  }
+
+  void _save() {
+    final value = _controller.text.trim();
+    if (value.isEmpty) return;
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('合并同类画像'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${widget.primary.field} 下有 ${widget.siblings.length + 1} 条候选。'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            minLines: 3,
+            maxLines: 6,
+            decoration: const InputDecoration(
+              labelText: '合并后的画像',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('合并'),
         ),
       ],
     );

@@ -683,6 +683,85 @@ void main() {
     expect(find.textContaining('preference=corrected'), findsOneWidget);
   });
 
+  testWidgets('profile page merges same-field profile candidates',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-merge-first',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步有助于恢复状态',
+          confidence: 0.62,
+        ),
+      ],
+    ));
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-merge-second',
+      entryDate: date.add(const Duration(days: 1)),
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '独处也能恢复状态',
+          confidence: 0.58,
+        ),
+      ],
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('同字段 2 条'), findsWidgets);
+
+    await tester.tap(find.byTooltip('画像操作').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('合并同类画像'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('合并同类画像'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextField, '合并后的画像'),
+      '散步和独处都可能帮助我恢复状态',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '合并'));
+    await tester.pumpAndSettle();
+
+    final primary = await const AiProfilePreferenceRepository().getPreference(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: 'self_regulation:散步有助于恢复状态',
+    );
+    final hidden = await const AiProfilePreferenceRepository().getPreference(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: 'self_regulation:独处也能恢复状态',
+    );
+    expect(primary?.correctedValue, '散步和独处都可能帮助我恢复状态');
+    expect(primary?.confirmed, isTrue);
+    expect(hidden?.hidden, isTrue);
+    expect(find.text('已合并同字段画像候选'), findsOneWidget);
+  });
+
   testWidgets('relationships page shows developer decision review',
       (tester) async {
     SharedPreferences.setMockInitialValues({
