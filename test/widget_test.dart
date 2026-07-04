@@ -825,7 +825,9 @@ void main() {
 
   testWidgets('relationships page merges people and supports undo',
       (tester) async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
     final date = DateTime(2026, 7, 3);
     await const InsightRepository().saveInsight(DiaryInsight(
       entryId: 'relationship-merge-first',
@@ -877,8 +879,8 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: RelationshipsPage()));
     await tester.pumpAndSettle();
 
-    expect(find.text('小李'), findsOneWidget);
-    expect(find.text('李同学'), findsOneWidget);
+    expect(find.text('小李'), findsWidgets);
+    expect(find.text('李同学'), findsWidgets);
 
     await tester.tap(find.byTooltip('关系操作').first);
     await tester.pumpAndSettle();
@@ -891,14 +893,28 @@ void main() {
 
     expect(find.textContaining('已将'), findsOneWidget);
     expect(find.text('别名 2 个'), findsOneWidget);
+    expect(find.textContaining('也包括：'), findsOneWidget);
     expect(find.byTooltip('关系操作'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('最近互动'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('最近互动'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('合并依据'), findsOneWidget);
+    expect(find.textContaining('aliases='), findsOneWidget);
+    expect(find.textContaining('小李'), findsWidgets);
+    expect(find.textContaining('李同学'), findsWidgets);
+    expect(find.textContaining('| interactions=2 |'), findsOneWidget);
 
     await tester.tap(find.text('撤销'));
     await tester.pumpAndSettle();
 
-    expect(find.text('小李'), findsOneWidget);
-    expect(find.text('李同学'), findsOneWidget);
-    expect(find.byTooltip('关系操作'), findsNWidgets(2));
+    final preferences =
+        await const AiProfilePreferenceRepository().listPreferences();
+    expect(preferences.where((item) => item.mergedInto.isNotEmpty), isEmpty);
+    expect(find.text('小李'), findsWidgets);
+    expect(find.text('李同学'), findsWidgets);
   });
 
   testWidgets('corrects long term memory summary', (tester) async {

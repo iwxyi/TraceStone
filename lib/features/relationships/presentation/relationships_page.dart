@@ -402,6 +402,7 @@ class _RelationshipCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final latest = profile.recentInteractions.firstOrNull;
+    final aliasNames = _aliasNames(profile);
 
     return Card(
       elevation: 0,
@@ -494,6 +495,13 @@ class _RelationshipCard extends StatelessWidget {
                   ),
               ],
             ),
+            if (aliasNames.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                '也包括：${aliasNames.join('、')}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
             if (profile.patterns.isNotEmpty || profile.emotions.isNotEmpty) ...[
               const SizedBox(height: 12),
               Wrap(
@@ -542,6 +550,27 @@ class _RelationshipCard extends StatelessWidget {
                   ),
                 if (developerMode && profile.evidence.isNotEmpty) ...[
                   const Divider(),
+                  if (aliasNames.isNotEmpty) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('合并依据',
+                          style: Theme.of(context).textTheme.labelLarge),
+                    ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        [
+                          'aliases=${profile.names.join(', ')}',
+                          'interactions=${profile.interactionCount}',
+                          'days=${profile.distinctDays}',
+                          'evidence=${profile.evidence.length}',
+                        ].join(' | '),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text('证据来源',
@@ -570,6 +599,15 @@ class _RelationshipCard extends StatelessWidget {
 
   static String _dateLabel(DateTime date) =>
       '${date.year}年${date.month}月${date.day}日';
+
+  static List<String> _aliasNames(RelationshipProfile profile) {
+    final primary = profile.personName.trim().toLowerCase();
+    return profile.names
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty && name.toLowerCase() != primary)
+        .toSet()
+        .toList(growable: false);
+  }
 
   static String _statusText(ProfileFactStatus status) {
     switch (status) {
