@@ -894,6 +894,8 @@ void main() {
     expect(find.textContaining('已将'), findsOneWidget);
     expect(find.text('已合并人物'), findsOneWidget);
     expect(find.textContaining('preference=merged'), findsOneWidget);
+    expect(find.text('合并历史'), findsOneWidget);
+    expect(find.textContaining('合并：'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('别名 2 个'),
       200,
@@ -920,7 +922,13 @@ void main() {
 
     final preferences =
         await const AiProfilePreferenceRepository().listPreferences();
+    final mergeHistory = await const AiProfilePreferenceRepository()
+        .listRelationshipMergeHistory();
     expect(preferences.where((item) => item.mergedInto.isNotEmpty), isEmpty);
+    expect(mergeHistory.map((item) => item.action),
+        contains(AiRelationshipMergeEventAction.merge));
+    expect(mergeHistory.map((item) => item.action),
+        contains(AiRelationshipMergeEventAction.undo));
     expect(find.text('小李'), findsWidgets);
     expect(find.text('李同学'), findsWidgets);
   });

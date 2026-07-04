@@ -33,10 +33,13 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
     final insights = await _repository.listInsights();
     final profiles = _projectionService.buildRelationshipProfiles(insights);
     final preferences = await _profilePreferences.listPreferences();
+    final mergeHistory =
+        await _profilePreferences.listRelationshipMergeHistory();
     final visibleProfiles =
         await _profilePreferences.applyToRelationshipProfiles(profiles);
     return _RelationshipPageData(
       profiles: visibleProfiles,
+      mergeHistory: mergeHistory,
       decisions: _decisionService.buildRelationshipDecisions(
         profiles: visibleProfiles,
         preferences: preferences,
@@ -135,6 +138,10 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
             } else {
               await _profilePreferences.savePreference(previous);
             }
+            await _profilePreferences.recordRelationshipMergeUndo(
+              sourcePersonName: profile.personName,
+              targetPersonName: target.personName,
+            );
             if (mounted) await _refresh();
           },
         ),
@@ -175,8 +182,9 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
               builder: (context, developerSnapshot) {
                 final developerMode = developerSnapshot.data ?? false;
                 final visibleProfiles = _visibleProfiles(profiles);
-                final itemOffset =
-                    developerMode && data.decisions.isNotEmpty ? 2 : 1;
+                final showDeveloperCard = developerMode &&
+                    (data.decisions.isNotEmpty || data.mergeHistory.isNotEmpty);
+                final itemOffset = showDeveloperCard ? 2 : 1;
                 return ListView.separated(
                   padding: const EdgeInsets.all(20),
                   itemCount: visibleProfiles.length + itemOffset,
@@ -189,11 +197,10 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
                         onChanged: (_) => setState(() {}),
                       );
                     }
-                    if (developerMode &&
-                        data.decisions.isNotEmpty &&
-                        index == 1) {
+                    if (showDeveloperCard && index == 1) {
                       return _RelationshipDecisionCard(
                         decisions: data.decisions,
+                        mergeHistory: data.mergeHistory,
                       );
                     }
                     final profile = visibleProfiles[index - itemOffset];
@@ -253,10 +260,12 @@ class _RelationshipPageData {
   const _RelationshipPageData({
     this.profiles = const [],
     this.decisions = const [],
+    this.mergeHistory = const [],
   });
 
   final List<RelationshipProfile> profiles;
   final List<AiProfileDecision> decisions;
+  final List<AiRelationshipMergeEvent> mergeHistory;
 }
 
 class _RelationshipFilter extends StatelessWidget {
@@ -305,9 +314,13 @@ class _RelationshipFilter extends StatelessWidget {
 }
 
 class _RelationshipDecisionCard extends StatelessWidget {
-  const _RelationshipDecisionCard({required this.decisions});
+  const _RelationshipDecisionCard({
+    required this.decisions,
+    required this.mergeHistory,
+  });
 
   final List<AiProfileDecision> decisions;
+  final List<AiRelationshipMergeEvent> mergeHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -334,8 +347,43 @@ class _RelationshipDecisionCard extends StatelessWidget {
               _RelationshipDecisionLine(decision: decision),
               if (decision != decisions.take(5).last) const Divider(height: 18),
             ],
+            if (mergeHistory.isNotEmpty) ...[
+              const Divider(height: 24),
+              Row(children: [
+                const Icon(Icons.history_outlined, size: 18),
+                const SizedBox(width: 6),
+                Text('合并历史', style: theme.textTheme.titleSmall),
+              ]),
+              const SizedBox(height: 8),
+              for (final event in mergeHistory.take(3)) ...[
+                _RelationshipMergeHistoryLine(event: event),
+                if (event != mergeHistory.take(3).last)
+                  const SizedBox(height: 8),
+              ],
+            ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _RelationshipMergeHistoryLine extends StatelessWidget {
+  const _RelationshipMergeHistoryLine({required this.event});
+
+  final AiRelationshipMergeEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = switch (event.action) {
+      AiRelationshipMergeEventAction.merge => '合并',
+      AiRelationshipMergeEventAction.undo => '撤销合并',
+    };
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        '$action：${event.sourcePersonName} -> ${event.targetPersonName} · ${_RelationshipCard._dateLabel(event.createdAt)}',
+        style: Theme.of(context).textTheme.bodySmall,
       ),
     );
   }

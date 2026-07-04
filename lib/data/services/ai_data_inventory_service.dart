@@ -23,6 +23,9 @@ class AiDataInventoryService {
       _section(keys, '画像偏好', [
         'ai.profilePreferences.',
       ]),
+      _section(keys, '关系合并历史', [
+        'ai.relationshipMergeHistory.',
+      ]),
       _section(keys, '后台队列', [
         'ai.analysis.jobs.',
       ]),

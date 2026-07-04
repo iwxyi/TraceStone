@@ -10,6 +10,8 @@ class AiProfilePreferenceRepository {
 
   static const _indexKey = 'ai.profilePreferences.index';
   static const _prefix = 'ai.profilePreferences.';
+  static const _mergeHistoryIndexKey = 'ai.relationshipMergeHistory.index';
+  static const _mergeHistoryPrefix = 'ai.relationshipMergeHistory.';
 
   Future<List<AiProfilePreference>> listPreferences() async {
     final prefs = await SharedPreferences.getInstance();
@@ -136,6 +138,46 @@ class AiProfilePreferenceRepository {
         updatedAt: DateTime.now(),
       ),
     );
+    await _saveRelationshipMergeEvent(
+      sourcePersonName: source,
+      targetPersonName: target,
+      action: AiRelationshipMergeEventAction.merge,
+    );
+  }
+
+  Future<void> recordRelationshipMergeUndo({
+    required String sourcePersonName,
+    required String targetPersonName,
+  }) async {
+    final source = sourcePersonName.trim();
+    final target = targetPersonName.trim();
+    if (source.isEmpty || target.isEmpty) return;
+    await _saveRelationshipMergeEvent(
+      sourcePersonName: source,
+      targetPersonName: target,
+      action: AiRelationshipMergeEventAction.undo,
+    );
+  }
+
+  Future<List<AiRelationshipMergeEvent>> listRelationshipMergeHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = _safeGetStringList(prefs, _mergeHistoryIndexKey) ?? [];
+    final items = <AiRelationshipMergeEvent>[];
+    for (final id in ids) {
+      final item = await _getRelationshipMergeEventById(prefs, id);
+      if (item == null) continue;
+      if (item.id.isNotEmpty &&
+          item.sourcePersonName.isNotEmpty &&
+          item.targetPersonName.isNotEmpty) {
+        items.add(item);
+      }
+    }
+    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    await prefs.setStringList(
+      _mergeHistoryIndexKey,
+      items.map((item) => item.id).toList(growable: false),
+    );
+    return items;
   }
 
   Future<void> savePreference(AiProfilePreference item) async {
@@ -358,6 +400,34 @@ class AiProfilePreferenceRepository {
     }
   }
 
+  Future<void> _saveRelationshipMergeEvent({
+    required String sourcePersonName,
+    required String targetPersonName,
+    required AiRelationshipMergeEventAction action,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final id = [
+      now.microsecondsSinceEpoch,
+      action.name,
+      sourcePersonName.toLowerCase(),
+      targetPersonName.toLowerCase(),
+    ].join(':');
+    final item = AiRelationshipMergeEvent(
+      id: id,
+      sourcePersonName: sourcePersonName,
+      targetPersonName: targetPersonName,
+      action: action,
+      createdAt: now,
+    );
+    await prefs.setString('$_mergeHistoryPrefix$id', jsonEncode(item.toJson()));
+    final index = _safeGetStringList(prefs, _mergeHistoryIndexKey) ?? [];
+    if (!index.contains(id)) {
+      index.add(id);
+      await prefs.setStringList(_mergeHistoryIndexKey, index);
+    }
+  }
+
   Future<AiProfilePreference?> _getPreferenceById(
     SharedPreferences prefs,
     String id,
@@ -373,6 +443,27 @@ class AiProfilePreferenceRepository {
       }
       final item = AiProfilePreference.fromJson(decoded);
       return item.targetId.isEmpty ? null : item;
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
+  }
+
+  Future<AiRelationshipMergeEvent?> _getRelationshipMergeEventById(
+    SharedPreferences prefs,
+    String id,
+  ) async {
+    final key = '$_mergeHistoryPrefix$id';
+    final raw = _safeGetString(prefs, key);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      final item = AiRelationshipMergeEvent.fromJson(decoded);
+      return item.id.isEmpty ? null : item;
     } on Object {
       await prefs.remove(key);
       return null;

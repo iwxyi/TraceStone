@@ -677,6 +677,7 @@ void main() {
         'diary.insights.entry-1': '{}',
         'memory.entries.memory-1': '{}',
         'ai.profilePreferences.profileFact:1': '{}',
+        'ai.relationshipMergeHistory.merge-1': '{}',
         'ai.analysis.jobs.entry-1': '{}',
         'ai.promptTraces.companion:last': '{}',
         'ai.retrievalTraces.search:last': '{}',
@@ -696,7 +697,8 @@ void main() {
       expect(counts['向量索引'], 1);
       expect(counts['调试记录'], 3);
       expect(counts['后台队列'], 1);
-      expect(inventory.totalCount, 13);
+      expect(counts['关系合并历史'], 1);
+      expect(inventory.totalCount, 14);
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
     });
@@ -2896,12 +2898,37 @@ void main() {
       );
       final visible =
           await preferenceRepository.applyToRelationshipProfiles(profiles);
+      final history = await preferenceRepository.listRelationshipMergeHistory();
 
       expect(visible, hasLength(1));
       expect(visible.single.personName, '小李');
       expect(visible.single.names, containsAll(['小李', '李同学']));
       expect(visible.single.interactionCount, 2);
       expect(visible.single.emotions, containsAll(['平和', '专注']));
+      expect(history, hasLength(1));
+      expect(history.single.sourcePersonName, '李同学');
+      expect(history.single.targetPersonName, '小李');
+      expect(history.single.action, AiRelationshipMergeEventAction.merge);
+    });
+
+    test('records relationship merge undo history', () async {
+      SharedPreferences.setMockInitialValues({});
+      const preferenceRepository = AiProfilePreferenceRepository();
+
+      await preferenceRepository.setMergedRelationship(
+        sourcePersonName: '李同学',
+        targetPersonName: '小李',
+      );
+      await preferenceRepository.recordRelationshipMergeUndo(
+        sourcePersonName: '李同学',
+        targetPersonName: '小李',
+      );
+
+      final history = await preferenceRepository.listRelationshipMergeHistory();
+
+      expect(history, hasLength(2));
+      expect(history.first.action, AiRelationshipMergeEventAction.undo);
+      expect(history.last.action, AiRelationshipMergeEventAction.merge);
     });
   });
 

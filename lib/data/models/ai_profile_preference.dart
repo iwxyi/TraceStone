@@ -1,5 +1,7 @@
 enum AiProfilePreferenceTargetType { profileFact, relationship }
 
+enum AiRelationshipMergeEventAction { merge, undo }
+
 class AiProfilePreference {
   const AiProfilePreference({
     required this.targetType,
@@ -81,4 +83,47 @@ class AiProfilePreference {
     required String targetId,
   }) =>
       '${targetType.name}:${targetId.trim().toLowerCase()}';
+}
+
+class AiRelationshipMergeEvent {
+  const AiRelationshipMergeEvent({
+    required this.id,
+    required this.sourcePersonName,
+    required this.targetPersonName,
+    required this.action,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String sourcePersonName;
+  final String targetPersonName;
+  final AiRelationshipMergeEventAction action;
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'sourcePersonName': sourcePersonName,
+        'targetPersonName': targetPersonName,
+        'action': action.name,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory AiRelationshipMergeEvent.fromJson(Map<String, dynamic> json) {
+    final actionName = AiProfilePreference._stringValue(json['action']);
+    final action = AiRelationshipMergeEventAction.values.firstWhere(
+      (value) => value.name == actionName,
+      orElse: () => AiRelationshipMergeEventAction.merge,
+    );
+    return AiRelationshipMergeEvent(
+      id: AiProfilePreference._stringValue(json['id']).trim(),
+      sourcePersonName:
+          AiProfilePreference._stringValue(json['sourcePersonName']).trim(),
+      targetPersonName:
+          AiProfilePreference._stringValue(json['targetPersonName']).trim(),
+      action: action,
+      createdAt: DateTime.tryParse(
+              AiProfilePreference._stringValue(json['createdAt'])) ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
 }
