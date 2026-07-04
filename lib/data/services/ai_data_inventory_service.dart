@@ -264,14 +264,33 @@ class AiDataInventoryService {
     Set<String> keys,
   ) {
     const summaryPrefix = 'ai.entrySummaries.';
+    const revisionPrefix = 'ai.entrySummaryRevisions.';
+    const revisionIndexPrefix = 'ai.entrySummaryRevisions.index.';
     final summaryKeys = keys
         .where((key) => key.startsWith(summaryPrefix))
         .toList(growable: false)
       ..sort();
-    if (summaryKeys.isEmpty) return const [];
+    final revisionKeys = keys
+        .where((key) =>
+            key.startsWith(revisionPrefix) &&
+            !key.startsWith(revisionIndexPrefix))
+        .toList(growable: false)
+      ..sort();
+    final revisionIndexKeys = keys
+        .where((key) => key.startsWith(revisionIndexPrefix))
+        .toList(growable: false)
+      ..sort();
+    if (summaryKeys.isEmpty &&
+        revisionKeys.isEmpty &&
+        revisionIndexKeys.isEmpty) {
+      return const [];
+    }
 
     final summaries = <_SummaryQualityRecord>[];
     final warningCounts = <String, int>{};
+    final revisionReasons = <String, int>{};
+    var correctedSummaries = 0;
+    var maxRevision = 0;
     var malformed = 0;
     for (final key in summaryKeys) {
       final raw = _safeGetString(prefs, key);
@@ -289,6 +308,12 @@ class AiDataInventoryService {
         final entryId = summary.entryId.isEmpty
             ? key.substring(summaryPrefix.length)
             : summary.entryId;
+        if (summary.correctedAt != null ||
+            summary.revision > 1 ||
+            summary.generator == 'user-corrected') {
+          correctedSummaries += 1;
+        }
+        if (summary.revision > maxRevision) maxRevision = summary.revision;
         summaries.add(_SummaryQualityRecord(
           id: entryId.isEmpty ? 'unknown' : entryId,
           qualityScore: summary.qualityScore,
@@ -303,10 +328,40 @@ class AiDataInventoryService {
         malformed += 1;
       }
     }
+
+    var malformedRevisions = 0;
+    for (final key in revisionKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformedRevisions += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformedRevisions += 1;
+          continue;
+        }
+        final revision = EntrySummaryRevision.fromJson(decoded);
+        if (revision.id.trim().isEmpty || revision.entryId.trim().isEmpty) {
+          malformedRevisions += 1;
+          continue;
+        }
+        if (revision.revision > maxRevision) maxRevision = revision.revision;
+        revisionReasons.update(revision.reason, (value) => value + 1,
+            ifAbsent: () => 1);
+      } on Object {
+        malformedRevisions += 1;
+      }
+    }
+
     if (summaries.isEmpty) {
       return [
         'summaryObjects=0',
+        'revisionObjects=${revisionKeys.length}',
+        'revisionIndexes=${revisionIndexKeys.length}',
         if (malformed > 0) 'malformed=$malformed',
+        if (malformedRevisions > 0) 'malformedRevisions=$malformedRevisions',
       ];
     }
 
@@ -334,10 +389,17 @@ class AiDataInventoryService {
       'averageQuality=${averageQuality.toStringAsFixed(2)}',
       'lowQuality=$lowQuality',
       'warningSummaries=$warningSummaries',
+      'correctedSummaries=$correctedSummaries',
+      'revisionObjects=${revisionKeys.length}',
+      'revisionIndexes=${revisionIndexKeys.length}',
+      'maxRevision=$maxRevision',
       if (malformed > 0) 'malformed=$malformed',
+      if (malformedRevisions > 0) 'malformedRevisions=$malformedRevisions',
       'worst=${sortedByQuality.first.id}:${sortedByQuality.first.qualityScore.toStringAsFixed(2)}',
       if (warningSummary.isNotEmpty)
         'warnings=${warningSummary.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (revisionReasons.isNotEmpty)
+        'revisionReasons=${_topStringCounts(revisionReasons).take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
     ];
   }
 

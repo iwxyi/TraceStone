@@ -733,7 +733,21 @@ void main() {
           'qualityScore': 0.32,
           'qualityWarnings': <String>['摘要过短', '缺少关键点'],
         }),
-        'ai.entrySummaryRevisions.entry-1:r2': '{}',
+        'ai.entrySummaryRevisions.entry-1:r2': jsonEncode(
+          EntrySummaryRevision(
+            id: 'entry-1:r2',
+            entryId: 'entry-1',
+            revision: 2,
+            createdAt: DateTime(2026, 7, 3, 1),
+            previousTitle: '散步',
+            updatedTitle: '散步恢复',
+            previousBrief: '散步。',
+            updatedBrief: '饭后散步帮助恢复状态。',
+            previousQualityScore: 0.32,
+            updatedQualityScore: 0.72,
+          ).toJson(),
+        ),
+        'ai.entrySummaryRevisions.index.entry-1': <String>['entry-1:r2'],
         'ai.entrySegments.index.entry-1': <String>['entry-1#s1'],
         'ai.embeddings.summary:entry-1': jsonEncode(
           AiEmbedding(
@@ -1062,15 +1076,21 @@ void main() {
         for (final section in inventory.sections) section.label: section.count,
       };
 
-      expect(counts['日记摘要'], 3);
+      expect(counts['日记摘要'], 4);
       final summarySection =
           inventory.sections.firstWhere((section) => section.label == '日记摘要');
       expect(summarySection.details, contains('summaryObjects=1'));
       expect(summarySection.details, contains('averageQuality=0.32'));
       expect(summarySection.details, contains('lowQuality=1'));
       expect(summarySection.details, contains('warningSummaries=1'));
+      expect(summarySection.details, contains('correctedSummaries=0'));
+      expect(summarySection.details, contains('revisionObjects=1'));
+      expect(summarySection.details, contains('revisionIndexes=1'));
+      expect(summarySection.details, contains('maxRevision=2'));
       expect(summarySection.details, contains('worst=entry-1:0.32'));
       expect(summarySection.details, contains('warnings=摘要过短:1,缺少关键点:1'));
+      expect(
+          summarySection.details, contains('revisionReasons=user-corrected:1'));
       expect(counts['向量索引'], 5);
       final embeddingSection =
           inventory.sections.firstWhere((section) => section.label == '向量索引');
@@ -1238,7 +1258,7 @@ void main() {
       expect(stoneSection.details, contains('sourcedTasks=1'));
       expect(stoneSection.details, contains('sourcedCheckIns=1'));
       expect(stoneSection.details, contains('topTags=恢复:1,运动:1'));
-      expect(inventory.totalCount, 24);
+      expect(inventory.totalCount, 25);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.reviewSectionCount, greaterThanOrEqualTo(4));
       expect(summarySection.needsReview, isTrue);
@@ -1257,6 +1277,9 @@ void main() {
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
+      expect(inventory.toDebugText(), contains('revisionObjects=1'));
+      expect(inventory.toDebugText(),
+          contains('revisionReasons=user-corrected:1'));
       expect(inventory.toDebugText(), contains('staleModel=1'));
       expect(inventory.toDebugText(), contains('invalidDimensions=1'));
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
