@@ -2533,6 +2533,106 @@ void main() {
     expect(copiedText, contains('note=把情绪判断错了'));
   });
 
+  testWidgets('AI debug page shows claim evidence and confidence',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    final date = DateTime(2026, 7, 3);
+    const entryId = 'debug-claim-evidence-entry';
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: entryId,
+      date: date,
+      createdAt: date,
+      content: '今天散步以后状态轻松了一些。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: entryId,
+      entryDate: date,
+      generatedAt: date,
+      reflection: '散步后状态轻松。',
+      relatedMemories: [],
+      emotion: '轻松',
+      keywords: ['散步'],
+      people: [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: [],
+      facts: [
+        InsightClaim(
+          text: '今天散步后状态更轻松。',
+          evidence: [
+            InsightEvidence(type: 'current_entry', id: '$entryId#s1'),
+          ],
+        ),
+      ],
+      hypotheses: [
+        InsightClaim(
+          text: '散步可能帮助恢复状态。',
+          confidence: 0.62,
+          evidence: [
+            InsightEvidence(type: 'memory', id: 'memory-walk'),
+          ],
+        ),
+      ],
+      suggestions: [
+        InsightClaim(text: '明天晚饭后散步 10 分钟。'),
+      ],
+    ));
+    await const AiAnalysisQueueRepository().saveJob(AiAnalysisJob(
+      id: entryId,
+      entryId: entryId,
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.completed,
+      currentStage: AiAnalysisStage.completed,
+      createdAt: date,
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('evidence=current_entry:$entryId#s1'),
+        findsOneWidget);
+    expect(find.textContaining('confidence=0.62'), findsOneWidget);
+    expect(find.textContaining('evidence=memory:memory-walk'), findsOneWidget);
+    expect(find.textContaining('evidence=missing'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.widgetWithText(TextButton, '复制上下文').first,
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '复制上下文').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('## Claims'));
+    expect(copiedText, contains('evidence=current_entry:$entryId#s1'));
+    expect(copiedText, contains('confidence=0.62'));
+    expect(copiedText, contains('evidence=missing'));
+  });
+
   testWidgets('AI debug page rebuilds embeddings from job actions',
       (tester) async {
     SharedPreferences.setMockInitialValues({});

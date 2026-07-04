@@ -7,6 +7,7 @@ import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/ai_embedding.dart';
 import '../../../data/models/ai_prompt_trace.dart';
 import '../../../data/models/ai_retrieval_trace.dart';
+import '../../../data/models/diary_insight.dart';
 import '../../../data/models/entry_summary.dart';
 import '../../../data/models/period_summary.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
@@ -1959,12 +1960,12 @@ class _JobArtifacts {
           ? ''
           : 'facts=${insight.facts.length} signals=${insight.signals.length} hypotheses=${insight.hypotheses.length} suggestions=${insight.suggestions.length}',
       claimLines: [
-        for (final item in insight?.facts ?? []) 'fact: ${item.text}',
-        for (final item in insight?.signals ?? []) 'signal: ${item.text}',
+        for (final item in insight?.facts ?? []) _claimLine('fact', item),
+        for (final item in insight?.signals ?? []) _claimLine('signal', item),
         for (final item in insight?.hypotheses ?? [])
-          'hypothesis: ${item.text}',
+          _claimLine('hypothesis', item),
         for (final item in insight?.suggestions ?? [])
-          'suggestion: ${item.text}',
+          _claimLine('suggestion', item),
       ],
       updateCandidateSummary: insight == null
           ? ''
@@ -2065,6 +2066,19 @@ class _JobArtifacts {
     final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (normalized.length <= 240) return normalized;
     return '${normalized.substring(0, 240)}...';
+  }
+
+  static String _claimLine(String type, InsightClaim claim) {
+    final evidence = claim.evidence
+        .map(formatInsightEvidenceId)
+        .where((value) => value.trim().isNotEmpty)
+        .join(',');
+    return [
+      '$type: ${claim.text}',
+      if (claim.confidence != null)
+        'confidence=${claim.confidence!.toStringAsFixed(2)}',
+      'evidence=${evidence.isEmpty ? 'missing' : evidence}',
+    ].join(' ');
   }
 
   static String _signalLine(Map<String, double> signals) {
