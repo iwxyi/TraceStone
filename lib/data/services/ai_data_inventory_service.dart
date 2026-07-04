@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/ai_profile_preference.dart';
 import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
 import '../models/stone_task.dart';
@@ -63,6 +64,7 @@ class AiDataInventoryService {
         backupPolicy: '随 AI 设置备份',
         deletePolicy: '目标不存在时清理',
         exportPolicy: '开发者导出含确认、隐藏、修正和合并状态',
+        details: _profilePreferenceDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -72,6 +74,7 @@ class AiDataInventoryService {
         backupPolicy: '随 AI 设置备份',
         deletePolicy: '保留审计历史，清除 AI 数据时清理',
         exportPolicy: '仅开发者导出',
+        details: _relationshipMergeHistoryDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -260,6 +263,161 @@ class AiDataInventoryService {
       'worst=${sortedByQuality.first.id}:${sortedByQuality.first.qualityScore.toStringAsFixed(2)}',
       if (warningSummary.isNotEmpty)
         'warnings=${warningSummary.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+    ];
+  }
+
+  List<String> _profilePreferenceDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const prefix = 'ai.profilePreferences.';
+    const indexKey = 'ai.profilePreferences.index';
+    final objectKeys = keys
+        .where((key) => key.startsWith(prefix) && key != indexKey)
+        .toList(growable: false)
+      ..sort();
+    if (objectKeys.isEmpty && !keys.contains(indexKey)) return const [];
+
+    var profileFacts = 0;
+    var relationships = 0;
+    var confirmed = 0;
+    var hidden = 0;
+    var corrected = 0;
+    var merged = 0;
+    var invalidTarget = 0;
+    var malformed = 0;
+
+    for (final key in objectKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final item = AiProfilePreference.fromJson(decoded);
+        switch (item.targetType) {
+          case AiProfilePreferenceTargetType.profileFact:
+            profileFacts += 1;
+          case AiProfilePreferenceTargetType.relationship:
+            relationships += 1;
+        }
+        if (item.confirmed) confirmed += 1;
+        if (item.hidden) hidden += 1;
+        if (item.correctedValue.trim().isNotEmpty) corrected += 1;
+        if (item.mergedInto.trim().isNotEmpty) merged += 1;
+        final keyId = key.substring(prefix.length);
+        if (item.targetId.isEmpty ||
+            keyId != item.id ||
+            (item.mergedInto.trim().isNotEmpty &&
+                item.targetType !=
+                    AiProfilePreferenceTargetType.relationship)) {
+          invalidTarget += 1;
+        }
+      } on Object {
+        malformed += 1;
+      }
+    }
+
+    final index = _safeGetInventoryStringList(prefs, indexKey) ?? const [];
+    final objectIds =
+        objectKeys.map((key) => key.substring(prefix.length)).toSet();
+    final staleIndex = index.where((id) => !objectIds.contains(id)).length;
+    return [
+      'objects=${objectKeys.length}',
+      'indexed=${index.length}',
+      'profileFacts=$profileFacts',
+      'relationships=$relationships',
+      if (confirmed > 0) 'confirmed=$confirmed',
+      if (hidden > 0) 'hidden=$hidden',
+      if (corrected > 0) 'corrected=$corrected',
+      if (merged > 0) 'merged=$merged',
+      if (invalidTarget > 0) 'invalidTarget=$invalidTarget',
+      if (malformed > 0) 'malformed=$malformed',
+      if (staleIndex > 0) 'staleIndex=$staleIndex',
+    ];
+  }
+
+  List<String> _relationshipMergeHistoryDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const prefix = 'ai.relationshipMergeHistory.';
+    const indexKey = 'ai.relationshipMergeHistory.index';
+    final objectKeys = keys
+        .where((key) => key.startsWith(prefix) && key != indexKey)
+        .toList(growable: false)
+      ..sort();
+    if (objectKeys.isEmpty && !keys.contains(indexKey)) return const [];
+
+    var merges = 0;
+    var undos = 0;
+    var invalidRequired = 0;
+    var malformed = 0;
+    final pairCounts = <String, int>{};
+
+    for (final key in objectKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final item = AiRelationshipMergeEvent.fromJson(decoded);
+        switch (item.action) {
+          case AiRelationshipMergeEventAction.merge:
+            merges += 1;
+          case AiRelationshipMergeEventAction.undo:
+            undos += 1;
+        }
+        final source = item.sourcePersonName.trim();
+        final target = item.targetPersonName.trim();
+        final keyId = key.substring(prefix.length);
+        if (item.id.isEmpty ||
+            source.isEmpty ||
+            target.isEmpty ||
+            keyId != item.id ||
+            source.toLowerCase() == target.toLowerCase()) {
+          invalidRequired += 1;
+        }
+        if (source.isNotEmpty && target.isNotEmpty) {
+          final pair = '$source->$target';
+          pairCounts.update(pair, (value) => value + 1, ifAbsent: () => 1);
+        }
+      } on Object {
+        malformed += 1;
+      }
+    }
+
+    final index = _safeGetInventoryStringList(prefs, indexKey) ?? const [];
+    final objectIds =
+        objectKeys.map((key) => key.substring(prefix.length)).toSet();
+    final staleIndex = index.where((id) => !objectIds.contains(id)).length;
+    final topPairs = pairCounts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
+    return [
+      'objects=${objectKeys.length}',
+      'indexed=${index.length}',
+      'merges=$merges',
+      'undos=$undos',
+      if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+      if (malformed > 0) 'malformed=$malformed',
+      if (staleIndex > 0) 'staleIndex=$staleIndex',
+      if (topPairs.isNotEmpty)
+        'topPairs=${topPairs.take(3).map((entry) => '${entry.key}:${entry.value}').join(',')}',
     ];
   }
 

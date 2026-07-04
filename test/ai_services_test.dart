@@ -696,8 +696,24 @@ void main() {
         'ai.embeddings.typeIndex.summary': <String>['summary:entry-1'],
         'diary.insights.entry-1': '{}',
         'memory.entries.memory-1': '{}',
-        'ai.profilePreferences.profileFact:1': '{}',
-        'ai.relationshipMergeHistory.merge-1': '{}',
+        'ai.profilePreferences.profileFact:1': jsonEncode(
+          AiProfilePreference(
+            targetType: AiProfilePreferenceTargetType.profileFact,
+            targetId: '1',
+            updatedAt: DateTime(2026, 7, 3),
+            confirmed: true,
+            correctedValue: '喜欢饭后散步',
+          ).toJson(),
+        ),
+        'ai.relationshipMergeHistory.merge-1': jsonEncode(
+          AiRelationshipMergeEvent(
+            id: 'merge-1',
+            sourcePersonName: '小王',
+            targetPersonName: '王同学',
+            action: AiRelationshipMergeEventAction.merge,
+            createdAt: DateTime(2026, 7, 3),
+          ).toJson(),
+        ),
         'ai.analysis.jobs.entry-1': '{}',
         'ai.promptTraces.companion:last': '{}',
         'ai.retrievalTraces.search:last': '{}',
@@ -757,7 +773,25 @@ void main() {
       expect(embeddingSection.details, contains('typeIndexes=1'));
       expect(counts['调试记录'], 3);
       expect(counts['后台队列'], 1);
+      final profilePreferenceSection =
+          inventory.sections.firstWhere((section) => section.label == '画像偏好');
+      expect(profilePreferenceSection.details, contains('objects=1'));
+      expect(profilePreferenceSection.details, contains('indexed=0'));
+      expect(profilePreferenceSection.details, contains('profileFacts=1'));
+      expect(profilePreferenceSection.details, contains('relationships=0'));
+      expect(profilePreferenceSection.details, contains('confirmed=1'));
+      expect(profilePreferenceSection.details, contains('corrected=1'));
       expect(counts['关系合并历史'], 1);
+      final mergeHistorySection =
+          inventory.sections.firstWhere((section) => section.label == '关系合并历史');
+      expect(mergeHistorySection.details, contains('objects=1'));
+      expect(mergeHistorySection.details, contains('indexed=0'));
+      expect(mergeHistorySection.details, contains('merges=1'));
+      expect(mergeHistorySection.details, contains('undos=0'));
+      expect(
+        mergeHistorySection.details,
+        contains('topPairs=小王->王同学:1'),
+      );
       final calendarSection =
           inventory.sections.firstWhere((section) => section.label == '纪念日');
       expect(calendarSection.details, contains('objects=1'));
@@ -783,6 +817,8 @@ void main() {
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
+      expect(inventory.toDebugText(), contains('profileFacts=1'));
+      expect(inventory.toDebugText(), contains('topPairs=小王->王同学:1'));
       expect(inventory.toDebugText(), contains('topMonths=lunar-5:1'));
       expect(inventory.toDebugText(), contains('topTags=恢复:1,运动:1'));
       expect(inventory.toDebugText(), contains('details=objects=1'));
