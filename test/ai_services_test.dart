@@ -870,17 +870,31 @@ void main() {
           const AiProfileDecisionService().buildProfileFactDecisions(
         facts: facts,
         preferences: preferences,
+        conflicts: [
+          ProfileConflictNote(
+            targetId: 'profile:self_regulation',
+            entryId: 'conflict-entry',
+            entryDate: DateTime(2026, 7, 3),
+            newEvidence: '独处也能帮助恢复',
+            interpretation: '恢复方式需要增加条件',
+            confidence: 0.7,
+          ),
+        ],
       );
 
-      expect(decisions.first.kind, AiProfileDecisionKind.corrected);
-      expect(decisions.first.actionLabel, '使用用户修正');
+      expect(decisions.first.kind, AiProfileDecisionKind.conflict);
+      expect(decisions.first.actionLabel, '需要核对冲突');
+      expect(
+          decisions
+              .where((item) => item.kind == AiProfileDecisionKind.corrected),
+          hasLength(1));
       expect(
         decisions.where((item) => item.kind == AiProfileDecisionKind.hidden),
         hasLength(1),
       );
       expect(
         decisions
-            .where((item) => item.actionLabel == '同字段候选')
+            .where((item) => item.actionLabel == '需要核对冲突')
             .map((item) => item.targetId),
         containsAll([facts[0].id, facts[1].id]),
       );

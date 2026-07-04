@@ -622,10 +622,23 @@ void main() {
     expect(find.text('需要核对的变化'), findsOneWidget);
     expect(find.text('这次独处比散步更能恢复状态。'), findsOneWidget);
     expect(find.text('调节方式画像需要保留情境差异。'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '采纳变化'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, '保持原画像'), findsOneWidget);
     expect(find.text('target: profile:self_regulation'), findsOneWidget);
     expect(find.text('entry: profile-conflict-entry'), findsOneWidget);
     expect(find.textContaining('source: current_entry:profile-conflict-entry'),
         findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '采纳变化'));
+    await tester.pumpAndSettle();
+
+    final preference = await const AiProfilePreferenceRepository()
+        .getPreference(
+            targetType: AiProfilePreferenceTargetType.profileFact,
+            targetId: 'self_regulation:散步可能帮助恢复状态');
+    expect(preference?.correctedValue, '这次独处比散步更能恢复状态。');
+    expect(preference?.confirmed, isTrue);
+    expect(find.text('已采纳这条变化并更新画像'), findsOneWidget);
   });
 
   testWidgets('profile page shows developer decision review', (tester) async {

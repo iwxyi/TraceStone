@@ -54,7 +54,7 @@ class AiProfileDecisionService {
         targetId: fact.id,
       )];
       final conflictCount =
-          conflicts.where((item) => item.targetId == fact.id).length;
+          conflicts.where((item) => _conflictTargetsFact(item, fact)).length;
       final siblingCount = factsByField[fact.field.toLowerCase()]?.length ?? 0;
       final baseDebug =
           'target=${fact.id} status=${fact.status.name} confidence=${fact.confidence.toStringAsFixed(2)} evidence=${fact.evidenceCount} days=${fact.distinctDays}';
@@ -237,5 +237,15 @@ class AiProfileDecisionService {
       case AiProfileDecisionKind.hidden:
         return 5;
     }
+  }
+
+  bool _conflictTargetsFact(ProfileConflictNote conflict, ProfileFact fact) {
+    final target = conflict.targetId.toLowerCase().trim();
+    final factId = fact.id.toLowerCase().trim();
+    final field = fact.field.toLowerCase().trim();
+    if (target == factId) return true;
+    if (target == field) return true;
+    if (target == 'profile:$field') return true;
+    return target.startsWith('$field:');
   }
 }

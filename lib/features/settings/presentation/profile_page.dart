@@ -95,6 +95,72 @@ class _ProfilePageState extends State<ProfilePage> {
     await _refresh();
   }
 
+  Future<void> _adoptConflict(ProfileConflictNote conflict) async {
+    final target = await _factForConflict(conflict);
+    if (target == null) {
+      _showConflictTargetMissing();
+      return;
+    }
+    await _profilePreferences.setCorrectedValue(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: target.id,
+      correctedValue: conflict.newEvidence,
+    );
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已采纳这条变化并更新画像')),
+    );
+  }
+
+  Future<void> _keepExistingForConflict(ProfileConflictNote conflict) async {
+    final target = await _factForConflict(conflict);
+    if (target == null) {
+      _showConflictTargetMissing();
+      return;
+    }
+    await _profilePreferences.setConfirmed(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: target.id,
+      confirmed: true,
+    );
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已保留原画像并标记为确认')),
+    );
+  }
+
+  Future<ProfileFact?> _factForConflict(ProfileConflictNote conflict) async {
+    final facts = _projectionService.buildProfileFacts(
+      await _repository.listInsights(),
+    );
+    final target = conflict.targetId.toLowerCase().trim();
+    final normalizedField = target.startsWith('profile:')
+        ? target.substring('profile:'.length)
+        : target;
+    for (final fact in facts) {
+      final factId = fact.id.toLowerCase();
+      final field = fact.field.toLowerCase();
+      if (factId == target ||
+          field == target ||
+          field == normalizedField ||
+          target.startsWith('$field:')) {
+        return fact;
+      }
+    }
+    return null;
+  }
+
+  void _showConflictTargetMissing() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('没有找到可更新的画像目标')),
+    );
+  }
+
   Future<void> _refresh() async {
     setState(() {
       _dataFuture = _loadData();
@@ -150,6 +216,8 @@ class _ProfilePageState extends State<ProfilePage> {
                             _ProfileConflictCard(
                               conflicts: data.conflicts,
                               developerMode: developerMode,
+                              onAdopt: _adoptConflict,
+                              onKeepExisting: _keepExistingForConflict,
                             ),
                             if (facts.isNotEmpty) const SizedBox(height: 16),
                           ],
@@ -277,10 +345,14 @@ class _ProfileConflictCard extends StatelessWidget {
   const _ProfileConflictCard({
     required this.conflicts,
     required this.developerMode,
+    required this.onAdopt,
+    required this.onKeepExisting,
   });
 
   final List<ProfileConflictNote> conflicts;
   final bool developerMode;
+  final Future<void> Function(ProfileConflictNote conflict) onAdopt;
+  final Future<void> Function(ProfileConflictNote conflict) onKeepExisting;
 
   @override
   Widget build(BuildContext context) {
@@ -336,6 +408,23 @@ class _ProfileConflictCard extends StatelessWidget {
                     style: theme.textTheme.bodySmall,
                   ),
               ],
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: () => onAdopt(conflict),
+                    icon: const Icon(Icons.update_outlined),
+                    label: const Text('采纳变化'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => onKeepExisting(conflict),
+                    icon: const Icon(Icons.verified_outlined),
+                    label: const Text('保持原画像'),
+                  ),
+                ],
+              ),
               if (conflict != conflicts.take(3).last) const Divider(height: 22),
             ],
           ],
