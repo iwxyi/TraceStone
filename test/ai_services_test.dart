@@ -695,7 +695,25 @@ void main() {
         'ai.embeddings.entryIndex.entry-1': <String>['summary:entry-1'],
         'ai.embeddings.typeIndex.summary': <String>['summary:entry-1'],
         'diary.insights.entry-1': '{}',
-        'memory.entries.memory-1': '{}',
+        'memory.entries.memory-1': jsonEncode(
+          MemoryEntry(
+            id: 'memory-1',
+            sourceEntryId: 'entry-1',
+            date: DateTime(2026, 7, 3),
+            createdAt: DateTime(2026, 7, 3),
+            summary: '饭后散步有助于恢复状态。',
+            keywords: const ['散步', '恢复'],
+            emotion: '平静',
+            people: const ['小王'],
+            tags: const ['恢复'],
+            evidenceEntryIds: const ['entry-1', 'entry-2'],
+            importance: 0.8,
+            confidence: 0.3,
+            referenceCount: 0,
+            decay: 0.6,
+            archived: true,
+          ).toJson(),
+        ),
         'ai.profilePreferences.profileFact:1': jsonEncode(
           AiProfilePreference(
             targetType: AiProfilePreferenceTargetType.profileFact,
@@ -771,6 +789,20 @@ void main() {
       expect(embeddingSection.details, contains('objects=1'));
       expect(embeddingSection.details, contains('entryIndexes=1'));
       expect(embeddingSection.details, contains('typeIndexes=1'));
+      final memorySection =
+          inventory.sections.firstWhere((section) => section.label == '长期记忆');
+      expect(memorySection.details, contains('objects=1'));
+      expect(memorySection.details, contains('indexed=0'));
+      expect(memorySection.details, contains('archived=1'));
+      expect(memorySection.details, contains('lowConfidence=1'));
+      expect(memorySection.details, contains('highDecay=1'));
+      expect(memorySection.details, contains('neverReferenced=1'));
+      expect(memorySection.details, contains('evidenceSources=2'));
+      expect(memorySection.details, contains('references=0'));
+      expect(memorySection.details, contains('averageImportance=0.80'));
+      expect(memorySection.details, contains('averageConfidence=0.30'));
+      expect(memorySection.details, contains('topTags=恢复:1'));
+      expect(memorySection.details, contains('topPeople=小王:1'));
       expect(counts['调试记录'], 3);
       expect(counts['后台队列'], 1);
       final profilePreferenceSection =
@@ -817,6 +849,8 @@ void main() {
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
+      expect(inventory.toDebugText(), contains('averageConfidence=0.30'));
+      expect(inventory.toDebugText(), contains('topPeople=小王:1'));
       expect(inventory.toDebugText(), contains('profileFacts=1'));
       expect(inventory.toDebugText(), contains('topPairs=小王->王同学:1'));
       expect(inventory.toDebugText(), contains('topMonths=lunar-5:1'));

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/ai_profile_preference.dart';
 import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
+import '../models/memory_entry.dart';
 import '../models/stone_task.dart';
 
 class AiDataInventoryService {
@@ -55,6 +56,7 @@ class AiDataInventoryService {
         backupPolicy: '随 AI 记忆备份',
         deletePolicy: '用户删除记忆或来源不足时清理',
         exportPolicy: '普通导出仅摘要，开发者导出含来源链',
+        details: _memoryDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -339,6 +341,114 @@ class AiDataInventoryService {
       if (invalidTarget > 0) 'invalidTarget=$invalidTarget',
       if (malformed > 0) 'malformed=$malformed',
       if (staleIndex > 0) 'staleIndex=$staleIndex',
+    ];
+  }
+
+  List<String> _memoryDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const prefix = 'memory.entries.';
+    const indexKey = 'memory.entries.index';
+    final objectKeys = keys
+        .where((key) => key.startsWith(prefix) && key != indexKey)
+        .toList(growable: false)
+      ..sort();
+    if (objectKeys.isEmpty && !keys.contains(indexKey)) return const [];
+
+    var archived = 0;
+    var lowConfidence = 0;
+    var highDecay = 0;
+    var neverReferenced = 0;
+    var missingSource = 0;
+    var invalidRequired = 0;
+    var malformed = 0;
+    var totalEvidenceSources = 0;
+    var totalReferences = 0;
+    var totalImportance = 0.0;
+    var totalConfidence = 0.0;
+    final tagCounts = <String, int>{};
+    final peopleCounts = <String, int>{};
+
+    for (final key in objectKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final memory = MemoryEntry.fromJson(decoded);
+        if (memory.archived) archived += 1;
+        if (memory.confidence < 0.35) lowConfidence += 1;
+        if (memory.decay >= 0.5) highDecay += 1;
+        if (memory.referenceCount == 0) neverReferenced += 1;
+        if (memory.allSourceEntryIds.isEmpty) missingSource += 1;
+        final keyId = key.substring(prefix.length);
+        if (memory.id.trim().isEmpty ||
+            memory.summary.trim().isEmpty ||
+            keyId != memory.id) {
+          invalidRequired += 1;
+        }
+        totalEvidenceSources += memory.allSourceEntryIds.length;
+        totalReferences += memory.referenceCount;
+        totalImportance += memory.importance.clamp(0, 1);
+        totalConfidence += memory.confidence.clamp(0, 1);
+        for (final tag in memory.tags) {
+          tagCounts.update(tag, (value) => value + 1, ifAbsent: () => 1);
+        }
+        for (final person in memory.people) {
+          peopleCounts.update(person, (value) => value + 1, ifAbsent: () => 1);
+        }
+      } on Object {
+        malformed += 1;
+      }
+    }
+
+    final validCount = objectKeys.length - malformed;
+    final averageImportance =
+        validCount <= 0 ? 0 : totalImportance / validCount;
+    final averageConfidence =
+        validCount <= 0 ? 0 : totalConfidence / validCount;
+    final index = _safeGetInventoryStringList(prefs, indexKey) ?? const [];
+    final objectIds =
+        objectKeys.map((key) => key.substring(prefix.length)).toSet();
+    final staleIndex = index.where((id) => !objectIds.contains(id)).length;
+    final topTags = tagCounts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
+    final topPeople = peopleCounts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
+    return [
+      'objects=${objectKeys.length}',
+      'indexed=${index.length}',
+      'archived=$archived',
+      'lowConfidence=$lowConfidence',
+      'highDecay=$highDecay',
+      'neverReferenced=$neverReferenced',
+      'evidenceSources=$totalEvidenceSources',
+      'references=$totalReferences',
+      'averageImportance=${averageImportance.toStringAsFixed(2)}',
+      'averageConfidence=${averageConfidence.toStringAsFixed(2)}',
+      if (missingSource > 0) 'missingSource=$missingSource',
+      if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+      if (malformed > 0) 'malformed=$malformed',
+      if (staleIndex > 0) 'staleIndex=$staleIndex',
+      if (topTags.isNotEmpty)
+        'topTags=${topTags.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (topPeople.isNotEmpty)
+        'topPeople=${topPeople.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
     ];
   }
 
