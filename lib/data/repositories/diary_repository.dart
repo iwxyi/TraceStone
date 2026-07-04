@@ -230,9 +230,14 @@ class DiaryRepository {
   Future<DiaryTrashItem?> _trashItem(SharedPreferences prefs, String id) async {
     final key = '$_trashPrefix$id';
     final value = _safeGetValue(prefs, key);
-    if (value == null) return null;
+    if (value == null) {
+      if (prefs.containsKey(key)) {
+        await _removeTrashItem(prefs, id);
+      }
+      return null;
+    }
     if (value is! String) {
-      await prefs.remove(key);
+      await _removeTrashItem(prefs, id);
       return null;
     }
     try {
