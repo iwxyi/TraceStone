@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../data/models/memory_entry.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
@@ -238,7 +239,18 @@ class _MemoryCard extends StatelessWidget {
             ],
             if (developerMode) ...[
               const SizedBox(height: 12),
-              Text('调试信息', style: theme.textTheme.labelLarge),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('调试信息', style: theme.textTheme.labelLarge),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _copyAudit(context),
+                    icon: const Icon(Icons.copy_all_outlined),
+                    label: const Text('复制审计'),
+                  ),
+                ],
+              ),
               const SizedBox(height: 4),
               Text(formatAiSourceId('memory', memory.id),
                   style: theme.textTheme.bodySmall),
@@ -292,6 +304,42 @@ class _MemoryCard extends StatelessWidget {
         _MetricChip(label: '衰减 ${memory.decay.toStringAsFixed(2)}'),
       if (memory.archived) const _MetricChip(label: '已归档'),
     ];
+  }
+
+  Future<void> _copyAudit(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: _auditText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制记忆审计')),
+    );
+  }
+
+  String _auditText() {
+    final lines = <String>[
+      '# Memory Audit',
+      'id=${memory.id}',
+      'source=${formatAiSourceId('memory', memory.id)}',
+      'sourceEntry=${memory.sourceEntryId}',
+      'date=${memory.date.toIso8601String()}',
+      'createdAt=${memory.createdAt.toIso8601String()}',
+      'updatedAt=${memory.updatedAt.toIso8601String()}',
+      'lastReferencedAt=${memory.lastReferencedAt.toIso8601String()}',
+      'archived=${memory.archived}',
+      'importance=${memory.importance.toStringAsFixed(3)}',
+      'confidence=${memory.confidence.toStringAsFixed(3)}',
+      'referenceCount=${memory.referenceCount}',
+      'decay=${memory.decay.toStringAsFixed(3)}',
+      '',
+      'summary=${memory.summary}',
+      if (memory.emotion.isNotEmpty) 'emotion=${memory.emotion}',
+      if (memory.keywords.isNotEmpty) 'keywords=${memory.keywords.join(', ')}',
+      if (memory.people.isNotEmpty) 'people=${memory.people.join(', ')}',
+      if (memory.tags.isNotEmpty) 'tags=${memory.tags.join(', ')}',
+      '',
+      'evidenceEntries:',
+      for (final id in memory.allSourceEntryIds) '- entry:$id',
+    ];
+    return lines.join('\n');
   }
 }
 

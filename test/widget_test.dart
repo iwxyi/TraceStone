@@ -1159,6 +1159,66 @@ void main() {
     expect(find.text('entry:second-entry'), findsOneWidget);
   });
 
+  testWidgets('memory page copies lifecycle audit in developer mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    final date = DateTime(2026, 7, 3);
+    await const MemoryRepository().saveMemory(MemoryEntry(
+      id: 'memory-audit-widget',
+      sourceEntryId: 'audit-entry',
+      evidenceEntryIds: const ['audit-entry', 'older-audit-entry'],
+      date: date,
+      createdAt: date,
+      lastReferencedAt: DateTime(2026, 7, 4),
+      summary: '散步有时能帮助缓解压力。',
+      keywords: const ['散步', '压力'],
+      emotion: '放松',
+      people: const ['小李'],
+      tags: const ['运动'],
+      importance: 0.72,
+      confidence: 0.64,
+      referenceCount: 5,
+      decay: 0.18,
+    ));
+
+    await tester.pumpWidget(
+      const MaterialApp(home: MemoryManagementPage()),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '复制审计'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已复制记忆审计'), findsOneWidget);
+    expect(copiedText, contains('# Memory Audit'));
+    expect(copiedText, contains('id=memory-audit-widget'));
+    expect(copiedText, contains('source=memory:memory-audit-widget'));
+    expect(copiedText, contains('sourceEntry=audit-entry'));
+    expect(copiedText, contains('importance=0.720'));
+    expect(copiedText, contains('confidence=0.640'));
+    expect(copiedText, contains('referenceCount=5'));
+    expect(copiedText, contains('decay=0.180'));
+    expect(copiedText, contains('- entry:older-audit-entry'));
+    expect(copiedText, contains('keywords=散步, 压力'));
+    expect(copiedText, contains('people=小李'));
+  });
+
   testWidgets('shows shaping stone candidates', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);
