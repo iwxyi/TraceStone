@@ -2228,6 +2228,7 @@ void main() {
 
     expect(find.textContaining('summary keyPoints'), findsOneWidget);
     expect(find.textContaining('summary quality:'), findsOneWidget);
+    expect(find.textContaining('summary revisionHistory'), findsOneWidget);
     expect(find.textContaining('完成散步；焦虑下降'), findsOneWidget);
     expect(find.textContaining('summary quotes'), findsOneWidget);
     expect(find.textContaining('summary:debug-summary-entry'), findsWidgets);

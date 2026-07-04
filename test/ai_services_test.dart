@@ -672,6 +672,7 @@ void main() {
     test('summarizes AI derived local data by category', () async {
       SharedPreferences.setMockInitialValues({
         'ai.entrySummaries.entry-1': '{}',
+        'ai.entrySummaryRevisions.entry-1:r2': '{}',
         'ai.entrySegments.index.entry-1': <String>['entry-1#s1'],
         'ai.embeddings.summary:entry-1': '{}',
         'diary.insights.entry-1': '{}',
@@ -693,12 +694,12 @@ void main() {
         for (final section in inventory.sections) section.label: section.count,
       };
 
-      expect(counts['日记摘要'], 2);
+      expect(counts['日记摘要'], 3);
       expect(counts['向量索引'], 1);
       expect(counts['调试记录'], 3);
       expect(counts['后台队列'], 1);
       expect(counts['关系合并历史'], 1);
-      expect(inventory.totalCount, 14);
+      expect(inventory.totalCount, 15);
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
     });
@@ -3354,6 +3355,7 @@ void main() {
         importantQuotes: const ['走完以后轻松一点'],
       );
       final updated = await summaryRepository.getSummary(entry.id);
+      final revisions = await summaryRepository.listSummaryRevisions(entry.id);
       final secondEmbedding = await embeddingRepository.getBySource(
         sourceType: AiEmbeddingSourceType.summary,
         sourceId: entry.id,
@@ -3369,6 +3371,10 @@ void main() {
       expect(updated?.qualityScore, greaterThan(0.6));
       expect(updated?.revision, summary.revision + 2);
       expect(updated?.correctedAt, isNotNull);
+      expect(revisions, hasLength(2));
+      expect(revisions.first.revision, summary.revision + 2);
+      expect(revisions.first.previousBrief, '散步后焦虑下降。');
+      expect(revisions.first.updatedBrief, '散步后焦虑下降，并保留关键原文。');
       expect(secondEmbedding?.textHash, isNot(firstEmbedding?.textHash));
     });
 
@@ -3425,6 +3431,33 @@ void main() {
         (await summaryRepository.listSegments(entry.id)).map((item) => item.id),
         ['${entry.id}#manual'],
       );
+    });
+
+    test('deleting entry summary removes revision history', () async {
+      SharedPreferences.setMockInitialValues({});
+      const summaryRepository = EntrySummaryRepository();
+      final entry = _entry(
+        id: 'summary-revision-delete',
+        date: DateTime(2026, 7, 3),
+        content: '今天散步以后焦虑下降。',
+      );
+      final summary = _summaryForTest(
+        entry: entry,
+        brief: '旧摘要',
+        importance: 0.5,
+      );
+      await summaryRepository.saveSummary(summary);
+      await summaryRepository.correctBrief(
+        entryId: entry.id,
+        brief: '晚上散步后焦虑下降。',
+      );
+
+      expect(
+          await summaryRepository.listSummaryRevisions(entry.id), hasLength(1));
+
+      await summaryRepository.deleteForEntry(entry.id);
+
+      expect(await summaryRepository.listSummaryRevisions(entry.id), isEmpty);
     });
 
     test('deleting entry summary removes summary and segment embeddings',

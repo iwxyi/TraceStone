@@ -13,6 +13,8 @@ class EntrySummaryRepository {
   const EntrySummaryRepository();
 
   static const _summaryPrefix = 'ai.entrySummaries.';
+  static const _summaryRevisionIndexPrefix = 'ai.entrySummaryRevisions.index.';
+  static const _summaryRevisionPrefix = 'ai.entrySummaryRevisions.';
   static const _segmentIndexPrefix = 'ai.entrySegments.index.';
   static const _segmentPrefix = 'ai.entrySegments.';
 
@@ -83,8 +85,35 @@ class EntrySummaryRepository {
       correctedAt: correctedAt,
     );
     await saveSummary(updated);
+    await _saveSummaryRevision(
+      previous: current,
+      updated: updated,
+      createdAt: correctedAt,
+    );
     await _refreshSummaryEmbedding(updated);
     return updated;
+  }
+
+  Future<List<EntrySummaryRevision>> listSummaryRevisions(
+    String entryId,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final indexKey = '$_summaryRevisionIndexPrefix$entryId';
+    final ids = _safeGetStringList(prefs, indexKey) ?? [];
+    final revisions = <EntrySummaryRevision>[];
+    for (final id in ids) {
+      final revision = await _getSummaryRevisionById(prefs, id);
+      if (revision == null) continue;
+      if (revision.entryId == entryId && revision.id.isNotEmpty) {
+        revisions.add(revision);
+      }
+    }
+    revisions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    await prefs.setStringList(
+      indexKey,
+      revisions.map((item) => item.id).toList(growable: false),
+    );
+    return revisions;
   }
 
   Future<void> saveSegments(String entryId, List<DiarySegment> segments) async {
@@ -138,6 +167,12 @@ class EntrySummaryRepository {
     final prefs = await SharedPreferences.getInstance();
     const embeddingRepository = AiEmbeddingRepository();
     await prefs.remove('$_summaryPrefix$entryId');
+    final revisionIds =
+        _safeGetStringList(prefs, '$_summaryRevisionIndexPrefix$entryId') ?? [];
+    for (final id in revisionIds) {
+      await prefs.remove('$_summaryRevisionPrefix$id');
+    }
+    await prefs.remove('$_summaryRevisionIndexPrefix$entryId');
     await embeddingRepository.deleteBySource(
       sourceType: AiEmbeddingSourceType.summary,
       sourceId: entryId,
@@ -171,6 +206,59 @@ class EntrySummaryRepository {
       generatedAt: DateTime.now(),
       textHash: result.textHash,
     ));
+  }
+
+  Future<void> _saveSummaryRevision({
+    required EntrySummary previous,
+    required EntrySummary updated,
+    required DateTime createdAt,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final id =
+        '${updated.entryId}:${updated.revision}:${createdAt.microsecondsSinceEpoch}';
+    final revision = EntrySummaryRevision(
+      id: id,
+      entryId: updated.entryId,
+      revision: updated.revision,
+      createdAt: createdAt,
+      previousTitle: previous.title,
+      updatedTitle: updated.title,
+      previousBrief: previous.brief,
+      updatedBrief: updated.brief,
+      previousQualityScore: previous.qualityScore,
+      updatedQualityScore: updated.qualityScore,
+    );
+    await prefs.setString(
+      '$_summaryRevisionPrefix$id',
+      jsonEncode(revision.toJson()),
+    );
+    final indexKey = '$_summaryRevisionIndexPrefix${updated.entryId}';
+    final ids = _safeGetStringList(prefs, indexKey) ?? [];
+    if (!ids.contains(id)) {
+      ids.add(id);
+      await prefs.setStringList(indexKey, ids);
+    }
+  }
+
+  Future<EntrySummaryRevision?> _getSummaryRevisionById(
+    SharedPreferences prefs,
+    String id,
+  ) async {
+    final key = '$_summaryRevisionPrefix$id';
+    final raw = _safeGetString(prefs, key);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove(key);
+        return null;
+      }
+      final revision = EntrySummaryRevision.fromJson(decoded);
+      return revision.id.isEmpty ? null : revision;
+    } on Object {
+      await prefs.remove(key);
+      return null;
+    }
   }
 
   _SummaryQuality _qualityFor({

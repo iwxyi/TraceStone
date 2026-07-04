@@ -977,7 +977,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 | 能力 | 当前实现 |
 | --- | --- |
 | 今日洞察 | `DiaryAnalysisService.analyzeEntry` 生成结构化 `DiaryInsight` |
-| 日记摘要 | `EntrySummary` / `EntrySummaryRepository` / `EntrySummaryService`，支持修订版本、修正时间、生成器追踪和本地质量评估 |
+| 日记摘要 | `EntrySummary` / `EntrySummaryRepository` / `EntrySummaryService`，支持修订版本、修正时间、生成器追踪、本地质量评估和摘要修订历史 |
 | 日记分段 | `DiarySegment`，支持 Markdown 标题、分割线、段落、常见时间词和本地语义转场切分 |
 | 证据结构 | `InsightEvidence`，facts/signals/hypotheses/suggestions 均可带 evidence |
 | 输出分层 | `DiaryInsight` 已包含事实、信号、推测、建议、反证、画像候选、关系候选 |
@@ -1012,7 +1012,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 6. `ProfileFact`、`RelationshipProfile` 和塑石行动已有第一版独立 embedding，并会在搜索时补建、刷新和清理失效索引；还需要更成熟的向量索引。
 7. 当前 AI Pipeline 仍以单个 job 串起多个阶段；开发者模式已有局部重建入口，未来可进一步拆成更细粒度、可排队调度的子任务。
 8. 批量导入几千篇日记时，已有队列暂停/继续、批次分组和基于完成阶段日志的耗时校准；还需要导入页分批入队入口和更多设备/模型维度的耗时校准。
-9. 历史摘要目前以本地规则摘要为主，已支持用户修正摘要包、修订版本、修正时间和本地质量评估；未来需要可选 AI 摘要生成、AI 质量评估和更完整的版本历史。
+9. 历史摘要目前以本地规则摘要为主，已支持用户修正摘要包、修订版本、修正时间、本地质量评估和摘要修订历史；未来需要可选 AI 摘要生成、AI 质量评估和更完整的版本对比/导出。
 10. 开发者模式已有 AI 衍生数据清单和导出提示；隐私、备份、导出策略还需要接入实际备份加密与同步边界。
 
 ## 16. 推荐落地顺序

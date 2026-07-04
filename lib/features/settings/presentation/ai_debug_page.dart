@@ -1430,6 +1430,7 @@ class _JobArtifacts {
     required this.retrievalCount,
     required this.calendarCount,
     required this.retrievalLines,
+    required this.summaryRevisionLines,
   });
 
   final EntrySummary? summary;
@@ -1456,6 +1457,7 @@ class _JobArtifacts {
   final int retrievalCount;
   final int calendarCount;
   final List<String> retrievalLines;
+  final List<String> summaryRevisionLines;
 
   bool get hasSummary => summary != null;
 
@@ -1477,6 +1479,10 @@ class _JobArtifacts {
       if (value.topics.isNotEmpty) 'summary topics: ${value.topics.join('、')}',
       if (value.people.isNotEmpty) 'summary people: ${value.people.join('、')}',
       if (value.places.isNotEmpty) 'summary places: ${value.places.join('、')}',
+      if (summaryRevisionLines.isNotEmpty) ...[
+        'summary revisionHistory:',
+        ...summaryRevisionLines,
+      ],
     ];
   }
 
@@ -1489,6 +1495,8 @@ class _JobArtifacts {
     const memoryRepository = MemoryRepository();
     const insightRepository = InsightRepository();
     final summary = await summaryRepository.getSummary(entryId);
+    final summaryRevisions =
+        await summaryRepository.listSummaryRevisions(entryId);
     final segments = await summaryRepository.listSegments(entryId);
     final embeddings = await embeddingRepository.listForEntry(entryId);
     final trace = await traceRepository.getTrace(entryId);
@@ -1583,6 +1591,10 @@ class _JobArtifacts {
       retrievalLines: [
         for (final item in trace?.items ?? [])
           '${formatAiSourceId(item.sourceType, item.sourceId)} score=${item.score} ${item.title} ${item.reasons.join('；')}${item.matchedTokens.isEmpty ? '' : ' tokens=${item.matchedTokens.join(',')}'}${item.rerankSignals.isEmpty ? '' : ' signals=${_signalLine(item.rerankSignals)}'}',
+      ],
+      summaryRevisionLines: [
+        for (final revision in summaryRevisions.take(3))
+          '  r${revision.revision} ${revision.previousQualityScore.toStringAsFixed(2)} -> ${revision.updatedQualityScore.toStringAsFixed(2)} ${_compactDebugValue(revision.previousBrief)} => ${_compactDebugValue(revision.updatedBrief)}',
       ],
       summaryMeta: summary == null
           ? ''

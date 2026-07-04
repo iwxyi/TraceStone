@@ -145,3 +145,71 @@ class EntrySummary {
         .toList();
   }
 }
+
+class EntrySummaryRevision {
+  const EntrySummaryRevision({
+    required this.id,
+    required this.entryId,
+    required this.revision,
+    required this.createdAt,
+    required this.previousTitle,
+    required this.updatedTitle,
+    required this.previousBrief,
+    required this.updatedBrief,
+    required this.previousQualityScore,
+    required this.updatedQualityScore,
+    this.reason = 'user-corrected',
+  });
+
+  final String id;
+  final String entryId;
+  final int revision;
+  final DateTime createdAt;
+  final String previousTitle;
+  final String updatedTitle;
+  final String previousBrief;
+  final String updatedBrief;
+  final double previousQualityScore;
+  final double updatedQualityScore;
+  final String reason;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'entryId': entryId,
+        'revision': revision,
+        'createdAt': createdAt.toIso8601String(),
+        'previousTitle': previousTitle,
+        'updatedTitle': updatedTitle,
+        'previousBrief': previousBrief,
+        'updatedBrief': updatedBrief,
+        'previousQualityScore': previousQualityScore,
+        'updatedQualityScore': updatedQualityScore,
+        'reason': reason,
+      };
+
+  static EntrySummaryRevision fromJson(Map<String, dynamic> json) {
+    return EntrySummaryRevision(
+      id: EntrySummary._stringValue(json['id']),
+      entryId: EntrySummary._stringValue(json['entryId']),
+      revision: EntrySummary._intValue(json['revision']) ?? 1,
+      createdAt: EntrySummary._dateValue(json['createdAt']) ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      previousTitle: EntrySummary._stringValue(json['previousTitle']),
+      updatedTitle: EntrySummary._stringValue(json['updatedTitle']),
+      previousBrief: EntrySummary._stringValue(json['previousBrief']),
+      updatedBrief: EntrySummary._stringValue(json['updatedBrief']),
+      previousQualityScore:
+          (EntrySummary._doubleValue(json['previousQualityScore']) ?? 0)
+              .clamp(0, 1)
+              .toDouble(),
+      updatedQualityScore:
+          (EntrySummary._doubleValue(json['updatedQualityScore']) ?? 0)
+              .clamp(0, 1)
+              .toDouble(),
+      reason: EntrySummary._stringValue(
+        json['reason'],
+        fallback: 'user-corrected',
+      ),
+    );
+  }
+}

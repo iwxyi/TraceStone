@@ -9,6 +9,7 @@ class AiDataInventoryService {
     final sections = [
       _section(keys, '日记摘要', [
         'ai.entrySummaries.',
+        'ai.entrySummaryRevisions.',
         'ai.entrySegments.',
       ]),
       _section(keys, '向量索引', [
