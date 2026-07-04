@@ -90,7 +90,18 @@ class AiEmbeddingRepository {
 
   Future<void> deleteForEntry(String entryId) async {
     final prefs = await SharedPreferences.getInstance();
-    final ids = _safeGetStringList(prefs, '$_entryIndexPrefix$entryId') ?? [];
+    final indexedIds =
+        _safeGetStringList(prefs, '$_entryIndexPrefix$entryId') ?? [];
+    final scannedIds = <String>[];
+    for (final key in _embeddingObjectKeys(prefs)) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) continue;
+      final embedding = _embeddingFromRaw(raw);
+      if (embedding?.entryId == entryId) {
+        scannedIds.add(embedding!.id);
+      }
+    }
+    final ids = <String>{...indexedIds, ...scannedIds}.toList();
     for (final id in ids) {
       final raw = _safeGetString(prefs, '$_prefix$id');
       if (raw != null) {
@@ -105,6 +116,61 @@ class AiEmbeddingRepository {
       await prefs.remove('$_prefix$id');
     }
     await prefs.remove('$_entryIndexPrefix$entryId');
+  }
+
+  Future<AiEmbeddingIndexRepairResult> repairIndexes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final previousEntryIndexes = _readIndexes(prefs, _entryIndexPrefix);
+    final previousTypeIndexes = _readIndexes(prefs, _typeIndexPrefix);
+    final entryIndexes = <String, List<String>>{};
+    final typeIndexes = <String, List<String>>{};
+    var objectCount = 0;
+    var invalidObjectCount = 0;
+    var missingEntryReferences = 0;
+    var missingTypeReferences = 0;
+
+    for (final key in _embeddingObjectKeys(prefs)) {
+      objectCount++;
+      final raw = _safeGetString(prefs, key);
+      final embedding = raw == null ? null : _embeddingFromRaw(raw);
+      if (embedding == null ||
+          embedding.id.isEmpty ||
+          embedding.entryId.isEmpty) {
+        invalidObjectCount++;
+        await prefs.remove(key);
+        continue;
+      }
+      entryIndexes.putIfAbsent(embedding.entryId, () => []).add(embedding.id);
+      typeIndexes
+          .putIfAbsent(embedding.sourceType.name, () => [])
+          .add(embedding.id);
+      if (!(previousEntryIndexes[embedding.entryId] ?? const <String>[])
+          .contains(embedding.id)) {
+        missingEntryReferences++;
+      }
+      if (!(previousTypeIndexes[embedding.sourceType.name] ?? const <String>[])
+          .contains(embedding.id)) {
+        missingTypeReferences++;
+      }
+    }
+
+    final removedIndexReferences = _staleIndexReferenceCount(
+          previousEntryIndexes,
+          entryIndexes,
+        ) +
+        _staleIndexReferenceCount(previousTypeIndexes, typeIndexes);
+    await _replaceIndexes(prefs, _entryIndexPrefix, entryIndexes);
+    await _replaceIndexes(prefs, _typeIndexPrefix, typeIndexes);
+    return AiEmbeddingIndexRepairResult(
+      objectCount: objectCount,
+      validObjectCount: objectCount - invalidObjectCount,
+      invalidObjectCount: invalidObjectCount,
+      entryIndexCount: entryIndexes.length,
+      typeIndexCount: typeIndexes.length,
+      missingEntryReferences: missingEntryReferences,
+      missingTypeReferences: missingTypeReferences,
+      removedIndexReferences: removedIndexReferences,
+    );
   }
 
   Future<List<AiEmbedding>> _loadMany(SharedPreferences prefs, List<String> ids,
@@ -126,6 +192,56 @@ class AiEmbeddingRepository {
       await prefs.setStringList(indexKey, embeddings.map((e) => e.id).toList());
     }
     return embeddings;
+  }
+
+  List<String> _embeddingObjectKeys(SharedPreferences prefs) {
+    return prefs
+        .getKeys()
+        .where((key) =>
+            key.startsWith(_prefix) &&
+            !key.startsWith(_entryIndexPrefix) &&
+            !key.startsWith(_typeIndexPrefix))
+        .toList(growable: false)
+      ..sort();
+  }
+
+  Map<String, List<String>> _readIndexes(
+    SharedPreferences prefs,
+    String prefix,
+  ) {
+    final indexes = <String, List<String>>{};
+    for (final key in prefs.getKeys().where((key) => key.startsWith(prefix))) {
+      indexes[key.substring(prefix.length)] =
+          _safeGetStringList(prefs, key) ?? const <String>[];
+    }
+    return indexes;
+  }
+
+  Future<void> _replaceIndexes(
+    SharedPreferences prefs,
+    String prefix,
+    Map<String, List<String>> indexes,
+  ) async {
+    for (final key in prefs.getKeys().where((key) => key.startsWith(prefix))) {
+      await prefs.remove(key);
+    }
+    for (final entry in indexes.entries) {
+      final ids = entry.value.toSet().toList()..sort();
+      if (ids.isEmpty) continue;
+      await prefs.setStringList('$prefix${entry.key}', ids);
+    }
+  }
+
+  int _staleIndexReferenceCount(
+    Map<String, List<String>> previous,
+    Map<String, List<String>> repaired,
+  ) {
+    var count = 0;
+    for (final entry in previous.entries) {
+      final validIds = repaired[entry.key]?.toSet() ?? const <String>{};
+      count += entry.value.where((id) => !validIds.contains(id)).length;
+    }
+    return count;
   }
 
   Future<void> _addToIndex(
@@ -169,4 +285,35 @@ class AiEmbeddingRepository {
       return null;
     }
   }
+}
+
+class AiEmbeddingIndexRepairResult {
+  const AiEmbeddingIndexRepairResult({
+    required this.objectCount,
+    required this.validObjectCount,
+    required this.invalidObjectCount,
+    required this.entryIndexCount,
+    required this.typeIndexCount,
+    required this.missingEntryReferences,
+    required this.missingTypeReferences,
+    required this.removedIndexReferences,
+  });
+
+  final int objectCount;
+  final int validObjectCount;
+  final int invalidObjectCount;
+  final int entryIndexCount;
+  final int typeIndexCount;
+  final int missingEntryReferences;
+  final int missingTypeReferences;
+  final int removedIndexReferences;
+
+  int get repairedReferenceCount =>
+      missingEntryReferences + missingTypeReferences + removedIndexReferences;
+
+  String get summary =>
+      'objects=$objectCount valid=$validObjectCount invalid=$invalidObjectCount '
+      'entryIndexes=$entryIndexCount typeIndexes=$typeIndexCount '
+      'added=${missingEntryReferences + missingTypeReferences} '
+      'removed=$removedIndexReferences';
 }

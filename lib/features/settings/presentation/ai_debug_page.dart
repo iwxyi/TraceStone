@@ -586,13 +586,28 @@ class _QueueSummaryCard extends StatelessWidget {
   }
 }
 
-class _AiDataInventoryCard extends StatelessWidget {
+class _AiDataInventoryCard extends StatefulWidget {
   const _AiDataInventoryCard();
+
+  @override
+  State<_AiDataInventoryCard> createState() => _AiDataInventoryCardState();
+}
+
+class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
+  late Future<AiDataInventory> _future =
+      const AiDataInventoryService().buildInventory();
+  bool _repairingEmbeddingIndexes = false;
+
+  void _reload() {
+    setState(() {
+      _future = const AiDataInventoryService().buildInventory();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<AiDataInventory>(
-      future: const AiDataInventoryService().buildInventory(),
+      future: _future,
       builder: (context, snapshot) {
         final inventory = snapshot.data;
         return Card(
@@ -611,6 +626,13 @@ class _AiDataInventoryCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
                     TextButton.icon(
                       key: const ValueKey('copy-ai-data-inventory'),
                       onPressed: inventory == null
@@ -618,6 +640,20 @@ class _AiDataInventoryCard extends StatelessWidget {
                           : () => _copy(context, inventory),
                       icon: const Icon(Icons.copy_all_outlined),
                       label: const Text('复制'),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('repair-embedding-indexes'),
+                      onPressed: _repairingEmbeddingIndexes
+                          ? null
+                          : _repairEmbeddingIndexes,
+                      icon: _repairingEmbeddingIndexes
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.construction_outlined),
+                      label: const Text('修复向量索引'),
                     ),
                   ],
                 ),
@@ -675,6 +711,31 @@ class _AiDataInventoryCard extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已复制 AI 数据清单')),
     );
+  }
+
+  Future<void> _repairEmbeddingIndexes() async {
+    setState(() {
+      _repairingEmbeddingIndexes = true;
+    });
+    try {
+      final result = await const AiEmbeddingRepository().repairIndexes();
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已修复向量索引：${result.summary}')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('修复向量索引失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _repairingEmbeddingIndexes = false;
+        });
+      }
+    }
   }
 }
 

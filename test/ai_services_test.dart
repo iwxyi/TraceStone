@@ -3632,6 +3632,87 @@ void main() {
       expect(prefs.get('ai.embeddings.array'), isNull);
       expect(prefs.get('ai.embeddings.list'), ['bad']);
     });
+
+    test('repairs embedding entry and type indexes from stored objects',
+        () async {
+      final entry = _entry(
+        id: 'embedding-repair-entry',
+        date: DateTime(2026, 7, 3),
+        content: '这篇日记有孤立向量。',
+      );
+      final embedding = AiEmbedding(
+        id: 'summary:${entry.id}',
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        entryId: entry.id,
+        modelId: 'test',
+        modelVersion: '1',
+        dimensions: 2,
+        vector: const [0.1, 0.2],
+        generatedAt: entry.updatedAt,
+        textHash: 'hash',
+      );
+      SharedPreferences.setMockInitialValues({
+        'ai.embeddings.${embedding.id}': jsonEncode(embedding.toJson()),
+        'ai.embeddings.entryIndex.${entry.id}': <String>['missing'],
+        'ai.embeddings.entryIndex.empty-entry': <String>['missing'],
+        'ai.embeddings.typeIndex.summary': <String>['missing'],
+        'ai.embeddings.broken': '{broken',
+      });
+      const repository = AiEmbeddingRepository();
+
+      final result = await repository.repairIndexes();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(result.objectCount, 2);
+      expect(result.validObjectCount, 1);
+      expect(result.invalidObjectCount, 1);
+      expect(result.entryIndexCount, 1);
+      expect(result.typeIndexCount, 1);
+      expect(result.missingEntryReferences, 1);
+      expect(result.missingTypeReferences, 1);
+      expect(result.removedIndexReferences, 3);
+      expect(prefs.getStringList('ai.embeddings.entryIndex.${entry.id}'),
+          [embedding.id]);
+      expect(prefs.getStringList('ai.embeddings.typeIndex.summary'),
+          [embedding.id]);
+      expect(
+          prefs.containsKey('ai.embeddings.entryIndex.empty-entry'), isFalse);
+      expect(prefs.containsKey('ai.embeddings.broken'), isFalse);
+    });
+
+    test('delete for entry removes orphaned embeddings without entry index',
+        () async {
+      final entry = _entry(
+        id: 'embedding-delete-orphan-entry',
+        date: DateTime(2026, 7, 3),
+        content: '这篇日记删除时索引已经丢失。',
+      );
+      final embedding = AiEmbedding(
+        id: 'summary:${entry.id}',
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        entryId: entry.id,
+        modelId: 'test',
+        modelVersion: '1',
+        dimensions: 2,
+        vector: const [0.1, 0.2],
+        generatedAt: entry.updatedAt,
+        textHash: 'hash',
+      );
+      SharedPreferences.setMockInitialValues({
+        'ai.embeddings.${embedding.id}': jsonEncode(embedding.toJson()),
+        'ai.embeddings.typeIndex.summary': <String>[embedding.id],
+      });
+
+      await const AiEmbeddingRepository().deleteForEntry(entry.id);
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.containsKey('ai.embeddings.${embedding.id}'), isFalse);
+      expect(prefs.getStringList('ai.embeddings.typeIndex.summary'), isEmpty);
+      expect(
+          await const AiEmbeddingRepository().listForEntry(entry.id), isEmpty);
+    });
   });
 
   group('EmbeddingService', () {

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1941,6 +1943,45 @@ void main() {
     expect(copiedText, contains('warning=存在缺少 entry/type 索引的向量对象'));
     expect(copiedText, contains('sensitivity=critical'));
     expect(copiedText, contains('backupPolicy=默认不建议云备份'));
+  });
+
+  testWidgets('AI debug page repairs embedding indexes', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'ai.embeddings.summary:entry-1': jsonEncode({
+        'id': 'summary:entry-1',
+        'sourceType': 'summary',
+        'sourceId': 'entry-1',
+        'entryId': 'entry-1',
+        'modelId': 'test',
+        'modelVersion': '1',
+        'dimensions': 2,
+        'vector': [0.1, 0.2],
+        'generatedAt': '2026-07-03T00:00:00.000',
+        'textHash': 'hash',
+      }),
+    });
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('AI 数据清单'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('缺少 entry/type 索引'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('repair-embedding-indexes')));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('ai.embeddings.entryIndex.entry-1'),
+        ['summary:entry-1']);
+    expect(prefs.getStringList('ai.embeddings.typeIndex.summary'),
+        ['summary:entry-1']);
+    expect(find.textContaining('已修复向量索引'), findsOneWidget);
+    expect(find.textContaining('缺少 entry/type 索引'), findsNothing);
+    expect(find.text('向量索引 3'), findsOneWidget);
   });
 
   testWidgets('AI debug queue overview separates recoverable job states',
