@@ -691,6 +691,7 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
   late Future<AiDataInventory> _future =
       const AiDataInventoryService().buildInventory();
   bool _repairingEmbeddingIndexes = false;
+  _InventoryFilter _filter = _InventoryFilter.all;
 
   void _reload() {
     setState(() {
@@ -704,6 +705,9 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
       future: _future,
       builder: (context, snapshot) {
         final inventory = snapshot.data;
+        final filteredSections = inventory == null
+            ? const <AiDataInventorySection>[]
+            : _filteredSections(inventory);
         return Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -765,6 +769,10 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                     label: '高敏感类别',
                     value: '${inventory.highSensitivitySectionCount}',
                   ),
+                  _DebugLine(
+                    label: '需核对类别',
+                    value: '${inventory.reviewSectionCount}',
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     '调试记录可能包含 prompt、上下文和原始响应；云备份或复制前需要用户明确确认。',
@@ -775,12 +783,34 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      for (final section in inventory.sections)
+                      for (final filter in _InventoryFilter.values)
+                        ChoiceChip(
+                          label: Text(filter.label),
+                          selected: _filter == filter,
+                          onSelected: (_) {
+                            setState(() {
+                              _filter = filter;
+                            });
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final section in filteredSections)
                         Chip(label: Text('${section.label} ${section.count}')),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  for (final section in inventory.sections
+                  if (filteredSections.isEmpty)
+                    Text(
+                      '当前筛选下没有 AI 数据分区。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  for (final section in filteredSections
                       .where((item) => item.details.isNotEmpty))
                     _InventoryDetailsSection(
                       section: section,
@@ -818,6 +848,17 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
     );
   }
 
+  List<AiDataInventorySection> _filteredSections(AiDataInventory inventory) {
+    return inventory.sections.where((section) {
+      return switch (_filter) {
+        _InventoryFilter.all => true,
+        _InventoryFilter.highSensitivity => section.isHighSensitivity,
+        _InventoryFilter.withDetails => section.details.isNotEmpty,
+        _InventoryFilter.needsReview => section.needsReview,
+      };
+    }).toList(growable: false);
+  }
+
   Future<void> _repairEmbeddingIndexes() async {
     setState(() {
       _repairingEmbeddingIndexes = true;
@@ -844,6 +885,17 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
   }
 }
 
+enum _InventoryFilter {
+  all('全部'),
+  highSensitivity('高敏感'),
+  withDetails('有详情'),
+  needsReview('需核对');
+
+  const _InventoryFilter(this.label);
+
+  final String label;
+}
+
 class _InventoryDetailsSection extends StatelessWidget {
   const _InventoryDetailsSection({
     required this.section,
@@ -856,18 +908,7 @@ class _InventoryDetailsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final warningCount = section.details
-        .where((detail) =>
-            detail.startsWith('warning=') ||
-            detail.startsWith('malformed=') ||
-            detail.startsWith('invalid') ||
-            detail.startsWith('missing') ||
-            detail.startsWith('stale') ||
-            detail.startsWith('lowQuality=') ||
-            detail.startsWith('lowConfidence=') ||
-            detail.startsWith('highDecay=') ||
-            detail.startsWith('claimsWithoutEvidence='))
-        .length;
+    final warningCount = section.reviewDetailCount;
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: DecoratedBox(

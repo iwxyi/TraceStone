@@ -1138,6 +1138,10 @@ void main() {
       expect(stoneSection.details, contains('topTags=恢复:1,运动:1'));
       expect(inventory.totalCount, 22);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
+      expect(inventory.reviewSectionCount, greaterThanOrEqualTo(4));
+      expect(summarySection.needsReview, isTrue);
+      expect(summarySection.reviewDetailCount, greaterThanOrEqualTo(1));
+      expect(summarySection.isHighSensitivity, isTrue);
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));

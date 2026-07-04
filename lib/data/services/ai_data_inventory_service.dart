@@ -1344,6 +1344,9 @@ class AiDataInventory {
           (section.sensitivity == 'high' || section.sensitivity == 'critical'))
       .length;
 
+  int get reviewSectionCount =>
+      sections.where((section) => section.needsReview).length;
+
   String toDebugText() {
     return [
       '## TraceStone AI Data Inventory',
@@ -1380,6 +1383,33 @@ class AiDataInventorySection {
   final String exportPolicy;
   final List<String> details;
   final List<String> sampleKeys;
+
+  bool get isHighSensitivity =>
+      count > 0 && (sensitivity == 'high' || sensitivity == 'critical');
+
+  bool get needsReview => details.any((detail) {
+        return detail.startsWith('warning=') ||
+            detail.startsWith('malformed=') ||
+            detail.startsWith('invalid') ||
+            detail.startsWith('missing') ||
+            detail.startsWith('stale') ||
+            detail.startsWith('lowQuality=') ||
+            detail.startsWith('lowConfidence=') ||
+            detail.startsWith('highDecay=') ||
+            detail.startsWith('claimsWithoutEvidence=');
+      });
+
+  int get reviewDetailCount => details.where((detail) {
+        return detail.startsWith('warning=') ||
+            detail.startsWith('malformed=') ||
+            detail.startsWith('invalid') ||
+            detail.startsWith('missing') ||
+            detail.startsWith('stale') ||
+            detail.startsWith('lowQuality=') ||
+            detail.startsWith('lowConfidence=') ||
+            detail.startsWith('highDecay=') ||
+            detail.startsWith('claimsWithoutEvidence=');
+      }).length;
 
   String toDebugText() {
     return [
