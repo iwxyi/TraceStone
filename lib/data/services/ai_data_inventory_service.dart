@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ai_analysis_job.dart';
+import '../models/ai_feedback.dart';
 import '../models/ai_profile_preference.dart';
+import '../models/ai_prompt_trace.dart';
+import '../models/ai_retrieval_trace.dart';
 import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
 import '../models/memory_entry.dart';
@@ -102,6 +105,7 @@ class AiDataInventoryService {
         backupPolicy: '默认不建议云备份，除非用户明确启用开发者备份',
         deletePolicy: '用户清除调试记录或来源删除时清理',
         exportPolicy: '复制前必须确认，可能包含 prompt、上下文和原始响应',
+        details: _debugRecordDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -676,6 +680,183 @@ class AiDataInventoryService {
         'topThemes=${topThemes.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
       if (topEmotions.isNotEmpty)
         'topEmotions=${topEmotions.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+    ];
+  }
+
+  List<String> _debugRecordDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const promptPrefix = 'ai.promptTraces.';
+    const retrievalPrefix = 'ai.retrievalTraces.';
+    const feedbackPrefix = 'ai.feedback.';
+    final promptKeys = keys
+        .where((key) => key.startsWith(promptPrefix))
+        .toList(growable: false)
+      ..sort();
+    final retrievalKeys = keys
+        .where((key) => key.startsWith(retrievalPrefix))
+        .toList(growable: false)
+      ..sort();
+    final feedbackKeys = keys
+        .where((key) => key.startsWith(feedbackPrefix))
+        .toList(growable: false)
+      ..sort();
+    if (promptKeys.isEmpty && retrievalKeys.isEmpty && feedbackKeys.isEmpty) {
+      return const [];
+    }
+
+    var promptMalformed = 0;
+    var promptInvalidRequired = 0;
+    var fullPromptStored = 0;
+    var rawResponsesStored = 0;
+    var totalSystemPromptLength = 0;
+    var totalUserPromptLength = 0;
+    final promptScenarios = <String, int>{};
+    for (final key in promptKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        promptMalformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          promptMalformed += 1;
+          continue;
+        }
+        final trace = AiPromptTrace.fromJson(decoded);
+        final keyId = key.substring(promptPrefix.length);
+        if (trace.id.trim().isEmpty ||
+            trace.scenario.trim().isEmpty ||
+            keyId != trace.id) {
+          promptInvalidRequired += 1;
+        }
+        if ((trace.systemPrompt ?? '').isNotEmpty ||
+            (trace.userPrompt ?? '').isNotEmpty) {
+          fullPromptStored += 1;
+        }
+        if ((trace.rawResponse ?? '').isNotEmpty ||
+            trace.rawResponseLength > 0 ||
+            trace.rawResponsePreview.isNotEmpty) {
+          rawResponsesStored += 1;
+        }
+        totalSystemPromptLength += trace.systemPromptLength;
+        totalUserPromptLength += trace.userPromptLength;
+        promptScenarios.update(trace.scenario, (value) => value + 1,
+            ifAbsent: () => 1);
+      } on Object {
+        promptMalformed += 1;
+      }
+    }
+
+    var retrievalMalformed = 0;
+    var retrievalInvalidRequired = 0;
+    var retrievalItems = 0;
+    var retrievalSourceCount = 0;
+    var retrievalSignals = 0;
+    final retrievalScenarios = <String, int>{};
+    final sourceTypes = <String, int>{};
+    final signalTypes = <String, int>{};
+    for (final key in retrievalKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        retrievalMalformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          retrievalMalformed += 1;
+          continue;
+        }
+        final trace = AiRetrievalTrace.fromJson(decoded);
+        final keyId = key.substring(retrievalPrefix.length);
+        if (trace.entryId.trim().isEmpty || keyId != trace.entryId) {
+          retrievalInvalidRequired += 1;
+        }
+        retrievalItems += trace.items.length;
+        retrievalSourceCount += trace.sourceCount;
+        final scenario = trace.scenario?.trim() ?? '';
+        if (scenario.isNotEmpty) {
+          retrievalScenarios.update(scenario, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
+        for (final item in trace.items) {
+          if (item.sourceType.trim().isNotEmpty) {
+            sourceTypes.update(item.sourceType, (value) => value + 1,
+                ifAbsent: () => 1);
+          }
+          retrievalSignals += item.rerankSignals.length;
+          for (final signal in item.rerankSignals.keys) {
+            signalTypes.update(signal, (value) => value + 1, ifAbsent: () => 1);
+          }
+        }
+      } on Object {
+        retrievalMalformed += 1;
+      }
+    }
+
+    var feedbackMalformed = 0;
+    var feedbackInvalidRequired = 0;
+    var feedbackWithNote = 0;
+    final feedbackValues = <String, int>{};
+    for (final key in feedbackKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        feedbackMalformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          feedbackMalformed += 1;
+          continue;
+        }
+        final feedback = AiFeedback.fromJson(decoded);
+        final keyId = key.substring(feedbackPrefix.length);
+        if (feedback.entryId.trim().isEmpty || keyId != feedback.entryId) {
+          feedbackInvalidRequired += 1;
+        }
+        if ((feedback.note ?? '').trim().isNotEmpty) feedbackWithNote += 1;
+        feedbackValues.update(feedback.value.name, (value) => value + 1,
+            ifAbsent: () => 1);
+      } on Object {
+        feedbackMalformed += 1;
+      }
+    }
+
+    final promptCount = promptKeys.length - promptMalformed;
+    final averagePromptLength = promptCount <= 0
+        ? 0
+        : (totalSystemPromptLength + totalUserPromptLength) / promptCount;
+    final malformed = promptMalformed + retrievalMalformed + feedbackMalformed;
+    final invalidRequired = promptInvalidRequired +
+        retrievalInvalidRequired +
+        feedbackInvalidRequired;
+    return [
+      'promptTraces=${promptKeys.length}',
+      'retrievalTraces=${retrievalKeys.length}',
+      'feedback=${feedbackKeys.length}',
+      'fullPromptStored=$fullPromptStored',
+      'rawResponsesStored=$rawResponsesStored',
+      'averagePromptLength=${averagePromptLength.toStringAsFixed(0)}',
+      'retrievalItems=$retrievalItems',
+      'retrievalSourceCount=$retrievalSourceCount',
+      'retrievalSignals=$retrievalSignals',
+      'feedbackWithNote=$feedbackWithNote',
+      if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+      if (malformed > 0) 'malformed=$malformed',
+      if (promptScenarios.isNotEmpty)
+        'promptScenarios=${_topStringCounts(promptScenarios).take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (retrievalScenarios.isNotEmpty)
+        'retrievalScenarios=${_topStringCounts(retrievalScenarios).take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (sourceTypes.isNotEmpty)
+        'sourceTypes=${_topStringCounts(sourceTypes).take(5).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (signalTypes.isNotEmpty)
+        'signalTypes=${_topStringCounts(signalTypes).take(5).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (feedbackValues.isNotEmpty)
+        'feedbackValues=${_topStringCounts(feedbackValues).take(3).map((entry) => '${entry.key}:${entry.value}').join(',')}',
     ];
   }
 

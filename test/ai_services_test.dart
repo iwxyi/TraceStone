@@ -772,9 +772,62 @@ void main() {
             batchLabel: '导入补建',
           ).toJson(),
         ),
-        'ai.promptTraces.companion:last': '{}',
-        'ai.retrievalTraces.search:last': '{}',
-        'ai.feedback.entry-1': '{}',
+        'ai.promptTraces.companion:last': jsonEncode(
+          AiPromptTrace(
+            id: 'companion:last',
+            scenario: 'companion',
+            createdAt: DateTime(2026, 7, 3),
+            contextSummary: 'current_entry:entry-1; memory:memory-1',
+            systemPromptPreview: '你是 TraceStone 的陪伴式分析助手。',
+            userPromptPreview: '请分析 entry-1。',
+            systemPromptLength: 120,
+            userPromptLength: 80,
+            rawResponsePreview: '{"summary":"ok"}',
+            rawResponseLength: 32,
+            systemPrompt: 'system prompt full',
+            userPrompt: 'user prompt full',
+            rawResponse: '{"summary":"ok"}',
+          ).toJson(),
+        ),
+        'ai.retrievalTraces.search:last': jsonEncode(
+          AiRetrievalTrace(
+            entryId: 'search:last',
+            generatedAt: DateTime(2026, 7, 3),
+            scenario: 'search',
+            contextSummary: 'query=散步',
+            sourceCount: 2,
+            items: const [
+              AiRetrievalTraceItem(
+                sourceType: 'memory',
+                sourceId: 'memory-1',
+                title: '饭后散步',
+                summary: '饭后散步有助于恢复。',
+                score: 8,
+                reasons: ['关键词重合：散步'],
+                matchedTokens: ['散步'],
+                rerankSignals: {'keyword': 2, 'lifecycle': 1},
+              ),
+              AiRetrievalTraceItem(
+                sourceType: 'entry_summary',
+                sourceId: 'entry-1',
+                title: '散步',
+                summary: '散步恢复。',
+                score: 5,
+                reasons: ['主题重合'],
+                matchedTokens: ['恢复'],
+                rerankSignals: {'semantic': 0.42},
+              ),
+            ],
+          ).toJson(),
+        ),
+        'ai.feedback.entry-1': jsonEncode(
+          AiFeedback(
+            entryId: 'entry-1',
+            value: AiFeedbackValue.inaccurate,
+            createdAt: DateTime(2026, 7, 3),
+            note: '这条洞察不准确。',
+          ).toJson(),
+        ),
         'ai.periodSummaries.month:2026-07': jsonEncode(
           PeriodSummary(
             id: 'month:2026-07',
@@ -864,6 +917,29 @@ void main() {
       expect(memorySection.details, contains('topTags=恢复:1'));
       expect(memorySection.details, contains('topPeople=小王:1'));
       expect(counts['调试记录'], 3);
+      final debugSection =
+          inventory.sections.firstWhere((section) => section.label == '调试记录');
+      expect(debugSection.details, contains('promptTraces=1'));
+      expect(debugSection.details, contains('retrievalTraces=1'));
+      expect(debugSection.details, contains('feedback=1'));
+      expect(debugSection.details, contains('fullPromptStored=1'));
+      expect(debugSection.details, contains('rawResponsesStored=1'));
+      expect(debugSection.details, contains('averagePromptLength=200'));
+      expect(debugSection.details, contains('retrievalItems=2'));
+      expect(debugSection.details, contains('retrievalSourceCount=2'));
+      expect(debugSection.details, contains('retrievalSignals=3'));
+      expect(debugSection.details, contains('feedbackWithNote=1'));
+      expect(debugSection.details, contains('promptScenarios=companion:1'));
+      expect(debugSection.details, contains('retrievalScenarios=search:1'));
+      expect(
+        debugSection.details,
+        contains('sourceTypes=entry_summary:1,memory:1'),
+      );
+      expect(
+        debugSection.details,
+        contains('signalTypes=keyword:1,lifecycle:1,semantic:1'),
+      );
+      expect(debugSection.details, contains('feedbackValues=inaccurate:1'));
       expect(counts['后台队列'], 3);
       final queueSection =
           inventory.sections.firstWhere((section) => section.label == '后台队列');
@@ -948,6 +1024,8 @@ void main() {
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
       expect(inventory.toDebugText(), contains('averageConfidence=0.30'));
       expect(inventory.toDebugText(), contains('topPeople=小王:1'));
+      expect(inventory.toDebugText(), contains('feedbackValues=inaccurate:1'));
+      expect(inventory.toDebugText(), contains('retrievalSignals=3'));
       expect(inventory.toDebugText(), contains('retryableFailed=1'));
       expect(inventory.toDebugText(), contains('stageLogErrors=1'));
       expect(inventory.toDebugText(), contains('profileFacts=1'));
