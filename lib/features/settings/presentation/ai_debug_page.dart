@@ -547,6 +547,11 @@ class _QueueSummaryCard extends StatelessWidget {
               label: 'avgStageDuration',
               value: queue.averageStageDurationLabel,
             ),
+            if (queue.stageCalibrationSummary.isNotEmpty)
+              _DebugLine(
+                label: 'stageDurations',
+                value: queue.stageCalibrationSummary,
+              ),
             if (queue.batches.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text('批次进度', style: Theme.of(context).textTheme.titleSmall),

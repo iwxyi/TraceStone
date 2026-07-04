@@ -358,6 +358,41 @@ class AiAnalysisQueueSnapshot {
 
   String get averageStageDurationLabel => _durationLabel(averageStageDuration);
 
+  List<AiAnalysisStageCalibration> get stageCalibrations {
+    final grouped = <AiAnalysisStage, List<Duration>>{};
+    for (final sample in _completedStageDurationSamples) {
+      grouped.putIfAbsent(sample.stage, () => []).add(sample.duration);
+    }
+    final result = grouped.entries.map((entry) {
+      final totalMs = entry.value
+          .map((duration) => duration.inMilliseconds)
+          .reduce((a, b) => a + b);
+      return AiAnalysisStageCalibration(
+        stage: entry.key,
+        sampleCount: entry.value.length,
+        averageDuration: Duration(
+          milliseconds: (totalMs / entry.value.length).round(),
+        ),
+        durationLabel: _durationLabel(Duration(
+          milliseconds: (totalMs / entry.value.length).round(),
+        )),
+      );
+    }).toList()
+      ..sort((a, b) {
+        final byDuration = b.averageDuration.compareTo(a.averageDuration);
+        if (byDuration != 0) return byDuration;
+        return a.stage.name.compareTo(b.stage.name);
+      });
+    return result;
+  }
+
+  String get stageCalibrationSummary {
+    final items = stageCalibrations.take(4).map((item) {
+      return '${item.stage.name}=${item.durationLabel}(${item.sampleCount})';
+    }).toList(growable: false);
+    return items.join(', ');
+  }
+
   String get estimatedRemainingLabel {
     final duration = estimatedRemainingDuration;
     if (duration == null) return '';
@@ -404,25 +439,35 @@ class AiAnalysisQueueSnapshot {
   }
 
   List<Duration> get _completedStageDurations {
-    final durations = <Duration>[];
+    return _completedStageDurationSamples
+        .map((sample) => sample.duration)
+        .toList(growable: false);
+  }
+
+  List<_StageDurationSample> get _completedStageDurationSamples {
+    final samples = <_StageDurationSample>[];
     for (final job in jobs) {
       if (job.state != AiAnalysisJobState.completed) continue;
       final logs = [...job.stageLogs]
         ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
       for (var index = 0; index < logs.length - 1; index++) {
+        final log = logs[index];
         final duration = logs[index + 1].startedAt.difference(
-              logs[index].startedAt,
+              log.startedAt,
             );
-        if (_isValidCalibrationDuration(duration)) durations.add(duration);
+        if (_isValidCalibrationDuration(duration)) {
+          samples.add(_StageDurationSample(log.stage, duration));
+        }
       }
       if (logs.isNotEmpty) {
+        final log = logs.last;
         final finalDuration = job.updatedAt.difference(logs.last.startedAt);
         if (_isValidCalibrationDuration(finalDuration)) {
-          durations.add(finalDuration);
+          samples.add(_StageDurationSample(log.stage, finalDuration));
         }
       }
     }
-    return durations;
+    return samples;
   }
 
   List<Duration> get _completedJobDurations {
@@ -452,6 +497,27 @@ class AiAnalysisQueueSnapshot {
       .where((stage) =>
           stage != AiAnalysisStage.queued && stage != AiAnalysisStage.completed)
       .length;
+}
+
+class AiAnalysisStageCalibration {
+  const AiAnalysisStageCalibration({
+    required this.stage,
+    required this.sampleCount,
+    required this.averageDuration,
+    required this.durationLabel,
+  });
+
+  final AiAnalysisStage stage;
+  final int sampleCount;
+  final Duration averageDuration;
+  final String durationLabel;
+}
+
+class _StageDurationSample {
+  const _StageDurationSample(this.stage, this.duration);
+
+  final AiAnalysisStage stage;
+  final Duration duration;
 }
 
 class AiAnalysisBatchSnapshot {

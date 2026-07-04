@@ -1516,6 +1516,23 @@ void main() {
       expect(snapshot.estimateSampleCount, 3);
       expect(snapshot.averageStageDurationLabel, '约 2 秒');
       expect(snapshot.estimatedRemainingLabel, '约 14 秒');
+      expect(snapshot.stageCalibrations, hasLength(3));
+      expect(
+        snapshot.stageCalibrations.map((item) => item.stage),
+        containsAll([
+          AiAnalysisStage.preparing,
+          AiAnalysisStage.generatingSummary,
+          AiAnalysisStage.embedding,
+        ]),
+      );
+      expect(
+        snapshot.stageCalibrations.map((item) => item.durationLabel),
+        everyElement('约 2 秒'),
+      );
+      expect(
+        snapshot.stageCalibrationSummary,
+        contains('embedding=约 2 秒(1)'),
+      );
     });
 
     test('paused queue keeps jobs visible but does not return runnable work',
