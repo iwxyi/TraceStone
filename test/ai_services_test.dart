@@ -37,6 +37,7 @@ import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_analysis_queue_runner.dart';
 import 'package:trace_stone/data/services/ai_client_service.dart';
+import 'package:trace_stone/data/services/ai_data_inventory_service.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
@@ -662,6 +663,40 @@ void main() {
         () => const AiClientService().loadConfig(),
         throwsA(isA<AiClientException>()),
       );
+    });
+  });
+
+  group('AiDataInventoryService', () {
+    test('summarizes AI derived local data by category', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.entrySummaries.entry-1': '{}',
+        'ai.entrySegments.index.entry-1': <String>['entry-1#s1'],
+        'ai.embeddings.summary:entry-1': '{}',
+        'diary.insights.entry-1': '{}',
+        'memory.entries.memory-1': '{}',
+        'ai.profilePreferences.profileFact:1': '{}',
+        'ai.analysis.jobs.entry-1': '{}',
+        'ai.promptTraces.companion:last': '{}',
+        'ai.retrievalTraces.search:last': '{}',
+        'ai.feedback.entry-1': '{}',
+        'period.summaries.month:2026-07': '{}',
+        'calendar.memories.anniversary': '{}',
+        'stone.tasks.stone:1': '{}',
+        'diary.entries.entry-1': '{}',
+      });
+
+      final inventory = await const AiDataInventoryService().buildInventory();
+      final counts = {
+        for (final section in inventory.sections) section.label: section.count,
+      };
+
+      expect(counts['日记摘要'], 2);
+      expect(counts['向量索引'], 1);
+      expect(counts['调试记录'], 3);
+      expect(counts['后台队列'], 1);
+      expect(inventory.totalCount, 13);
+      expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
+      expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
     });
   });
 

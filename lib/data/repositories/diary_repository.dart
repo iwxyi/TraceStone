@@ -228,7 +228,13 @@ class DiaryRepository {
   }
 
   Future<DiaryTrashItem?> _trashItem(SharedPreferences prefs, String id) async {
-    final raw = _safeGetString(prefs, '$_trashPrefix$id');
+    final key = '$_trashPrefix$id';
+    final legacyListValue = _safeGetStringList(prefs, key);
+    if (legacyListValue != null) {
+      await prefs.remove(key);
+      return null;
+    }
+    final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
     try {
       final parsed = jsonDecode(raw) as Map<String, dynamic>;

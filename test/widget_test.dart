@@ -1552,6 +1552,54 @@ void main() {
     expect(find.text('最近陪伴问答'), findsNothing);
   });
 
+  testWidgets('AI debug page copies AI data inventory', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'ai.entrySummaries.entry-1': '{}',
+      'ai.embeddings.summary:entry-1': '{}',
+      'ai.promptTraces.companion:last': '{}',
+      'ai.retrievalTraces.search:last': '{}',
+      'ai.analysis.jobs.entry-1': '{}',
+    });
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('AI 数据清单'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('AI 数据清单'), findsOneWidget);
+    expect(find.text('日记摘要 1'), findsOneWidget);
+    expect(find.text('向量索引 1'), findsOneWidget);
+    expect(find.text('调试记录 2'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('copy-ai-data-inventory')));
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(copiedText, contains('TraceStone AI Data Inventory'));
+    expect(copiedText, contains('policy=AI 衍生数据默认视为日记数据的一部分'));
+    expect(copiedText, contains('### 向量索引'));
+  });
+
   testWidgets('AI debug queue overview separates recoverable job states',
       (tester) async {
     SharedPreferences.setMockInitialValues({});

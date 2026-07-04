@@ -21,6 +21,7 @@ import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
 import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/ai_data_inventory_service.dart';
 import '../../../data/services/ai_embedding_text_builder.dart';
 import '../../../data/services/embedding_service.dart';
 import '../../../data/utils/ai_source_formatter.dart';
@@ -173,6 +174,8 @@ class _AiDebugPageState extends State<AiDebugPage> {
                   _JobCard(job: job, onChanged: _refresh),
                   const SizedBox(height: 10),
                 ],
+              const SizedBox(height: 16),
+              const _AiDataInventoryCard(),
             ],
           );
         },
@@ -570,6 +573,80 @@ class _QueueSummaryCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AiDataInventoryCard extends StatelessWidget {
+  const _AiDataInventoryCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<AiDataInventory>(
+      future: const AiDataInventoryService().buildInventory(),
+      builder: (context, snapshot) {
+        final inventory = snapshot.data;
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.inventory_2_outlined),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'AI 数据清单',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('copy-ai-data-inventory'),
+                      onPressed: inventory == null
+                          ? null
+                          : () => _copy(context, inventory),
+                      icon: const Icon(Icons.copy_all_outlined),
+                      label: const Text('复制'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '摘要、向量、记忆、队列和调试记录都按日记数据处理，备份、导出和删除策略应保持一致。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                if (inventory == null)
+                  const LinearProgressIndicator(minHeight: 3)
+                else ...[
+                  _DebugLine(label: 'total', value: '${inventory.totalCount}'),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final section in inventory.sections)
+                        Chip(label: Text('${section.label} ${section.count}')),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _copy(BuildContext context, AiDataInventory inventory) async {
+    final allowed = await _confirmDebugContextCopy(context);
+    if (!allowed) return;
+    await Clipboard.setData(ClipboardData(text: inventory.toDebugText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制 AI 数据清单')),
     );
   }
 }
