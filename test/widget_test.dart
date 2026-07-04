@@ -760,6 +760,23 @@ void main() {
     expect(primary?.confirmed, isTrue);
     expect(hidden?.hidden, isTrue);
     expect(find.text('已合并同字段画像候选'), findsOneWidget);
+
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+
+    final restoredPrimary =
+        await const AiProfilePreferenceRepository().getPreference(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: 'self_regulation:散步有助于恢复状态',
+    );
+    final restoredHidden =
+        await const AiProfilePreferenceRepository().getPreference(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: 'self_regulation:独处也能恢复状态',
+    );
+    expect(restoredPrimary, isNull);
+    expect(restoredHidden, isNull);
+    expect(find.text('同字段 2 条'), findsWidgets);
   });
 
   testWidgets('relationships page shows developer decision review',

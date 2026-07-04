@@ -110,6 +110,25 @@ class AiProfilePreferenceRepository {
     );
   }
 
+  Future<void> savePreference(AiProfilePreference item) async {
+    await _savePreference(item);
+  }
+
+  Future<void> deletePreference({
+    required AiProfilePreferenceTargetType targetType,
+    required String targetId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = AiProfilePreference.keyFor(
+      targetType: targetType,
+      targetId: targetId,
+    );
+    await prefs.remove('$_prefix$id');
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    index.remove(id);
+    await prefs.setStringList(_indexKey, index);
+  }
+
   Future<List<ProfileFact>> applyToProfileFacts(
     List<ProfileFact> facts,
   ) async {

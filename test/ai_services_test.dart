@@ -2788,6 +2788,31 @@ void main() {
       expect(visible.single.userConfirmed, isTrue);
     });
 
+    test('deletes individual profile preferences and repairs index', () async {
+      SharedPreferences.setMockInitialValues({});
+      const preferenceRepository = AiProfilePreferenceRepository();
+      await preferenceRepository.setCorrectedValue(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: 'self_regulation:walk',
+        correctedValue: '散步有助于恢复',
+      );
+
+      await preferenceRepository.deletePreference(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: 'self_regulation:walk',
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        await preferenceRepository.getPreference(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: 'self_regulation:walk',
+        ),
+        isNull,
+      );
+      expect(prefs.getStringList('ai.profilePreferences.index'), isEmpty);
+    });
+
     test('applies user corrected relationship type', () async {
       SharedPreferences.setMockInitialValues({});
       const projectionService = ProfileProjectionService();

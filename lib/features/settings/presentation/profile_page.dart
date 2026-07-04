@@ -105,6 +105,14 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
     );
     if (merged == null || merged.trim().isEmpty) return;
+    final targets = [fact, ...siblings];
+    final previousPreferences = <String, AiProfilePreference?>{};
+    for (final target in targets) {
+      previousPreferences[target.id] = await _profilePreferences.getPreference(
+        targetType: AiProfilePreferenceTargetType.profileFact,
+        targetId: target.id,
+      );
+    }
     await _profilePreferences.setCorrectedValue(
       targetType: AiProfilePreferenceTargetType.profileFact,
       targetId: fact.id,
@@ -121,7 +129,26 @@ class _ProfilePageState extends State<ProfilePage> {
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已合并同字段画像候选')),
+      SnackBar(
+        content: const Text('已合并同字段画像候选'),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () async {
+            for (final target in targets) {
+              final previous = previousPreferences[target.id];
+              if (previous == null) {
+                await _profilePreferences.deletePreference(
+                  targetType: AiProfilePreferenceTargetType.profileFact,
+                  targetId: target.id,
+                );
+              } else {
+                await _profilePreferences.savePreference(previous);
+              }
+            }
+            if (mounted) await _refresh();
+          },
+        ),
+      ),
     );
   }
 
