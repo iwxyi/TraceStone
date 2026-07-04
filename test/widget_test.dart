@@ -648,6 +648,21 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'settings.developerMode': true,
     });
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
     final date = DateTime(2026, 7, 3);
     const preferenceRepository = AiProfilePreferenceRepository();
     await const InsightRepository().saveInsight(DiaryInsight(
@@ -669,6 +684,11 @@ void main() {
           value: '散步可能帮助恢复状态',
           confidence: 0.62,
         ),
+        ProfileUpdateCandidate(
+          field: 'work_pattern',
+          value: '项目推进时容易进入专注状态',
+          confidence: 0.54,
+        ),
       ],
     ));
     await preferenceRepository.setCorrectedValue(
@@ -681,9 +701,24 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('画像决策'), findsOneWidget);
+    expect(find.text('全部 2'), findsOneWidget);
+    expect(find.text('已修正 1'), findsOneWidget);
     expect(find.text('使用用户修正'), findsOneWidget);
     expect(find.text('散步有时能帮助恢复状态'), findsWidgets);
     expect(find.textContaining('preference=corrected'), findsOneWidget);
+    await tester.tap(find.text('已修正 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('显示 1/1'), findsOneWidget);
+    expect(find.text('继续观察'), findsNothing);
+
+    await tester.tap(find.widgetWithText(TextButton, '复制审计'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已复制画像决策审计'), findsOneWidget);
+    expect(copiedText, contains('## Profile Decision Audit'));
+    expect(copiedText, contains('kind=corrected'));
+    expect(copiedText, contains('targetId=self_regulation:散步可能帮助恢复状态'));
+    expect(copiedText, contains('preference=corrected'));
   });
 
   testWidgets('profile page merges same-field profile candidates',
@@ -787,6 +822,21 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'settings.developerMode': true,
     });
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
     final date = DateTime(2026, 7, 3);
     const preferenceRepository = AiProfilePreferenceRepository();
     await const InsightRepository().saveInsight(DiaryInsight(
@@ -809,6 +859,12 @@ void main() {
           summary: '一起讨论了项目推进。',
           confidence: 0.62,
         ),
+        RelationshipUpdateCandidate(
+          personName: '小王',
+          relationship: '朋友',
+          summary: '简单聊了近况。',
+          confidence: 0.54,
+        ),
       ],
     ));
     await preferenceRepository.setConfirmed(
@@ -821,15 +877,45 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('关系决策'), findsOneWidget);
+    expect(find.text('全部 2'), findsOneWidget);
+    expect(find.text('已确认 1'), findsOneWidget);
     expect(find.text('用户已确认'), findsOneWidget);
     expect(find.text('小李'), findsWidgets);
     expect(find.textContaining('preference=confirmed'), findsOneWidget);
+    await tester.tap(find.text('已确认 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('显示 1/1'), findsOneWidget);
+    expect(find.text('继续观察'), findsNothing);
+
+    await tester.tap(find.widgetWithText(TextButton, '复制审计'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已复制关系决策审计'), findsOneWidget);
+    expect(copiedText, contains('## Relationship Decision Audit'));
+    expect(copiedText, contains('kind=confirmed'));
+    expect(copiedText, contains('targetId=小李'));
+    expect(copiedText, contains('preference=confirmed'));
   });
 
   testWidgets('relationships page merges people and supports undo',
       (tester) async {
     SharedPreferences.setMockInitialValues({
       'settings.developerMode': true,
+    });
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
     });
     final date = DateTime(2026, 7, 3);
     await const InsightRepository().saveInsight(DiaryInsight(
@@ -885,6 +971,8 @@ void main() {
     expect(find.text('小李'), findsWidgets);
     expect(find.text('李同学'), findsWidgets);
 
+    await tester.ensureVisible(find.byTooltip('关系操作').first);
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('关系操作').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('合并人物'));
@@ -899,6 +987,11 @@ void main() {
     expect(find.textContaining('preference=merged'), findsOneWidget);
     expect(find.text('合并历史'), findsOneWidget);
     expect(find.textContaining('合并：'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '复制审计'));
+    await tester.pumpAndSettle();
+    expect(copiedText, contains('## Relationship Decision Audit'));
+    expect(copiedText, contains('### Merge History'));
+    expect(copiedText, contains('action=merge'));
     await tester.scrollUntilVisible(
       find.text('别名 2 个'),
       200,

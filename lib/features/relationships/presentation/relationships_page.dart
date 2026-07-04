@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../companion/presentation/companion_page.dart';
 import '../../../data/models/ai_profile.dart';
@@ -313,7 +314,7 @@ class _RelationshipFilter extends StatelessWidget {
   }
 }
 
-class _RelationshipDecisionCard extends StatelessWidget {
+class _RelationshipDecisionCard extends StatefulWidget {
   const _RelationshipDecisionCard({
     required this.decisions,
     required this.mergeHistory,
@@ -323,8 +324,21 @@ class _RelationshipDecisionCard extends StatelessWidget {
   final List<AiRelationshipMergeEvent> mergeHistory;
 
   @override
+  State<_RelationshipDecisionCard> createState() =>
+      _RelationshipDecisionCardState();
+}
+
+class _RelationshipDecisionCardState extends State<_RelationshipDecisionCard> {
+  AiProfileDecisionKind? _filter;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final visibleDecisions = _filter == null
+        ? widget.decisions
+        : widget.decisions
+            .where((decision) => decision.kind == _filter)
+            .toList(growable: false);
     return Card(
       elevation: 0,
       child: Padding(
@@ -332,22 +346,59 @@ class _RelationshipDecisionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              const Icon(Icons.rule_outlined, size: 22),
-              const SizedBox(width: 8),
-              Text('关系决策', style: theme.textTheme.titleLarge),
-            ]),
+            Row(
+              children: [
+                const Icon(Icons.rule_outlined, size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('关系决策', style: theme.textTheme.titleLarge),
+                ),
+                TextButton.icon(
+                  onPressed: () => _copyAudit(context),
+                  icon: const Icon(Icons.copy_all_outlined),
+                  label: const Text('复制审计'),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             Text(
               '开发者视图：核对关系候选是否应确认、修正或继续观察。',
               style: theme.textTheme.bodySmall,
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: Text('全部 ${widget.decisions.length}'),
+                  selected: _filter == null,
+                  onSelected: (_) => setState(() => _filter = null),
+                ),
+                for (final kind in _decisionKinds(widget.decisions))
+                  ChoiceChip(
+                    label: Text(
+                      '${_relationshipDecisionKindLabel(kind)} ${_kindCount(kind)}',
+                    ),
+                    selected: _filter == kind,
+                    onSelected: (_) => setState(() => _filter = kind),
+                  ),
+              ],
+            ),
             const SizedBox(height: 12),
-            for (final decision in decisions.take(5)) ...[
+            if (visibleDecisions.isEmpty)
+              Text('没有符合筛选的关系决策', style: theme.textTheme.bodySmall)
+            else
+              Text(
+                  '显示 ${visibleDecisions.take(8).length}/${visibleDecisions.length}',
+                  style: theme.textTheme.bodySmall),
+            const SizedBox(height: 8),
+            for (final decision in visibleDecisions.take(8)) ...[
               _RelationshipDecisionLine(decision: decision),
-              if (decision != decisions.take(5).last) const Divider(height: 18),
+              if (decision != visibleDecisions.take(8).last)
+                const Divider(height: 18),
             ],
-            if (mergeHistory.isNotEmpty) ...[
+            if (widget.mergeHistory.isNotEmpty) ...[
               const Divider(height: 24),
               Row(children: [
                 const Icon(Icons.history_outlined, size: 18),
@@ -355,9 +406,9 @@ class _RelationshipDecisionCard extends StatelessWidget {
                 Text('合并历史', style: theme.textTheme.titleSmall),
               ]),
               const SizedBox(height: 8),
-              for (final event in mergeHistory.take(3)) ...[
+              for (final event in widget.mergeHistory.take(5)) ...[
                 _RelationshipMergeHistoryLine(event: event),
-                if (event != mergeHistory.take(3).last)
+                if (event != widget.mergeHistory.take(5).last)
                   const SizedBox(height: 8),
               ],
             ],
@@ -365,6 +416,68 @@ class _RelationshipDecisionCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<AiProfileDecisionKind> _decisionKinds(
+    List<AiProfileDecision> decisions,
+  ) {
+    return {
+      for (final decision in decisions) decision.kind,
+    }.toList(growable: false)
+      ..sort((a, b) => _relationshipDecisionKindLabel(a)
+          .compareTo(_relationshipDecisionKindLabel(b)));
+  }
+
+  int _kindCount(AiProfileDecisionKind kind) =>
+      widget.decisions.where((decision) => decision.kind == kind).length;
+
+  Future<void> _copyAudit(BuildContext context) async {
+    final text = [
+      '## Relationship Decision Audit',
+      'total=${widget.decisions.length}',
+      'mergeHistory=${widget.mergeHistory.length}',
+      if (_filter != null) 'filter=${_filter!.name}',
+      '',
+      for (final decision in widget.decisions) ...[
+        '- kind=${decision.kind.name}',
+        '  targetType=${decision.targetType.name}',
+        '  targetId=${decision.targetId}',
+        '  title=${decision.title}',
+        '  action=${decision.actionLabel}',
+        '  reason=${decision.reason}',
+        if (decision.debugLine.isNotEmpty) '  debug=${decision.debugLine}',
+      ],
+      if (widget.mergeHistory.isNotEmpty) ...[
+        '',
+        '### Merge History',
+        for (final event in widget.mergeHistory)
+          '- action=${event.action.name} source=${event.sourcePersonName} target=${event.targetPersonName} createdAt=${event.createdAt.toIso8601String()} id=${event.id}',
+      ],
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制关系决策审计')),
+    );
+  }
+}
+
+String _relationshipDecisionKindLabel(AiProfileDecisionKind kind) {
+  switch (kind) {
+    case AiProfileDecisionKind.confirmed:
+      return '已确认';
+    case AiProfileDecisionKind.corrected:
+      return '已修正';
+    case AiProfileDecisionKind.hidden:
+      return '已隐藏';
+    case AiProfileDecisionKind.conflict:
+      return '冲突';
+    case AiProfileDecisionKind.merged:
+      return '已合并';
+    case AiProfileDecisionKind.mergeCandidate:
+      return '合并候选';
+    case AiProfileDecisionKind.observe:
+      return '观察';
   }
 }
 

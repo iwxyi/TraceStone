@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/routing/app_routes.dart';
 import '../../../data/models/ai_profile.dart';
@@ -508,14 +509,26 @@ class _ProfileConflictCard extends StatelessWidget {
       '${date.year}年${date.month}月${date.day}日';
 }
 
-class _ProfileDecisionCard extends StatelessWidget {
+class _ProfileDecisionCard extends StatefulWidget {
   const _ProfileDecisionCard({required this.decisions});
 
   final List<AiProfileDecision> decisions;
 
   @override
+  State<_ProfileDecisionCard> createState() => _ProfileDecisionCardState();
+}
+
+class _ProfileDecisionCardState extends State<_ProfileDecisionCard> {
+  AiProfileDecisionKind? _filter;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final visibleDecisions = _filter == null
+        ? widget.decisions
+        : widget.decisions
+            .where((decision) => decision.kind == _filter)
+            .toList(growable: false);
     return Card(
       elevation: 0,
       child: Padding(
@@ -523,25 +536,116 @@ class _ProfileDecisionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              const Icon(Icons.rule_outlined, size: 22),
-              const SizedBox(width: 8),
-              Text('画像决策', style: theme.textTheme.titleLarge),
-            ]),
+            Row(
+              children: [
+                const Icon(Icons.rule_outlined, size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('画像决策', style: theme.textTheme.titleLarge),
+                ),
+                TextButton.icon(
+                  onPressed: () => _copyAudit(context),
+                  icon: const Icon(Icons.copy_all_outlined),
+                  label: const Text('复制审计'),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             Text(
               '开发者视图：用于核对候选是否应确认、合并、隐藏或继续观察。',
               style: theme.textTheme.bodySmall,
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: Text('全部 ${widget.decisions.length}'),
+                  selected: _filter == null,
+                  onSelected: (_) => setState(() => _filter = null),
+                ),
+                for (final kind in _decisionKinds(widget.decisions))
+                  ChoiceChip(
+                    label: Text(
+                      '${_decisionKindLabel(kind)} ${_kindCount(kind)}',
+                    ),
+                    selected: _filter == kind,
+                    onSelected: (_) => setState(() => _filter = kind),
+                  ),
+              ],
+            ),
             const SizedBox(height: 14),
-            for (final decision in decisions.take(5)) ...[
+            if (visibleDecisions.isEmpty)
+              Text('没有符合筛选的画像决策', style: theme.textTheme.bodySmall)
+            else
+              Text(
+                  '显示 ${visibleDecisions.take(8).length}/${visibleDecisions.length}',
+                  style: theme.textTheme.bodySmall),
+            const SizedBox(height: 8),
+            for (final decision in visibleDecisions.take(8)) ...[
               _DecisionLine(decision: decision),
-              if (decision != decisions.take(5).last) const Divider(height: 18),
+              if (decision != visibleDecisions.take(8).last)
+                const Divider(height: 18),
             ],
           ],
         ),
       ),
     );
+  }
+
+  List<AiProfileDecisionKind> _decisionKinds(
+    List<AiProfileDecision> decisions,
+  ) {
+    return {
+      for (final decision in decisions) decision.kind,
+    }.toList(growable: false)
+      ..sort((a, b) => _decisionKindLabel(a).compareTo(_decisionKindLabel(b)));
+  }
+
+  int _kindCount(AiProfileDecisionKind kind) =>
+      widget.decisions.where((decision) => decision.kind == kind).length;
+
+  Future<void> _copyAudit(BuildContext context) async {
+    final text = [
+      '## Profile Decision Audit',
+      'total=${widget.decisions.length}',
+      if (_filter != null) 'filter=${_filter!.name}',
+      '',
+      for (final decision in widget.decisions) ...[
+        '- kind=${decision.kind.name}',
+        '  targetType=${decision.targetType.name}',
+        '  targetId=${decision.targetId}',
+        '  title=${decision.title}',
+        '  action=${decision.actionLabel}',
+        '  reason=${decision.reason}',
+        if (decision.debugLine.isNotEmpty) '  debug=${decision.debugLine}',
+      ],
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制画像决策审计')),
+    );
+  }
+}
+
+String _decisionKindLabel(AiProfileDecisionKind kind) {
+  switch (kind) {
+    case AiProfileDecisionKind.confirmed:
+      return '已确认';
+    case AiProfileDecisionKind.corrected:
+      return '已修正';
+    case AiProfileDecisionKind.hidden:
+      return '已隐藏';
+    case AiProfileDecisionKind.conflict:
+      return '冲突';
+    case AiProfileDecisionKind.merged:
+      return '已合并';
+    case AiProfileDecisionKind.mergeCandidate:
+      return '合并候选';
+    case AiProfileDecisionKind.observe:
+      return '观察';
   }
 }
 
