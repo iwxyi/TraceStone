@@ -2843,6 +2843,49 @@ void main() {
       expect(visible.single.status, ProfileFactStatus.stable);
       expect(visible.single.userConfirmed, isTrue);
     });
+
+    test('merges relationship profiles by user preference', () async {
+      SharedPreferences.setMockInitialValues({});
+      const projectionService = ProfileProjectionService();
+      const preferenceRepository = AiProfilePreferenceRepository();
+      final first = _insight(
+        entryId: 'relationship-merge-first',
+        date: DateTime(2026, 7, 3),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '小李',
+          relationship: '同事',
+          summary: '一起讨论项目推进',
+          emotion: '平和',
+          confidence: 0.62,
+        ),
+      );
+      final second = _insight(
+        entryId: 'relationship-merge-second',
+        date: DateTime(2026, 7, 4),
+        relationshipUpdate: const RelationshipUpdateCandidate(
+          personName: '李同学',
+          relationship: '同事',
+          summary: '继续沟通方案',
+          emotion: '专注',
+          confidence: 0.58,
+        ),
+      );
+      final profiles =
+          projectionService.buildRelationshipProfiles([first, second]);
+
+      await preferenceRepository.setMergedRelationship(
+        sourcePersonName: '李同学',
+        targetPersonName: '小李',
+      );
+      final visible =
+          await preferenceRepository.applyToRelationshipProfiles(profiles);
+
+      expect(visible, hasLength(1));
+      expect(visible.single.personName, '小李');
+      expect(visible.single.names, containsAll(['小李', '李同学']));
+      expect(visible.single.interactionCount, 2);
+      expect(visible.single.emotions, containsAll(['平和', '专注']));
+    });
   });
 
   group('CompanionAnswerService', () {

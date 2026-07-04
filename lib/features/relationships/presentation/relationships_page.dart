@@ -97,6 +97,51 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
     await _refresh();
   }
 
+  Future<void> _mergeRelationship(
+    RelationshipProfile profile,
+    List<RelationshipProfile> candidates,
+  ) async {
+    if (candidates.isEmpty) return;
+    final target = await showDialog<RelationshipProfile>(
+      context: context,
+      builder: (context) => _RelationshipMergeDialog(
+        source: profile,
+        candidates: candidates,
+      ),
+    );
+    if (target == null) return;
+    final previous = await _profilePreferences.getPreference(
+      targetType: AiProfilePreferenceTargetType.relationship,
+      targetId: profile.personName,
+    );
+    await _profilePreferences.setMergedRelationship(
+      sourcePersonName: profile.personName,
+      targetPersonName: target.personName,
+    );
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已将 ${profile.personName} 合并到 ${target.personName}'),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () async {
+            if (previous == null) {
+              await _profilePreferences.deletePreference(
+                targetType: AiProfilePreferenceTargetType.relationship,
+                targetId: profile.personName,
+              );
+            } else {
+              await _profilePreferences.savePreference(previous);
+            }
+            if (mounted) await _refresh();
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _filterController.dispose();
@@ -154,10 +199,15 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
                     final profile = visibleProfiles[index - itemOffset];
                     return _RelationshipCard(
                       profile: profile,
+                      mergeCandidates: visibleProfiles
+                          .where(
+                              (item) => item.personName != profile.personName)
+                          .toList(growable: false),
                       developerMode: developerMode,
                       onConfirmedChanged: _setConfirmed,
                       onHide: _hideProfile,
                       onCorrect: _correctRelationship,
+                      onMerge: _mergeRelationship,
                       onAsk: _askAboutRelationship,
                     );
                   },
@@ -326,19 +376,26 @@ class _RelationshipDecisionLine extends StatelessWidget {
 class _RelationshipCard extends StatelessWidget {
   const _RelationshipCard({
     required this.profile,
+    required this.mergeCandidates,
     required this.developerMode,
     required this.onConfirmedChanged,
     required this.onHide,
     required this.onCorrect,
+    required this.onMerge,
     required this.onAsk,
   });
 
   final RelationshipProfile profile;
+  final List<RelationshipProfile> mergeCandidates;
   final bool developerMode;
   final Future<void> Function(RelationshipProfile profile, bool confirmed)
       onConfirmedChanged;
   final Future<void> Function(RelationshipProfile profile) onHide;
   final Future<void> Function(RelationshipProfile profile) onCorrect;
+  final Future<void> Function(
+    RelationshipProfile profile,
+    List<RelationshipProfile> candidates,
+  ) onMerge;
   final ValueChanged<RelationshipProfile> onAsk;
 
   @override
@@ -383,6 +440,8 @@ class _RelationshipCard extends StatelessWidget {
                         onConfirmedChanged(profile, false);
                       case _RelationshipAction.correct:
                         onCorrect(profile);
+                      case _RelationshipAction.merge:
+                        onMerge(profile, mergeCandidates);
                       case _RelationshipAction.hide:
                         onHide(profile);
                     }
@@ -402,6 +461,11 @@ class _RelationshipCard extends StatelessWidget {
                       value: _RelationshipAction.correct,
                       child: Text('修正关系'),
                     ),
+                    if (mergeCandidates.isNotEmpty)
+                      const PopupMenuItem(
+                        value: _RelationshipAction.merge,
+                        child: Text('合并人物'),
+                      ),
                     const PopupMenuItem(
                       value: _RelationshipAction.hide,
                       child: Text('隐藏'),
@@ -421,6 +485,8 @@ class _RelationshipCard extends StatelessWidget {
                 if (profile.relationship?.isNotEmpty ?? false)
                   Chip(label: Text(profile.relationship!)),
                 Chip(label: Text('来自 ${profile.distinctDays} 天记录')),
+                if (profile.names.length > 1)
+                  Chip(label: Text('别名 ${profile.names.length} 个')),
                 if (profile.userConfirmed) const Chip(label: Text('已确认')),
                 if (developerMode)
                   Chip(
@@ -529,7 +595,7 @@ class _RelationshipCard extends StatelessWidget {
   }
 }
 
-enum _RelationshipAction { confirm, unconfirm, correct, hide }
+enum _RelationshipAction { confirm, unconfirm, correct, merge, hide }
 
 class _RelationshipCorrectionDialog extends StatefulWidget {
   const _RelationshipCorrectionDialog({required this.profile});
@@ -579,6 +645,71 @@ class _RelationshipCorrectionDialogState
         FilledButton(
           onPressed: _save,
           child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RelationshipMergeDialog extends StatefulWidget {
+  const _RelationshipMergeDialog({
+    required this.source,
+    required this.candidates,
+  });
+
+  final RelationshipProfile source;
+  final List<RelationshipProfile> candidates;
+
+  @override
+  State<_RelationshipMergeDialog> createState() =>
+      _RelationshipMergeDialogState();
+}
+
+class _RelationshipMergeDialogState extends State<_RelationshipMergeDialog> {
+  late RelationshipProfile _selected = widget.candidates.first;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('合并人物'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('将 ${widget.source.personName} 合并到：'),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<RelationshipProfile>(
+            initialValue: _selected,
+            decoration: const InputDecoration(
+              labelText: '目标人物',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              for (final candidate in widget.candidates)
+                DropdownMenuItem(
+                  value: candidate,
+                  child: Text(candidate.personName),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null) setState(() => _selected = value);
+            },
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '合并后会保留两边的互动、情绪、模式和证据来源。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_selected),
+          child: const Text('合并'),
         ),
       ],
     );

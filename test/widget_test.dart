@@ -823,6 +823,84 @@ void main() {
     expect(find.textContaining('preference=confirmed'), findsOneWidget);
   });
 
+  testWidgets('relationships page merges people and supports undo',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'relationship-merge-first',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const ['小李'],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      relationshipUpdates: const [
+        RelationshipUpdateCandidate(
+          personName: '小李',
+          relationship: '同事',
+          summary: '一起讨论项目推进。',
+          emotion: '平和',
+          confidence: 0.62,
+        ),
+      ],
+    ));
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'relationship-merge-second',
+      entryDate: date.add(const Duration(days: 1)),
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const ['李同学'],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      relationshipUpdates: const [
+        RelationshipUpdateCandidate(
+          personName: '李同学',
+          relationship: '同事',
+          summary: '继续沟通方案。',
+          emotion: '专注',
+          confidence: 0.58,
+        ),
+      ],
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: RelationshipsPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('小李'), findsOneWidget);
+    expect(find.text('李同学'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('关系操作').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('合并人物'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('合并人物'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '合并'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('已将'), findsOneWidget);
+    expect(find.text('别名 2 个'), findsOneWidget);
+    expect(find.byTooltip('关系操作'), findsOneWidget);
+
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('小李'), findsOneWidget);
+    expect(find.text('李同学'), findsOneWidget);
+    expect(find.byTooltip('关系操作'), findsNWidgets(2));
+  });
+
   testWidgets('corrects long term memory summary', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);

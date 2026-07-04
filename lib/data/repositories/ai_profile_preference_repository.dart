@@ -110,6 +110,34 @@ class AiProfilePreferenceRepository {
     );
   }
 
+  Future<void> setMergedRelationship({
+    required String sourcePersonName,
+    required String targetPersonName,
+  }) async {
+    final source = sourcePersonName.trim();
+    final target = targetPersonName.trim();
+    if (source.isEmpty || target.isEmpty) return;
+    if (source.toLowerCase() == target.toLowerCase()) return;
+    final existing = await getPreference(
+      targetType: AiProfilePreferenceTargetType.relationship,
+      targetId: source,
+    );
+    await _savePreference(
+      (existing ??
+              AiProfilePreference(
+                targetType: AiProfilePreferenceTargetType.relationship,
+                targetId: source,
+                updatedAt: DateTime.now(),
+              ))
+          .copyWith(
+        hidden: true,
+        confirmed: false,
+        mergedInto: target,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
   Future<void> savePreference(AiProfilePreference item) async {
     await _savePreference(item);
   }
@@ -163,13 +191,39 @@ class AiProfilePreferenceRepository {
     final preferences = {
       for (final item in await listPreferences()) item.id: item,
     };
-    final visible = <RelationshipProfile>[];
+    final mergedProfiles = <String, RelationshipProfile>{
+      for (final profile in profiles) profile.personName.toLowerCase(): profile,
+    };
     for (final profile in profiles) {
       final preference = preferences[AiProfilePreference.keyFor(
         targetType: AiProfilePreferenceTargetType.relationship,
         targetId: profile.personName,
       )];
-      if (preference?.hidden == true) continue;
+      final mergedInto = preference?.mergedInto.trim() ?? '';
+      if (mergedInto.isEmpty) continue;
+      final targetKey = mergedInto.toLowerCase();
+      final sourceKey = profile.personName.toLowerCase();
+      if (targetKey == sourceKey) continue;
+      final target = mergedProfiles[targetKey];
+      if (target == null) continue;
+      mergedProfiles[targetKey] = _mergeRelationshipProfiles(
+        target: target,
+        source: profile,
+        targetName: mergedInto,
+      );
+      mergedProfiles.remove(sourceKey);
+    }
+
+    final visible = <RelationshipProfile>[];
+    for (final profile in mergedProfiles.values) {
+      final preference = preferences[AiProfilePreference.keyFor(
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: profile.personName,
+      )];
+      if (preference?.hidden == true &&
+          (preference?.mergedInto.trim().isEmpty ?? true)) {
+        continue;
+      }
       final correctedRelationship = preference?.correctedValue.trim() ?? '';
       final isConfirmed =
           preference?.confirmed == true || correctedRelationship.isNotEmpty;
@@ -184,7 +238,84 @@ class AiProfilePreferenceRepository {
         userConfirmed: isConfirmed,
       ));
     }
+    visible.sort((a, b) {
+      final byStatus = _statusRank(b.status).compareTo(_statusRank(a.status));
+      if (byStatus != 0) return byStatus;
+      final byCount = b.interactionCount.compareTo(a.interactionCount);
+      if (byCount != 0) return byCount;
+      return b.lastInteractionAt.compareTo(a.lastInteractionAt);
+    });
     return visible;
+  }
+
+  RelationshipProfile _mergeRelationshipProfiles({
+    required RelationshipProfile target,
+    required RelationshipProfile source,
+    required String targetName,
+  }) {
+    final interactions = [
+      ...target.recentInteractions,
+      ...source.recentInteractions,
+    ]..sort((a, b) => b.date.compareTo(a.date));
+    final names = <String>{
+      targetName,
+      target.personName,
+      source.personName,
+      ...target.names,
+      ...source.names,
+    }.where((value) => value.trim().isNotEmpty).toList(growable: false);
+    final emotions = <String>{...target.emotions, ...source.emotions}
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+    final patterns = <String>{...target.patterns, ...source.patterns}
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+    final evidence = [...target.evidence, ...source.evidence];
+    final confidence =
+        ((target.confidence + source.confidence) / 2).clamp(0, 1).toDouble();
+    return RelationshipProfile(
+      personName: targetName,
+      names: names,
+      status: _maxStatus(target.status, source.status),
+      confidence: confidence,
+      interactionCount: target.interactionCount + source.interactionCount,
+      distinctDays: _distinctInteractionDays(interactions),
+      lastInteractionAt:
+          target.lastInteractionAt.isAfter(source.lastInteractionAt)
+              ? target.lastInteractionAt
+              : source.lastInteractionAt,
+      relationship: target.relationship ?? source.relationship,
+      recentInteractions: interactions.take(5).toList(growable: false),
+      emotions: emotions,
+      patterns: patterns,
+      evidence: evidence,
+      userConfirmed: target.userConfirmed || source.userConfirmed,
+    );
+  }
+
+  int _distinctInteractionDays(List<RelationshipInteraction> interactions) {
+    return interactions
+        .map((item) => '${item.date.year}-${item.date.month}-${item.date.day}')
+        .toSet()
+        .length;
+  }
+
+  ProfileFactStatus _maxStatus(
+    ProfileFactStatus first,
+    ProfileFactStatus second,
+  ) {
+    return _statusRank(first) >= _statusRank(second) ? first : second;
+  }
+
+  int _statusRank(ProfileFactStatus status) {
+    switch (status) {
+      case ProfileFactStatus.stable:
+        return 3;
+      case ProfileFactStatus.emerging:
+        return 2;
+      case ProfileFactStatus.weak:
+        return 1;
+    }
   }
 
   Future<void> deleteObsoletePreferences({

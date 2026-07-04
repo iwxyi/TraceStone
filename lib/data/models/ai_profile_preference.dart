@@ -8,6 +8,7 @@ class AiProfilePreference {
     this.confirmed = false,
     this.hidden = false,
     this.correctedValue = '',
+    this.mergedInto = '',
   });
 
   final AiProfilePreferenceTargetType targetType;
@@ -16,6 +17,7 @@ class AiProfilePreference {
   final bool confirmed;
   final bool hidden;
   final String correctedValue;
+  final String mergedInto;
 
   String get id => keyFor(targetType: targetType, targetId: targetId);
 
@@ -23,6 +25,7 @@ class AiProfilePreference {
     bool? confirmed,
     bool? hidden,
     String? correctedValue,
+    String? mergedInto,
     DateTime? updatedAt,
   }) {
     return AiProfilePreference(
@@ -32,6 +35,7 @@ class AiProfilePreference {
       confirmed: confirmed ?? this.confirmed,
       hidden: hidden ?? this.hidden,
       correctedValue: correctedValue ?? this.correctedValue,
+      mergedInto: mergedInto ?? this.mergedInto,
     );
   }
 
@@ -42,6 +46,7 @@ class AiProfilePreference {
         'confirmed': confirmed,
         'hidden': hidden,
         'correctedValue': correctedValue,
+        'mergedInto': mergedInto,
       };
 
   factory AiProfilePreference.fromJson(Map<String, dynamic> json) {
@@ -58,6 +63,7 @@ class AiProfilePreference {
       confirmed: _boolValue(json['confirmed']),
       hidden: _boolValue(json['hidden']),
       correctedValue: _stringValue(json['correctedValue']),
+      mergedInto: _stringValue(json['mergedInto']).trim(),
     );
   }
 
