@@ -703,7 +703,17 @@ void main() {
         'ai.retrievalTraces.search:last': '{}',
         'ai.feedback.entry-1': '{}',
         'period.summaries.month:2026-07': '{}',
-        'calendar.memories.anniversary': '{}',
+        'calendar.memories.anniversary': jsonEncode({
+          'id': 'anniversary',
+          'title': '农历家庭日',
+          'month': 5,
+          'day': 5,
+          'createdAt': '2026-07-03T00:00:00.000',
+          'updatedAt': '2026-07-03T00:00:00.000',
+          'type': 'lunar',
+          'note': '家里的重要日子',
+          'enabled': false,
+        }),
         'stone.tasks.stone:1': '{}',
         'diary.entries.entry-1': '{}',
       });
@@ -731,6 +741,14 @@ void main() {
       expect(counts['调试记录'], 3);
       expect(counts['后台队列'], 1);
       expect(counts['关系合并历史'], 1);
+      final calendarSection =
+          inventory.sections.firstWhere((section) => section.label == '纪念日');
+      expect(calendarSection.details, contains('objects=1'));
+      expect(calendarSection.details, contains('indexed=0'));
+      expect(calendarSection.details, contains('solar=0'));
+      expect(calendarSection.details, contains('lunar=1'));
+      expect(calendarSection.details, contains('disabled=1'));
+      expect(calendarSection.details, contains('topMonths=lunar-5:1'));
       expect(inventory.totalCount, 17);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
@@ -738,6 +756,7 @@ void main() {
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
+      expect(inventory.toDebugText(), contains('topMonths=lunar-5:1'));
       expect(inventory.toDebugText(), contains('details=objects=1'));
       expect(inventory.toDebugText(), contains('backupPolicy=默认不建议云备份'));
       expect(inventory.toDebugText(), contains('exportPolicy=复制前必须确认'));

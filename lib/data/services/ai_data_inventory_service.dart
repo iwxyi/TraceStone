@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
 
 class AiDataInventoryService {
@@ -110,6 +111,7 @@ class AiDataInventoryService {
         backupPolicy: '随用户设置备份',
         deletePolicy: '用户删除纪念日时清理',
         exportPolicy: '普通导出可展示名称和日期',
+        details: _calendarMemoryDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -266,6 +268,95 @@ class AiDataInventoryService {
     } on Object {
       return null;
     }
+  }
+}
+
+List<String> _calendarMemoryDetails(
+  SharedPreferences prefs,
+  Set<String> keys,
+) {
+  const prefix = 'calendar.memories.';
+  const indexKey = 'calendar.memories.index';
+  final objectKeys = keys
+      .where((key) => key.startsWith(prefix) && key != indexKey)
+      .toList(growable: false)
+    ..sort();
+  if (objectKeys.isEmpty && !keys.contains(indexKey)) return const [];
+
+  var solar = 0;
+  var lunar = 0;
+  var disabled = 0;
+  var invalidRequired = 0;
+  var malformed = 0;
+  final monthBuckets = <String, int>{};
+
+  for (final key in objectKeys) {
+    final raw = _safeGetInventoryString(prefs, key);
+    if (raw == null) {
+      malformed += 1;
+      continue;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        malformed += 1;
+        continue;
+      }
+      final memory = CalendarMemory.fromJson(decoded);
+      switch (memory.type) {
+        case CalendarMemoryType.solar:
+          solar += 1;
+        case CalendarMemoryType.lunar:
+          lunar += 1;
+      }
+      if (!memory.enabled) disabled += 1;
+      if (memory.id.trim().isEmpty || memory.title.trim().isEmpty) {
+        invalidRequired += 1;
+      }
+      final monthKey = '${memory.type.name}-${memory.month}';
+      monthBuckets.update(monthKey, (value) => value + 1, ifAbsent: () => 1);
+    } on Object {
+      malformed += 1;
+    }
+  }
+
+  final densestMonths = monthBuckets.entries.toList()
+    ..sort((a, b) {
+      final byCount = b.value.compareTo(a.value);
+      if (byCount != 0) return byCount;
+      return a.key.compareTo(b.key);
+    });
+  final indexed = _safeGetInventoryStringList(prefs, indexKey)?.length ?? 0;
+  return [
+    'objects=${objectKeys.length}',
+    'indexed=$indexed',
+    'solar=$solar',
+    'lunar=$lunar',
+    if (disabled > 0) 'disabled=$disabled',
+    if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+    if (malformed > 0) 'malformed=$malformed',
+    if (densestMonths.isNotEmpty)
+      'topMonths=${densestMonths.take(3).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+  ];
+}
+
+String? _safeGetInventoryString(SharedPreferences prefs, String key) {
+  try {
+    final value = prefs.get(key);
+    return value is String ? value : null;
+  } on Object {
+    return null;
+  }
+}
+
+List<String>? _safeGetInventoryStringList(SharedPreferences prefs, String key) {
+  try {
+    final value = prefs.get(key);
+    if (value is List<String>) return List<String>.from(value);
+    if (value is List) return value.whereType<String>().toList();
+    return null;
+  } on Object {
+    return null;
   }
 }
 
