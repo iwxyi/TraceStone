@@ -535,6 +535,16 @@ class _QueueSummaryCard extends StatelessWidget {
                 label: 'estimatedRemaining',
                 value: queue.estimatedRemainingLabel,
               ),
+            if (queue.batches.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('批次进度', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              for (final batch in queue.batches.take(3))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _BatchProgressLine(batch: batch),
+                ),
+            ],
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -560,6 +570,35 @@ class _QueueSummaryCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _BatchProgressLine extends StatelessWidget {
+  const _BatchProgressLine({required this.batch});
+
+  final AiAnalysisBatchSnapshot batch;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(batch.label)),
+            Text(batch.progressLabel, style: theme.textTheme.bodySmall),
+          ],
+        ),
+        const SizedBox(height: 4),
+        LinearProgressIndicator(value: batch.progress, minHeight: 3),
+        const SizedBox(height: 4),
+        Text(
+          '待处理 ${batch.runnableCount}｜运行中 ${batch.runningCount}｜失败 ${batch.failedCount}',
+          style: theme.textTheme.bodySmall,
+        ),
+      ],
     );
   }
 }

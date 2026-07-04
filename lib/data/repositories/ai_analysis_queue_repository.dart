@@ -14,7 +14,11 @@ class AiAnalysisQueueRepository {
   static const _prefix = 'ai.analysis.jobs.';
   static const _staleRunningAge = Duration(minutes: 10);
 
-  Future<AiAnalysisJob> enqueueEntry(DiaryEntry entry) async {
+  Future<AiAnalysisJob> enqueueEntry(
+    DiaryEntry entry, {
+    String? batchId,
+    String? batchLabel,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final existing = await getJob(entry.id);
@@ -26,6 +30,8 @@ class AiAnalysisQueueRepository {
       currentStage: AiAnalysisStage.queued,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      batchId: batchId ?? existing?.batchId,
+      batchLabel: batchLabel ?? existing?.batchLabel,
     );
     await prefs.setString('$_prefix${job.id}', jsonEncode(job.toJson()));
     final index = _safeGetStringList(prefs, _indexKey) ?? [];

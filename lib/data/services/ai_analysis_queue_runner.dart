@@ -73,12 +73,19 @@ class AiAnalysisQueueRunner {
 
   Future<int> enqueueBackfill({int limit = 200}) async {
     final entries = await _diaryRepository.listEntries();
+    final batchStartedAt = DateTime.now();
+    final batchId = 'backfill:${batchStartedAt.microsecondsSinceEpoch}';
+    final batchLabel = '补建缺失资料 ${_dateTimeLabel(batchStartedAt)}';
     var enqueued = 0;
     for (final entry in entries) {
       if (enqueued >= limit) break;
       if (entry.content.trim().isEmpty) continue;
       if (!await _needsBackfill(entry)) continue;
-      await _queueRepository.enqueueEntry(entry);
+      await _queueRepository.enqueueEntry(
+        entry,
+        batchId: batchId,
+        batchLabel: batchLabel,
+      );
       await _insightRepository.saveStatus(DiaryAnalysisStatus(
         entryId: entry.id,
         state: DiaryAnalysisState.queued,
@@ -745,6 +752,13 @@ class AiAnalysisQueueRunner {
 
   String _dateLabel(DateTime date) =>
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  String _dateTimeLabel(DateTime date) {
+    final day = _dateLabel(date);
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$day $hour:$minute';
+  }
 
   String _segmentOutputSummary(List<DiarySegment> segments) {
     final boundaryCounts = <String, int>{};

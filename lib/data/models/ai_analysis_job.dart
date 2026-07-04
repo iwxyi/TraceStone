@@ -30,6 +30,8 @@ class AiAnalysisJob {
     this.retrievalTraceId,
     this.retryCount = 0,
     this.lastError,
+    this.batchId,
+    this.batchLabel,
   });
 
   final String id;
@@ -48,6 +50,8 @@ class AiAnalysisJob {
   final String? retrievalTraceId;
   final int retryCount;
   final String? lastError;
+  final String? batchId;
+  final String? batchLabel;
 
   bool get canRun =>
       state == AiAnalysisJobState.pending ||
@@ -90,6 +94,8 @@ class AiAnalysisJob {
     String? retrievalTraceId,
     int? retryCount,
     String? lastError,
+    String? batchId,
+    String? batchLabel,
     bool clearLastError = false,
   }) {
     return AiAnalysisJob(
@@ -109,6 +115,8 @@ class AiAnalysisJob {
       retrievalTraceId: retrievalTraceId ?? this.retrievalTraceId,
       retryCount: retryCount ?? this.retryCount,
       lastError: clearLastError ? null : lastError ?? this.lastError,
+      batchId: batchId ?? this.batchId,
+      batchLabel: batchLabel ?? this.batchLabel,
     );
   }
 
@@ -129,6 +137,8 @@ class AiAnalysisJob {
         'retrievalTraceId': retrievalTraceId,
         'retryCount': retryCount,
         'lastError': lastError,
+        'batchId': batchId,
+        'batchLabel': batchLabel,
       };
 
   static AiAnalysisJob fromJson(Map<String, dynamic> json) {
@@ -169,6 +179,8 @@ class AiAnalysisJob {
       retrievalTraceId: _nullableString(json['retrievalTraceId']),
       retryCount: _intValue(json['retryCount']),
       lastError: _nullableString(json['lastError']),
+      batchId: _nullableString(json['batchId']),
+      batchLabel: _nullableString(json['batchLabel']),
     );
   }
 
@@ -351,6 +363,29 @@ class AiAnalysisQueueSnapshot {
   bool get hasVisibleWork =>
       currentJob != null || pendingCount > 0 || failedCount > 0;
 
+  List<AiAnalysisBatchSnapshot> get batches {
+    final grouped = <String, List<AiAnalysisJob>>{};
+    for (final job in jobs) {
+      final batchId = job.batchId?.trim();
+      if (batchId == null || batchId.isEmpty) continue;
+      grouped.putIfAbsent(batchId, () => []).add(job);
+    }
+    final result = grouped.entries.map((entry) {
+      final items = entry.value;
+      items.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final label = items
+          .map((job) => job.batchLabel?.trim() ?? '')
+          .firstWhere((value) => value.isNotEmpty, orElse: () => entry.key);
+      return AiAnalysisBatchSnapshot(
+        id: entry.key,
+        label: label,
+        jobs: items,
+      );
+    }).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return result;
+  }
+
   Duration get _averageStageDuration {
     final completedDurations = jobs
         .where((job) => job.state == AiAnalysisJobState.completed)
@@ -372,4 +407,45 @@ class AiAnalysisQueueSnapshot {
       .where((stage) =>
           stage != AiAnalysisStage.queued && stage != AiAnalysisStage.completed)
       .length;
+}
+
+class AiAnalysisBatchSnapshot {
+  const AiAnalysisBatchSnapshot({
+    required this.id,
+    required this.label,
+    required this.jobs,
+  });
+
+  final String id;
+  final String label;
+  final List<AiAnalysisJob> jobs;
+
+  DateTime get createdAt => jobs.isEmpty ? DateTime(0) : jobs.first.createdAt;
+
+  int get totalCount => jobs.length;
+
+  int get runningCount =>
+      jobs.where((job) => job.state == AiAnalysisJobState.running).length;
+
+  int get runnableCount => jobs.where((job) => job.canRun).length;
+
+  int get completedCount =>
+      jobs.where((job) => job.state == AiAnalysisJobState.completed).length;
+
+  int get failedCount =>
+      jobs.where((job) => job.state == AiAnalysisJobState.failed).length;
+
+  int get remainingCount => jobs
+      .where((job) =>
+          job.canRun ||
+          job.state == AiAnalysisJobState.running ||
+          job.state == AiAnalysisJobState.failed)
+      .length;
+
+  double get progress {
+    if (totalCount <= 0) return 0;
+    return (completedCount / totalCount).clamp(0.0, 1.0).toDouble();
+  }
+
+  String get progressLabel => '$completedCount/$totalCount';
 }

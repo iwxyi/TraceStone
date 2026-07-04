@@ -1565,6 +1565,8 @@ void main() {
       currentStage: AiAnalysisStage.queued,
       createdAt: date,
       updatedAt: date,
+      batchId: 'batch-debug',
+      batchLabel: '导入 2026 年日记',
     ));
     await queueRepository.saveJob(AiAnalysisJob(
       id: 'debug-incomplete',
@@ -1574,6 +1576,8 @@ void main() {
       currentStage: AiAnalysisStage.embedding,
       createdAt: date,
       updatedAt: date,
+      batchId: 'batch-debug',
+      batchLabel: '导入 2026 年日记',
     ));
     await queueRepository.saveJob(AiAnalysisJob(
       id: 'debug-retryable-failed',
@@ -1607,6 +1611,10 @@ void main() {
     expect(find.text('paused: false'), findsOneWidget);
     expect(find.text('remainingStages: 21'), findsOneWidget);
     expect(find.text('estimatedRemaining: 约 2 分钟'), findsOneWidget);
+    expect(find.text('批次进度'), findsOneWidget);
+    expect(find.text('导入 2026 年日记'), findsOneWidget);
+    expect(find.text('0/2'), findsOneWidget);
+    expect(find.text('待处理 2｜运行中 0｜失败 0'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, '继续队列'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, '暂停队列'), findsOneWidget);
   });

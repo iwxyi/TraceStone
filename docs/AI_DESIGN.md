@@ -989,7 +989,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 | 上下文组装 | `AiContextBuilder` 服务今日洞察、问答、周期总结、搜索 |
 | 多年今日 | 已支持阳历同日、附近日期、固定节日和自定义纪念日上下文 |
 | 周期总结 | `PeriodSummaryService` 支持月/年等周期摘要与来源追踪 |
-| 后台队列 | `AiAnalysisQueueRunner` / `AiAnalysisQueueRepository` 支持 pending/running/incomplete/failed/completed、全局暂停/继续和剩余耗时估算 |
+| 后台队列 | `AiAnalysisQueueRunner` / `AiAnalysisQueueRepository` 支持 pending/running/incomplete/failed/completed、全局暂停/继续、批次分组和剩余耗时估算 |
 | 可恢复 Pipeline | 摘要、分段、向量、检索、洞察、记忆更新分阶段落库 |
 | 失败降级 | 摘要失败用正文预览，向量失败保留结构化摘要，AI 未配置不消耗重试 |
 | 开发者模式 | 设置开关控制来源、分数、prompt trace、retrieval trace、队列、embedding 元数据 |
@@ -1007,7 +1007,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 5. 画像和关系档案已有候选、投影、确认、修正、隐藏和冲突解释；还需要更完整的候选合并与冲突处理决策流程。
 6. `ProfileFact`、`RelationshipProfile` 和塑石行动已有第一版独立 embedding，并会在搜索时补建、刷新和清理失效索引；还需要更成熟的向量索引。
 7. 当前 AI Pipeline 仍以单个 job 串起多个阶段，未来可拆成更细粒度、可单独重跑的子任务。
-8. 批量导入几千篇日记时，已有队列暂停/继续和耗时估算的第一版 UI；还需要更明确的分批入队、批次分组和耗时校准。
+8. 批量导入几千篇日记时，已有队列暂停/继续、批次分组和耗时估算的第一版 UI；还需要导入页分批入队入口和更精确的耗时校准。
 9. 历史摘要目前以本地规则摘要为主，已支持用户修正摘要包；未来需要可选 AI 摘要生成和更细的版本管理。
 10. 隐私、备份、导出策略还需要覆盖 summary/vector/debug 数据的加密与同步边界。
 

@@ -1016,6 +1016,8 @@ void main() {
         ],
         insightId: 'entry',
         retrievalTraceId: 'entry',
+        batchId: 'batch:1',
+        batchLabel: '导入 2026',
       );
       final restored = AiAnalysisJob.fromJson(job.toJson());
       final legacy = AiAnalysisJob.fromJson({
@@ -1067,10 +1069,13 @@ void main() {
       ]);
       expect(restored.insightId, 'entry');
       expect(restored.retrievalTraceId, 'entry');
+      expect(restored.batchId, 'batch:1');
+      expect(restored.batchLabel, '导入 2026');
       expect(legacy.stageLogs, isEmpty);
       expect(legacy.summaryId, isNull);
       expect(legacy.segmentIds, isEmpty);
       expect(legacy.embeddingIds, isEmpty);
+      expect(legacy.batchId, isNull);
       expect(malformed.id, '42');
       expect(malformed.entryId, '43');
       expect(malformed.pipelineVersion, 7);
@@ -1101,6 +1106,8 @@ void main() {
         currentStage: AiAnalysisStage.embedding,
         createdAt: date,
         updatedAt: date,
+        batchId: 'batch:1',
+        batchLabel: '批量补建',
       );
       final pending = AiAnalysisJob(
         id: 'pending',
@@ -1110,6 +1117,8 @@ void main() {
         currentStage: AiAnalysisStage.queued,
         createdAt: date,
         updatedAt: date,
+        batchId: 'batch:1',
+        batchLabel: '批量补建',
       );
       final incomplete = AiAnalysisJob(
         id: 'incomplete',
@@ -1142,6 +1151,10 @@ void main() {
       expect(snapshot.activeOrdinal, 1);
       expect(snapshot.remainingStageCount, 21);
       expect(snapshot.estimatedRemainingLabel, '约 2 分钟');
+      expect(snapshot.batches, hasLength(1));
+      expect(snapshot.batches.single.label, '批量补建');
+      expect(snapshot.batches.single.progressLabel, '0/2');
+      expect(snapshot.batches.single.runnableCount, 1);
     });
 
     test('paused queue keeps jobs visible but does not return runnable work',
@@ -1761,8 +1774,10 @@ void main() {
       final jobs = await queueRepository.listJobs();
 
       expect(count, 1);
-      expect(jobs.where((job) => job.id == 'missing-ai').single.state,
-          AiAnalysisJobState.pending);
+      final backfillJob = jobs.where((job) => job.id == 'missing-ai').single;
+      expect(backfillJob.state, AiAnalysisJobState.pending);
+      expect(backfillJob.batchId, startsWith('backfill:'));
+      expect(backfillJob.batchLabel, startsWith('补建缺失资料 '));
       expect(jobs.where((job) => job.id == 'already-queued'), hasLength(1));
       expect(jobs.where((job) => job.id == 'complete-ai').single.state,
           AiAnalysisJobState.completed);
