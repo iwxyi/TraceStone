@@ -502,6 +502,61 @@ void main() {
         find.textContaining('current_entry:profile-evidence'), findsOneWidget);
   });
 
+  testWidgets('profile page shows conflict notes in developer mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    final date = DateTime(2026, 7, 3);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-conflict-entry',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.62,
+        ),
+      ],
+      contradictions: const [
+        InsightContradiction(
+          oldMemoryId: 'profile:self_regulation',
+          newEvidence: '这次独处比散步更能恢复状态。',
+          interpretation: '调节方式画像需要保留情境差异。',
+          confidence: 0.72,
+          evidence: [
+            InsightEvidence(
+              type: 'current_entry',
+              id: 'profile-conflict-entry',
+            ),
+          ],
+        ),
+      ],
+    ));
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('需要核对的变化'), findsOneWidget);
+    expect(find.text('这次独处比散步更能恢复状态。'), findsOneWidget);
+    expect(find.text('调节方式画像需要保留情境差异。'), findsOneWidget);
+    expect(find.text('target: profile:self_regulation'), findsOneWidget);
+    expect(find.text('entry: profile-conflict-entry'), findsOneWidget);
+    expect(find.textContaining('source: current_entry:profile-conflict-entry'),
+        findsOneWidget);
+  });
+
   testWidgets('corrects long term memory summary', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);

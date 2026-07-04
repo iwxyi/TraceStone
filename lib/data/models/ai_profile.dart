@@ -125,3 +125,23 @@ class RelationshipInteraction {
   final String? emotion;
   final double? confidence;
 }
+
+class ProfileConflictNote {
+  const ProfileConflictNote({
+    required this.targetId,
+    required this.entryId,
+    required this.entryDate,
+    required this.newEvidence,
+    required this.interpretation,
+    required this.confidence,
+    this.evidence = const [],
+  });
+
+  final String targetId;
+  final String entryId;
+  final DateTime entryDate;
+  final String newEvidence;
+  final String interpretation;
+  final double confidence;
+  final List<InsightEvidence> evidence;
+}

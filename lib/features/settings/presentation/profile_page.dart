@@ -22,14 +22,18 @@ class _ProfilePageState extends State<ProfilePage> {
   final _developerSettings = const DeveloperSettingsRepository();
   final _profilePreferences = const AiProfilePreferenceRepository();
   final _projectionService = const ProfileProjectionService();
-  late Future<List<ProfileFact>> _factsFuture = _loadFacts();
+  late Future<_ProfilePageData> _dataFuture = _loadData();
   late final Future<bool> _developerModeFuture =
       _developerSettings.isDeveloperModeEnabled();
 
-  Future<List<ProfileFact>> _loadFacts() async {
+  Future<_ProfilePageData> _loadData() async {
     final insights = await _repository.listInsights();
     final facts = _projectionService.buildProfileFacts(insights);
-    return _profilePreferences.applyToProfileFacts(facts);
+    final visibleFacts = await _profilePreferences.applyToProfileFacts(facts);
+    return _ProfilePageData(
+      facts: visibleFacts,
+      conflicts: _projectionService.buildConflictNotes(insights),
+    );
   }
 
   Future<void> _setConfirmed(ProfileFact fact, bool confirmed) async {
@@ -84,9 +88,9 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _refresh() async {
     setState(() {
-      _factsFuture = _loadFacts();
+      _dataFuture = _loadData();
     });
-    await _factsFuture;
+    await _dataFuture;
   }
 
   @override
@@ -105,10 +109,11 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<List<ProfileFact>>(
-          future: _factsFuture,
+        child: FutureBuilder<_ProfilePageData>(
+          future: _dataFuture,
           builder: (context, snapshot) {
-            final facts = snapshot.data ?? const <ProfileFact>[];
+            final data = snapshot.data ?? const _ProfilePageData();
+            final facts = data.facts;
             return ListView(
               padding: const EdgeInsets.all(20),
               children: [
@@ -121,18 +126,31 @@ class _ProfilePageState extends State<ProfilePage> {
                       child: CircularProgressIndicator(),
                     ),
                   )
-                else if (facts.isEmpty)
+                else if (facts.isEmpty && data.conflicts.isEmpty)
                   const _EmptyProfileCandidates()
                 else
                   FutureBuilder<bool>(
                     future: _developerModeFuture,
                     builder: (context, developerSnapshot) {
-                      return _ProfileSummary(
-                        facts: facts,
-                        developerMode: developerSnapshot.data ?? false,
-                        onConfirmedChanged: _setConfirmed,
-                        onHide: _hideFact,
-                        onCorrect: _correctFact,
+                      final developerMode = developerSnapshot.data ?? false;
+                      return Column(
+                        children: [
+                          if (data.conflicts.isNotEmpty) ...[
+                            _ProfileConflictCard(
+                              conflicts: data.conflicts,
+                              developerMode: developerMode,
+                            ),
+                            if (facts.isNotEmpty) const SizedBox(height: 16),
+                          ],
+                          if (facts.isNotEmpty)
+                            _ProfileSummary(
+                              facts: facts,
+                              developerMode: developerMode,
+                              onConfirmedChanged: _setConfirmed,
+                              onHide: _hideFact,
+                              onCorrect: _correctFact,
+                            ),
+                        ],
                       );
                     },
                   ),
@@ -143,6 +161,16 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
     );
   }
+}
+
+class _ProfilePageData {
+  const _ProfilePageData({
+    this.facts = const [],
+    this.conflicts = const [],
+  });
+
+  final List<ProfileFact> facts;
+  final List<ProfileConflictNote> conflicts;
 }
 
 class _ProfileHeader extends StatelessWidget {
@@ -226,6 +254,81 @@ class _ProfileSummary extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ProfileConflictCard extends StatelessWidget {
+  const _ProfileConflictCard({
+    required this.conflicts,
+    required this.developerMode,
+  });
+
+  final List<ProfileConflictNote> conflicts;
+  final bool developerMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.change_circle_outlined, size: 22),
+              const SizedBox(width: 8),
+              Text('需要核对的变化', style: theme.textTheme.titleLarge),
+            ]),
+            const SizedBox(height: 8),
+            Text(
+              '这些内容可能说明旧记忆需要增加条件或降低权重，不会自动覆盖你的画像。',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            for (final conflict in conflicts.take(3)) ...[
+              Text(
+                conflict.newEvidence,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              if (conflict.interpretation.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(conflict.interpretation),
+              ],
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(label: Text('来自 ${_dateLabel(conflict.entryDate)}')),
+                  Chip(
+                    label:
+                        Text('可信度 ${conflict.confidence.toStringAsFixed(2)}'),
+                  ),
+                ],
+              ),
+              if (developerMode) ...[
+                const SizedBox(height: 6),
+                Text('target: ${conflict.targetId}',
+                    style: theme.textTheme.bodySmall),
+                Text('entry: ${conflict.entryId}',
+                    style: theme.textTheme.bodySmall),
+                for (final evidence in conflict.evidence.take(3))
+                  Text(
+                    'source: ${formatInsightEvidenceId(evidence)}',
+                    style: theme.textTheme.bodySmall,
+                  ),
+              ],
+              if (conflict != conflicts.take(3).last) const Divider(height: 22),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _dateLabel(DateTime date) =>
+      '${date.year}年${date.month}月${date.day}日';
 }
 
 class _ProfileFactTile extends StatelessWidget {

@@ -2226,6 +2226,47 @@ void main() {
       expect(profiles.single.patterns, contains('边界感相关互动候选'));
     });
 
+    test('builds conflict notes from insight contradictions', () {
+      final insights = [
+        _insight(
+          entryId: 'older-change',
+          date: DateTime(2026, 7, 1),
+          contradictions: const [
+            InsightContradiction(
+              oldMemoryId: 'memory:stress',
+              newEvidence: '今天面对汇报时没有明显紧张。',
+              interpretation: '旧压力画像可能需要增加场景条件。',
+              confidence: 0.58,
+              evidence: [
+                InsightEvidence(type: 'current_entry', id: 'older-change'),
+              ],
+            ),
+          ],
+        ),
+        _insight(
+          entryId: 'strong-change',
+          date: DateTime(2026, 7, 3),
+          contradictions: const [
+            InsightContradiction(
+              oldMemoryId: 'profile:self_regulation',
+              newEvidence: '这次独处比运动更能恢复状态。',
+              interpretation: '调节方式画像需要保留情境差异。',
+              confidence: 0.72,
+            ),
+          ],
+        ),
+      ];
+
+      final conflicts =
+          const ProfileProjectionService().buildConflictNotes(insights);
+
+      expect(conflicts, hasLength(2));
+      expect(conflicts.first.targetId, 'profile:self_regulation');
+      expect(conflicts.first.entryId, 'strong-change');
+      expect(conflicts.first.confidence, 0.72);
+      expect(conflicts.last.evidence.single.id, 'older-change');
+    });
+
     test('applies user confirmation and hidden preferences', () async {
       SharedPreferences.setMockInitialValues({});
       const projectionService = ProfileProjectionService();
@@ -5540,6 +5581,7 @@ DiaryInsight _insight({
   String personName = '',
   ProfileUpdateCandidate? profileCandidate,
   RelationshipUpdateCandidate? relationshipUpdate,
+  List<InsightContradiction> contradictions = const [],
 }) {
   final relationshipUpdates = <RelationshipUpdateCandidate>[];
   if (relationshipUpdate != null) {
@@ -5567,6 +5609,7 @@ DiaryInsight _insight({
     profileUpdateCandidates:
         profileCandidate == null ? const [] : [profileCandidate],
     relationshipUpdates: relationshipUpdates,
+    contradictions: contradictions,
   );
 }
 

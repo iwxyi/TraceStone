@@ -21,6 +21,33 @@ class ProfileProjectionService {
     );
   }
 
+  List<ProfileConflictNote> buildConflictNotes(List<DiaryInsight> insights) {
+    final notes = <ProfileConflictNote>[];
+    for (final insight in insights) {
+      for (final contradiction in insight.contradictions) {
+        final targetId = contradiction.oldMemoryId.trim();
+        final newEvidence = contradiction.newEvidence.trim();
+        final interpretation = contradiction.interpretation.trim();
+        if (targetId.isEmpty && newEvidence.isEmpty) continue;
+        notes.add(ProfileConflictNote(
+          targetId: targetId.isEmpty ? 'unknown' : targetId,
+          entryId: insight.entryId,
+          entryDate: insight.entryDate,
+          newEvidence: newEvidence,
+          interpretation: interpretation,
+          confidence: (contradiction.confidence ?? 0.55).clamp(0, 1),
+          evidence: contradiction.evidence,
+        ));
+      }
+    }
+    notes.sort((a, b) {
+      final byConfidence = b.confidence.compareTo(a.confidence);
+      if (byConfidence != 0) return byConfidence;
+      return b.entryDate.compareTo(a.entryDate);
+    });
+    return notes;
+  }
+
   List<ProfileFact> buildProfileFacts(List<DiaryInsight> insights) {
     final buckets = <String, _ProfileFactBucket>{};
     for (final insight in insights) {
