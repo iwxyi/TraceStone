@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
+import '../models/stone_task.dart';
 
 class AiDataInventoryService {
   const AiDataInventoryService();
@@ -121,6 +122,7 @@ class AiDataInventoryService {
         backupPolicy: '随日记和行动记录备份',
         deletePolicy: '用户删除行动或来源删除时清理引用',
         exportPolicy: '可随行动记录导出',
+        details: _stoneTaskDetails(prefs, keys),
       ),
     ];
     return AiDataInventory(sections: sections);
@@ -358,6 +360,87 @@ List<String>? _safeGetInventoryStringList(SharedPreferences prefs, String key) {
   } on Object {
     return null;
   }
+}
+
+List<String> _stoneTaskDetails(
+  SharedPreferences prefs,
+  Set<String> keys,
+) {
+  const prefix = 'stone.tasks.';
+  const indexKey = 'stone.tasks.index';
+  final objectKeys = keys
+      .where((key) => key.startsWith(prefix) && key != indexKey)
+      .toList(growable: false)
+    ..sort();
+  if (objectKeys.isEmpty && !keys.contains(indexKey)) return const [];
+
+  final statusCounts = <StoneTaskStatus, int>{
+    for (final status in StoneTaskStatus.values) status: 0,
+  };
+  var checkIns = 0;
+  var sourcedTasks = 0;
+  var sourcedCheckIns = 0;
+  var missingSource = 0;
+  var invalidRequired = 0;
+  var malformed = 0;
+  final tagCounts = <String, int>{};
+
+  for (final key in objectKeys) {
+    final raw = _safeGetInventoryString(prefs, key);
+    if (raw == null) {
+      malformed += 1;
+      continue;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        malformed += 1;
+        continue;
+      }
+      final task = StoneTask.fromJson(decoded);
+      statusCounts.update(task.status, (value) => value + 1);
+      checkIns += task.checkIns.length;
+      if (task.sourceEntryId.trim().isEmpty) {
+        missingSource += 1;
+      } else {
+        sourcedTasks += 1;
+      }
+      sourcedCheckIns += task.checkIns
+          .where((item) => (item.sourceEntryId ?? '').trim().isNotEmpty)
+          .length;
+      if (task.id.trim().isEmpty || task.title.trim().isEmpty) {
+        invalidRequired += 1;
+      }
+      for (final tag in task.tags) {
+        tagCounts.update(tag, (value) => value + 1, ifAbsent: () => 1);
+      }
+    } on Object {
+      malformed += 1;
+    }
+  }
+
+  final topTags = tagCounts.entries.toList()
+    ..sort((a, b) {
+      final byCount = b.value.compareTo(a.value);
+      if (byCount != 0) return byCount;
+      return a.key.compareTo(b.key);
+    });
+  final indexed = _safeGetInventoryStringList(prefs, indexKey)?.length ?? 0;
+  return [
+    'objects=${objectKeys.length}',
+    'indexed=$indexed',
+    'active=${statusCounts[StoneTaskStatus.active] ?? 0}',
+    'completed=${statusCounts[StoneTaskStatus.completed] ?? 0}',
+    'archived=${statusCounts[StoneTaskStatus.archived] ?? 0}',
+    'checkIns=$checkIns',
+    'sourcedTasks=$sourcedTasks',
+    'sourcedCheckIns=$sourcedCheckIns',
+    if (missingSource > 0) 'missingSource=$missingSource',
+    if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+    if (malformed > 0) 'malformed=$malformed',
+    if (topTags.isNotEmpty)
+      'topTags=${topTags.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+  ];
 }
 
 class _SummaryQualityRecord {

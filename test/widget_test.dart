@@ -2100,6 +2100,24 @@ void main() {
       'ai.promptTraces.companion:last': '{}',
       'ai.retrievalTraces.search:last': '{}',
       'ai.analysis.jobs.entry-1': '{}',
+      'stone.tasks.stone:1': jsonEncode({
+        'id': 'stone:1',
+        'sourceEntryId': 'entry-1',
+        'title': '晚饭后散步',
+        'description': '走 10 分钟',
+        'createdAt': '2026-07-03T00:00:00.000',
+        'updatedAt': '2026-07-04T00:00:00.000',
+        'status': 'completed',
+        'tags': <String>['运动', '恢复'],
+        'checkIns': [
+          {
+            'id': 'checkin:1',
+            'createdAt': '2026-07-04T00:00:00.000',
+            'note': '完成了',
+            'sourceEntryId': 'entry-2',
+          }
+        ],
+      }),
       'calendar.memories.anniversary': jsonEncode({
         'id': 'anniversary',
         'title': '农历家庭日',
@@ -2142,12 +2160,15 @@ void main() {
     expect(find.text('向量索引 1'), findsOneWidget);
     expect(find.text('调试记录 2'), findsOneWidget);
     expect(find.text('纪念日 1'), findsOneWidget);
+    expect(find.text('塑石行动 1'), findsOneWidget);
     expect(find.textContaining('日记摘要: summaryObjects=1'), findsOneWidget);
     expect(find.textContaining('averageQuality=0.32'), findsOneWidget);
     expect(find.textContaining('lowQuality=1'), findsOneWidget);
     expect(find.textContaining('向量索引: objects=1'), findsOneWidget);
     expect(find.textContaining('纪念日: objects=1'), findsOneWidget);
     expect(find.textContaining('lunar=1'), findsOneWidget);
+    expect(find.textContaining('塑石行动: objects=1'), findsOneWidget);
+    expect(find.textContaining('completed=1'), findsOneWidget);
     expect(find.textContaining('缺少 entry/type 索引'), findsOneWidget);
     expect(find.textContaining('高敏感类别'), findsOneWidget);
     expect(find.textContaining('调试记录可能包含 prompt'), findsOneWidget);
@@ -2170,6 +2191,10 @@ void main() {
     expect(copiedText, contains('lunar=1'));
     expect(copiedText, contains('disabled=1'));
     expect(copiedText, contains('topMonths=lunar-5:1'));
+    expect(copiedText, contains('### 塑石行动'));
+    expect(copiedText, contains('completed=1'));
+    expect(copiedText, contains('checkIns=1'));
+    expect(copiedText, contains('topTags=恢复:1,运动:1'));
     expect(copiedText, contains('sensitivity=critical'));
     expect(copiedText, contains('backupPolicy=默认不建议云备份'));
   });

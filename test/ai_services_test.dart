@@ -714,7 +714,24 @@ void main() {
           'note': '家里的重要日子',
           'enabled': false,
         }),
-        'stone.tasks.stone:1': '{}',
+        'stone.tasks.stone:1': jsonEncode({
+          'id': 'stone:1',
+          'sourceEntryId': 'entry-1',
+          'title': '晚饭后散步',
+          'description': '走 10 分钟',
+          'createdAt': '2026-07-03T00:00:00.000',
+          'updatedAt': '2026-07-04T00:00:00.000',
+          'status': 'completed',
+          'tags': <String>['运动', '恢复'],
+          'checkIns': [
+            {
+              'id': 'checkin:1',
+              'createdAt': '2026-07-04T00:00:00.000',
+              'note': '完成了',
+              'sourceEntryId': 'entry-2',
+            }
+          ],
+        }),
         'diary.entries.entry-1': '{}',
       });
 
@@ -749,6 +766,16 @@ void main() {
       expect(calendarSection.details, contains('lunar=1'));
       expect(calendarSection.details, contains('disabled=1'));
       expect(calendarSection.details, contains('topMonths=lunar-5:1'));
+      final stoneSection =
+          inventory.sections.firstWhere((section) => section.label == '塑石行动');
+      expect(stoneSection.details, contains('objects=1'));
+      expect(stoneSection.details, contains('indexed=0'));
+      expect(stoneSection.details, contains('active=0'));
+      expect(stoneSection.details, contains('completed=1'));
+      expect(stoneSection.details, contains('checkIns=1'));
+      expect(stoneSection.details, contains('sourcedTasks=1'));
+      expect(stoneSection.details, contains('sourcedCheckIns=1'));
+      expect(stoneSection.details, contains('topTags=恢复:1,运动:1'));
       expect(inventory.totalCount, 17);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
@@ -757,6 +784,7 @@ void main() {
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
       expect(inventory.toDebugText(), contains('topMonths=lunar-5:1'));
+      expect(inventory.toDebugText(), contains('topTags=恢复:1,运动:1'));
       expect(inventory.toDebugText(), contains('details=objects=1'));
       expect(inventory.toDebugText(), contains('backupPolicy=默认不建议云备份'));
       expect(inventory.toDebugText(), contains('exportPolicy=复制前必须确认'));
