@@ -949,6 +949,25 @@ void main() {
     expect(find.text('重要家庭纪念日'), findsOneWidget);
   });
 
+  testWidgets('adds lunar calendar memory from settings page', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(
+      const MaterialApp(home: CalendarMemoryPage()),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新增'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, '名称'), '农历生日');
+    await tester.tap(find.text('农历'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('农历生日'), findsOneWidget);
+    expect(find.textContaining('农历'), findsWidgets);
+  });
+
   testWidgets('custom ai requires privacy confirmation', (tester) async {
     SharedPreferences.setMockInitialValues({});
 

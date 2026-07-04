@@ -4401,6 +4401,42 @@ void main() {
       );
     });
 
+    test('labels fixed lunar festival matches', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      final current = _entry(
+        id: 'dragon-boat-current',
+        date: DateTime(2026, 6, 19),
+        content: '今年端午在家吃粽子。',
+      );
+      final festivalPast = _entry(
+        id: 'dragon-boat-past',
+        date: DateTime(2025, 5, 31),
+        content: '去年端午也写到家庭聚餐。',
+      );
+      final ordinary = _entry(
+        id: 'dragon-boat-ordinary',
+        date: DateTime(2025, 6, 19),
+        content: '去年同公历日期是普通记录。',
+      );
+      for (final entry in [current, festivalPast, ordinary]) {
+        await diaryRepository.saveEntry(entry);
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(current);
+      final festival = package.calendarMatches.first;
+      final traceItem = package.retrievalTrace?.items
+          .firstWhere((item) => item.sourceId == festivalPast.id);
+
+      expect(festival.entry.id, 'dragon-boat-past');
+      expect(festival.label, '端午节');
+      expect(festival.calendarType, 'lunar_festival');
+      expect(festival.reason, contains('端午节'));
+      expect(traceItem?.reasons, contains('农历节日：端午节'));
+      expect(traceItem?.matchedTokens, contains('端午节'));
+    });
+
     test('uses custom calendar memories for today matches', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
@@ -4439,6 +4475,47 @@ void main() {
         package.retrievalTrace?.items.single.matchedTokens,
         contains('外婆生日'),
       );
+    });
+
+    test('uses custom lunar calendar memories for today matches', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const calendarRepository = CalendarMemoryRepository();
+      final date = DateTime(2026, 6, 19);
+      await calendarRepository.saveMemory(CalendarMemory(
+        id: 'lunar-family-day',
+        title: '农历家庭日',
+        month: 5,
+        day: 5,
+        createdAt: date,
+        updatedAt: date,
+        type: CalendarMemoryType.lunar,
+      ));
+      final current = _entry(
+        id: 'lunar-anniversary-current',
+        date: date,
+        content: '今天又想起家里的农历纪念日。',
+      );
+      final past = _entry(
+        id: 'lunar-anniversary-past',
+        date: DateTime(2025, 5, 31),
+        content: '去年农历五月初五也写了家里的事。',
+      );
+      for (final entry in [current, past]) {
+        await diaryRepository.saveEntry(entry);
+      }
+
+      final package =
+          await const AiContextBuilder().buildForTodayInsight(current);
+      final match = package.calendarMatches.first;
+
+      expect(match.entry.id, past.id);
+      expect(match.label, '农历家庭日');
+      expect(match.calendarType, 'lunar');
+      expect(match.score, 11);
+      expect(match.reason, contains('农历家庭日'));
+      expect(
+          package.retrievalTrace?.items.first.reasons, contains('农历纪念日：农历家庭日'));
     });
 
     test('matches custom solar anniversaries within a nearby window', () async {

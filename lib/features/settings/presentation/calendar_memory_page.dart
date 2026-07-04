@@ -131,7 +131,10 @@ class _CalendarMemoryCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Text('${memory.month}月${memory.day}日'),
+            Text(
+              '${memory.type == CalendarMemoryType.lunar ? '农历' : '阳历'} '
+              '${memory.month}月${memory.day}日',
+            ),
             if (memory.note.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(memory.note),
@@ -178,6 +181,8 @@ class _CalendarMemoryDialogState extends State<_CalendarMemoryDialog> {
       TextEditingController(text: widget.memory?.note ?? '');
   late int _month = widget.memory?.month ?? DateTime.now().month;
   late int _day = widget.memory?.day ?? DateTime.now().day;
+  late CalendarMemoryType _type =
+      widget.memory?.type ?? CalendarMemoryType.solar;
 
   @override
   void dispose() {
@@ -197,6 +202,7 @@ class _CalendarMemoryDialogState extends State<_CalendarMemoryDialog> {
       day: _day,
       createdAt: widget.memory?.createdAt ?? now,
       updatedAt: now,
+      type: _type,
       note: _noteController.text.trim(),
       enabled: widget.memory?.enabled ?? true,
     ));
@@ -204,7 +210,7 @@ class _CalendarMemoryDialogState extends State<_CalendarMemoryDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final maxDay = _daysInMonth(_month);
+    final maxDay = _maxDay;
     if (_day > maxDay) _day = maxDay;
     return AlertDialog(
       title: Text(widget.memory == null ? '新增纪念日' : '编辑纪念日'),
@@ -216,6 +222,29 @@ class _CalendarMemoryDialogState extends State<_CalendarMemoryDialog> {
               controller: _titleController,
               autofocus: true,
               decoration: const InputDecoration(labelText: '名称'),
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<CalendarMemoryType>(
+              segments: const [
+                ButtonSegment(
+                  value: CalendarMemoryType.solar,
+                  label: Text('阳历'),
+                  icon: Icon(Icons.wb_sunny_outlined),
+                ),
+                ButtonSegment(
+                  value: CalendarMemoryType.lunar,
+                  label: Text('农历'),
+                  icon: Icon(Icons.nightlight_outlined),
+                ),
+              ],
+              selected: {_type},
+              onSelectionChanged: (values) {
+                final selected = values.first;
+                setState(() {
+                  _type = selected;
+                  if (_day > _maxDay) _day = _maxDay;
+                });
+              },
             ),
             const SizedBox(height: 12),
             Row(
@@ -281,6 +310,9 @@ class _CalendarMemoryDialogState extends State<_CalendarMemoryDialog> {
     const days = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     return days[month - 1];
   }
+
+  int get _maxDay =>
+      _type == CalendarMemoryType.lunar ? 30 : _daysInMonth(_month);
 }
 
 class _EmptyCalendarMemoryState extends StatelessWidget {

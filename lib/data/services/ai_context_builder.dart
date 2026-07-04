@@ -16,6 +16,7 @@ import '../repositories/stone_task_repository.dart';
 import '../repositories/calendar_memory_repository.dart';
 import 'profile_projection_service.dart';
 import 'ai_search_service.dart';
+import 'lunar_calendar_service.dart';
 
 class AiContextBuilder {
   const AiContextBuilder({
@@ -28,6 +29,7 @@ class AiContextBuilder {
     AiProfilePreferenceRepository? profilePreferenceRepository,
     ProfileProjectionService? profileProjectionService,
     AiSearchService? searchService,
+    LunarCalendarService? lunarCalendarService,
     AiRetrievalTraceRepository? retrievalTraceRepository,
   })  : _diaryRepository = diaryRepository ?? const DiaryRepository(),
         _summaryRepository =
@@ -43,6 +45,8 @@ class AiContextBuilder {
         _profileProjectionService =
             profileProjectionService ?? const ProfileProjectionService(),
         _searchService = searchService ?? const AiSearchService(),
+        _lunarCalendarService =
+            lunarCalendarService ?? const LunarCalendarService(),
         _retrievalTraceRepository =
             retrievalTraceRepository ?? const AiRetrievalTraceRepository();
 
@@ -55,6 +59,7 @@ class AiContextBuilder {
   final AiProfilePreferenceRepository _profilePreferenceRepository;
   final ProfileProjectionService _profileProjectionService;
   final AiSearchService _searchService;
+  final LunarCalendarService _lunarCalendarService;
   final AiRetrievalTraceRepository _retrievalTraceRepository;
 
   static const _todayMemoryLimit = 8;
@@ -393,7 +398,9 @@ class AiContextBuilder {
     final entries = await _diaryRepository.listEntries();
     final calendarMemories = await _calendarMemoryRepository.listMemories();
     final matches = <AiCalendarMatch>[];
-    final currentFestival = _fixedSolarFestival(entry.date);
+    final currentSolarFestival = _fixedSolarFestival(entry.date);
+    final currentLunarFestival =
+        _lunarCalendarService.fixedFestival(entry.date);
     final currentMemory = _matchingCalendarMemory(entry.date, calendarMemories);
     for (final item in entries) {
       if (item.id == entry.id) continue;
@@ -406,41 +413,68 @@ class AiContextBuilder {
         day: entry.date.day,
       );
       final absoluteOffset = dayOffset?.abs();
-      final itemFestival = _fixedSolarFestival(item.date);
-      final sameFestival =
-          currentFestival != null && currentFestival == itemFestival;
+      final itemSolarFestival = _fixedSolarFestival(item.date);
+      final sameSolarFestival = currentSolarFestival != null &&
+          currentSolarFestival == itemSolarFestival;
+      final itemLunarFestival = _lunarCalendarService.fixedFestival(item.date);
+      final sameLunarFestival = currentLunarFestival != null &&
+          itemLunarFestival != null &&
+          currentLunarFestival.month == itemLunarFestival.month &&
+          currentLunarFestival.day == itemLunarFestival.day;
+      final lunarFestivalOffset = currentLunarFestival == null
+          ? null
+          : _dayOffsetFromLunarDate(
+              item.date,
+              month: currentLunarFestival.month,
+              day: currentLunarFestival.day,
+            );
+      final absoluteLunarFestivalOffset = lunarFestivalOffset?.abs();
       final itemMemory = _matchingCalendarMemory(item.date, calendarMemories);
       final sameMemory = currentMemory != null &&
           itemMemory != null &&
           currentMemory.memory.id == itemMemory.memory.id;
-      final festivalNearby = currentFestival != null &&
+      final solarFestivalNearby = currentSolarFestival != null &&
           dayOffset != null &&
           absoluteOffset != null &&
           absoluteOffset <= 1;
+      final lunarFestivalNearby = currentLunarFestival != null &&
+          lunarFestivalOffset != null &&
+          absoluteLunarFestivalOffset != null &&
+          absoluteLunarFestivalOffset <= 1;
       final solarTodayNearby =
           dayOffset != null && absoluteOffset != null && absoluteOffset <= 1;
       if (!sameMemory &&
-          !sameFestival &&
-          !festivalNearby &&
+          !sameSolarFestival &&
+          !sameLunarFestival &&
+          !solarFestivalNearby &&
+          !lunarFestivalNearby &&
           !solarTodayNearby) {
         continue;
       }
       final label = sameMemory
           ? currentMemory.memory.title
-          : sameFestival
-              ? currentFestival
-              : festivalNearby
-                  ? currentFestival
-                  : null;
+          : sameSolarFestival
+              ? currentSolarFestival
+              : sameLunarFestival
+                  ? currentLunarFestival.label
+                  : solarFestivalNearby
+                      ? currentSolarFestival
+                      : lunarFestivalNearby
+                          ? currentLunarFestival.label
+                          : null;
       final effectiveOffset = sameMemory
           ? itemMemory.dayOffset
-          : dayOffset ?? item.date.difference(entry.date).inDays;
+          : sameLunarFestival || lunarFestivalNearby
+              ? lunarFestivalOffset ?? item.date.difference(entry.date).inDays
+              : dayOffset ?? item.date.difference(entry.date).inDays;
       final absoluteEffectiveOffset = effectiveOffset.abs();
       final calendarType = sameMemory
           ? currentMemory.memory.type.name
-          : festivalNearby || sameFestival
-              ? 'solar_festival'
-              : null;
+          : sameLunarFestival || lunarFestivalNearby
+              ? 'lunar_festival'
+              : solarFestivalNearby || sameSolarFestival
+                  ? 'solar_festival'
+                  : null;
       final reason = _calendarReason(
         yearDistance: yearDistance,
         dayOffset: effectiveOffset,
@@ -452,9 +486,9 @@ class AiContextBuilder {
         reason: reason,
         score: sameMemory
             ? 11
-            : sameFestival
+            : sameSolarFestival || sameLunarFestival
                 ? 10
-                : festivalNearby
+                : solarFestivalNearby || lunarFestivalNearby
                     ? 9
                     : absoluteEffectiveOffset == 0
                         ? 8
@@ -481,18 +515,39 @@ class AiContextBuilder {
   ) {
     const anniversaryWindowDays = 3;
     for (final memory in memories) {
-      if (!memory.enabled || memory.type != CalendarMemoryType.solar) continue;
-      final dayOffset = _dayOffsetFromMonthDay(
-        date,
-        month: memory.month,
-        day: memory.day,
-      );
+      if (!memory.enabled) continue;
+      final dayOffset = switch (memory.type) {
+        CalendarMemoryType.solar => _dayOffsetFromMonthDay(
+            date,
+            month: memory.month,
+            day: memory.day,
+          ),
+        CalendarMemoryType.lunar => _dayOffsetFromLunarDate(
+            date,
+            month: memory.month,
+            day: memory.day,
+          ),
+      };
       if (dayOffset == null) continue;
       if (dayOffset.abs() <= anniversaryWindowDays) {
         return _CalendarMemoryMatch(memory: memory, dayOffset: dayOffset);
       }
     }
     return null;
+  }
+
+  int? _dayOffsetFromLunarDate(
+    DateTime date, {
+    required int month,
+    required int day,
+  }) {
+    final anchor = _lunarCalendarService.resolve(
+      year: date.year,
+      month: month,
+      day: day,
+    );
+    if (anchor == null) return null;
+    return date.difference(anchor).inDays;
   }
 
   int? _dayOffsetFromMonthDay(
@@ -595,7 +650,8 @@ class AiContextBuilder {
             score: match.score,
             reasons: [
               match.reason,
-              if (match.label != null) '阳历节日：${match.label}',
+              if (match.label != null)
+                '${_calendarTypeLabel(match.calendarType)}：${match.label}',
               if (match.summary != null) '使用历史摘要包',
             ],
             matchedTokens: [
@@ -663,6 +719,19 @@ class AiContextBuilder {
           ),
       ],
     );
+  }
+
+  String _calendarTypeLabel(String type) {
+    switch (type) {
+      case 'lunar':
+        return '农历纪念日';
+      case 'lunar_festival':
+        return '农历节日';
+      case 'solar_festival':
+        return '阳历节日';
+      default:
+        return '纪念日';
+    }
   }
 
   AiRetrievalTrace _traceWithEntryId(AiRetrievalTrace trace, String entryId) {
