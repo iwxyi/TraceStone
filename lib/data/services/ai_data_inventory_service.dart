@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/ai_embedding.dart';
 import '../models/ai_analysis_job.dart';
 import '../models/ai_feedback.dart';
 import '../models/ai_profile_preference.dart';
@@ -14,6 +15,7 @@ import '../models/entry_summary.dart';
 import '../models/memory_entry.dart';
 import '../models/period_summary.dart';
 import '../models/stone_task.dart';
+import 'embedding_service.dart';
 
 class AiDataInventoryService {
   const AiDataInventoryService();
@@ -44,7 +46,7 @@ class AiDataInventoryService {
         backupPolicy: '可随日记备份，也可恢复后重建',
         deletePolicy: '来源删除或重建时清理',
         exportPolicy: '默认不展示原始向量，开发者模式可导出元数据',
-        details: _embeddingIndexDetails(keys),
+        details: _embeddingIndexDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -171,7 +173,8 @@ class AiDataInventoryService {
     );
   }
 
-  List<String> _embeddingIndexDetails(Set<String> keys) {
+  List<String> _embeddingIndexDetails(
+      SharedPreferences prefs, Set<String> keys) {
     const objectPrefix = 'ai.embeddings.';
     const entryIndexPrefix = 'ai.embeddings.entryIndex.';
     const typeIndexPrefix = 'ai.embeddings.typeIndex.';
@@ -185,14 +188,73 @@ class AiDataInventoryService {
         keys.where((key) => key.startsWith(entryIndexPrefix)).length;
     final typeIndexCount =
         keys.where((key) => key.startsWith(typeIndexPrefix)).length;
+    final modelCounts = <String, int>{};
+    final sourceTypeCounts = <String, int>{};
+    final dimensionCounts = <String, int>{};
+    var malformed = 0;
+    var nonCurrentModel = 0;
+    var invalidDimensions = 0;
+
+    for (final key in objectKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final embedding = AiEmbedding.fromJson(decoded);
+        final model = '${embedding.modelId}/${embedding.modelVersion}';
+        modelCounts.update(model, (value) => value + 1, ifAbsent: () => 1);
+        sourceTypeCounts.update(
+          embedding.sourceType.name,
+          (value) => value + 1,
+          ifAbsent: () => 1,
+        );
+        dimensionCounts.update(
+          '${embedding.dimensions}d',
+          (value) => value + 1,
+          ifAbsent: () => 1,
+        );
+        if (embedding.modelId != EmbeddingService.modelId ||
+            embedding.modelVersion != EmbeddingService.modelVersion) {
+          nonCurrentModel += 1;
+        }
+        if (embedding.dimensions != EmbeddingService.dimensions) {
+          invalidDimensions += 1;
+        }
+      } on Object {
+        malformed += 1;
+      }
+    }
+
     final details = <String>[
       'objects=${objectKeys.length}',
       'entryIndexes=$entryIndexCount',
       'typeIndexes=$typeIndexCount',
+      if (modelCounts.isNotEmpty)
+        'models=${_topStringCounts(modelCounts).take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (dimensionCounts.isNotEmpty)
+        'dimensions=${_topStringCounts(dimensionCounts).take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (sourceTypeCounts.isNotEmpty)
+        'sourceTypes=${_topStringCounts(sourceTypeCounts).take(6).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (malformed > 0) 'malformed=$malformed',
+      if (nonCurrentModel > 0) 'staleModel=$nonCurrentModel',
+      if (invalidDimensions > 0) 'invalidDimensions=$invalidDimensions',
     ];
     if (objectKeys.isNotEmpty &&
         (entryIndexCount == 0 || typeIndexCount == 0)) {
       details.add('warning=存在缺少 entry/type 索引的向量对象');
+    }
+    if (nonCurrentModel > 0) {
+      details.add('warning=存在非当前模型版本的向量对象');
+    }
+    if (invalidDimensions > 0) {
+      details.add('warning=存在维度不匹配的向量对象');
     }
     return details;
   }

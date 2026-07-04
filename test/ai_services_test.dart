@@ -691,9 +691,37 @@ void main() {
         }),
         'ai.entrySummaryRevisions.entry-1:r2': '{}',
         'ai.entrySegments.index.entry-1': <String>['entry-1#s1'],
-        'ai.embeddings.summary:entry-1': '{}',
+        'ai.embeddings.summary:entry-1': jsonEncode(
+          AiEmbedding(
+            id: 'summary:entry-1',
+            sourceType: AiEmbeddingSourceType.summary,
+            sourceId: 'entry-1',
+            entryId: 'entry-1',
+            modelId: EmbeddingService.modelId,
+            modelVersion: EmbeddingService.modelVersion,
+            dimensions: EmbeddingService.dimensions,
+            vector: List<double>.filled(EmbeddingService.dimensions, 0),
+            generatedAt: DateTime(2026, 7, 3),
+            textHash: 'current',
+          ).toJson(),
+        ),
+        'ai.embeddings.segment:entry-1#s1': jsonEncode(
+          AiEmbedding(
+            id: 'segment:entry-1#s1',
+            sourceType: AiEmbeddingSourceType.segment,
+            sourceId: 'entry-1#s1',
+            entryId: 'entry-1',
+            modelId: 'legacy-hashing-embedding',
+            modelVersion: 'v0',
+            dimensions: 64,
+            vector: List<double>.filled(64, 0),
+            generatedAt: DateTime(2026, 7, 3),
+            textHash: 'legacy',
+          ).toJson(),
+        ),
         'ai.embeddings.entryIndex.entry-1': <String>['summary:entry-1'],
         'ai.embeddings.typeIndex.summary': <String>['summary:entry-1'],
+        'ai.embeddings.typeIndex.segment': <String>['segment:entry-1#s1'],
         'diary.insights.index': <String>['entry-1'],
         'diary.insights.latest': 'entry-1',
         'diary.insights.status.entry-1': jsonEncode(
@@ -994,12 +1022,32 @@ void main() {
       expect(summarySection.details, contains('warningSummaries=1'));
       expect(summarySection.details, contains('worst=entry-1:0.32'));
       expect(summarySection.details, contains('warnings=摘要过短:1,缺少关键点:1'));
-      expect(counts['向量索引'], 3);
+      expect(counts['向量索引'], 5);
       final embeddingSection =
           inventory.sections.firstWhere((section) => section.label == '向量索引');
-      expect(embeddingSection.details, contains('objects=1'));
+      expect(embeddingSection.details, contains('objects=2'));
       expect(embeddingSection.details, contains('entryIndexes=1'));
-      expect(embeddingSection.details, contains('typeIndexes=1'));
+      expect(embeddingSection.details, contains('typeIndexes=2'));
+      expect(
+        embeddingSection.details,
+        contains(
+            'models=legacy-hashing-embedding/v0:1,local-hashing-embedding/v1:1'),
+      );
+      expect(embeddingSection.details, contains('dimensions=128d:1,64d:1'));
+      expect(
+        embeddingSection.details,
+        contains('sourceTypes=segment:1,summary:1'),
+      );
+      expect(embeddingSection.details, contains('staleModel=1'));
+      expect(embeddingSection.details, contains('invalidDimensions=1'));
+      expect(
+        embeddingSection.details,
+        contains('warning=存在非当前模型版本的向量对象'),
+      );
+      expect(
+        embeddingSection.details,
+        contains('warning=存在维度不匹配的向量对象'),
+      );
       expect(counts['今日洞察'], 4);
       final insightSection =
           inventory.sections.firstWhere((section) => section.label == '今日洞察');
@@ -1136,7 +1184,7 @@ void main() {
       expect(stoneSection.details, contains('sourcedTasks=1'));
       expect(stoneSection.details, contains('sourcedCheckIns=1'));
       expect(stoneSection.details, contains('topTags=恢复:1,运动:1'));
-      expect(inventory.totalCount, 22);
+      expect(inventory.totalCount, 24);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.reviewSectionCount, greaterThanOrEqualTo(4));
       expect(summarySection.needsReview, isTrue);
@@ -1149,12 +1197,14 @@ void main() {
       );
       expect(reviewDebugText, contains('scope=需核对'));
       expect(reviewDebugText, contains('### 日记摘要'));
-      expect(reviewDebugText, isNot(contains('### 向量索引')));
+      expect(reviewDebugText, contains('### 向量索引'));
       expect(reviewDebugText, isNot(contains('### 纪念日')));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
+      expect(inventory.toDebugText(), contains('staleModel=1'));
+      expect(inventory.toDebugText(), contains('invalidDimensions=1'));
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
       expect(inventory.toDebugText(), contains('claimsWithoutEvidence=1'));
       expect(inventory.toDebugText(), contains('statusStates=completed:1'));
