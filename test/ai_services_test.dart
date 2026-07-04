@@ -2639,6 +2639,22 @@ void main() {
       expect(segments[0].people, contains('小林'));
     });
 
+    test('splits single paragraph by time markers', () {
+      final entry = _entry(
+        content: '早上开会有点累，中午吃了火锅有点撑，晚上去健身后状态恢复，睡前简单整理了明天计划。',
+      );
+
+      final segments = const EntrySummaryService().buildSegments(entry);
+
+      expect(segments, hasLength(4));
+      expect(segments.map((segment) => segment.boundary).toSet(),
+          {DiarySegmentBoundary.timeMarker});
+      expect(segments[0].text, startsWith('早上'));
+      expect(segments[1].text, startsWith('中午'));
+      expect(segments[2].text, startsWith('晚上'));
+      expect(segments[3].text, startsWith('睡前'));
+    });
+
     test('builds summary from segment key points', () {
       final entry = _entry(
         content: '# 晚间恢复\n\n今天跑步，也整理了产品计划，感觉轻松了一些。',

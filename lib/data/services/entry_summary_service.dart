@@ -42,7 +42,10 @@ class EntrySummaryService {
     for (final block in blocks) {
       final text = block.text.trim();
       if (text.isEmpty) continue;
-      final pieces = _splitLongBlock(text);
+      final timePieces = _splitByTimeMarkers(text);
+      final pieces = [
+        for (final timePiece in timePieces) ..._splitLongBlock(timePiece),
+      ];
       for (final piece in pieces) {
         final index = segments.length;
         segments.add(DiarySegment(
@@ -54,7 +57,9 @@ class EntrySummaryService {
           topics: _topics(piece).take(5).toList(),
           people: _people(piece),
           boundary: pieces.length > 1
-              ? DiarySegmentBoundary.lengthSplit
+              ? timePieces.length > 1
+                  ? DiarySegmentBoundary.timeMarker
+                  : DiarySegmentBoundary.lengthSplit
               : block.boundary,
           createdAt: now,
         ));
@@ -137,6 +142,26 @@ class EntrySummaryService {
     }
     if (buffer.isNotEmpty) pieces.add(buffer.toString().trim());
     return pieces;
+  }
+
+  List<String> _splitByTimeMarkers(String text) {
+    if (text.contains('\n')) return [text];
+    final matches = _timeMarkerPattern.allMatches(text).toList();
+    if (matches.length < 2) return [text];
+    final pieces = <String>[];
+    for (var index = 0; index < matches.length; index++) {
+      final start = matches[index].start;
+      final end =
+          index + 1 < matches.length ? matches[index + 1].start : text.length;
+      final piece = text.substring(start, end).trim();
+      if (piece.characters.length >= 6) pieces.add(piece);
+    }
+    final coveredPrefix = text.substring(0, matches.first.start).trim();
+    if (coveredPrefix.isNotEmpty) {
+      if (pieces.isEmpty) return [text];
+      pieces[0] = '$coveredPrefix ${pieces[0]}'.trim();
+    }
+    return pieces.length >= 2 ? pieces : [text];
   }
 
   List<String> _topics(String text) {
@@ -259,3 +284,7 @@ const _stopWords = {
   '什么',
   '一下',
 };
+
+final _timeMarkerPattern = RegExp(
+  r'(早上|上午|中午|午休|下午|傍晚|晚上|夜里|睡前|后来|接着|然后|之后|最后)',
+);

@@ -3,6 +3,7 @@ enum DiarySegmentBoundary {
   markdownHeading,
   divider,
   paragraphGap,
+  timeMarker,
   lengthSplit,
 }
 
