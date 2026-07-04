@@ -993,7 +993,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 | 后台队列 | `AiAnalysisQueueRunner` / `AiAnalysisQueueRepository` 支持 pending/running/incomplete/failed/completed、全局暂停/继续、批次分组、基于阶段日志校准的剩余耗时估算和阶段级耗时校准摘要 |
 | 可恢复 Pipeline | 摘要、分段、向量、检索、洞察、记忆更新分阶段落库 |
 | 失败降级 | 摘要失败用正文预览，向量失败保留结构化摘要，AI 未配置不消耗重试 |
-| 开发者模式 | 设置开关控制来源、分数、prompt trace、retrieval trace、队列、embedding 元数据 |
+| 开发者模式 | 设置开关控制来源、分数、prompt trace、retrieval trace、队列、embedding 元数据；最近检索调试可汇总来源类型和 rerank signal 的均值/峰值/命中数 |
 | 删除生命周期 | 日记进回收站，90 天后清理；永久删除清理摘要、向量、队列、调试记录和相关衍生数据 |
 | 记忆管理 | 支持归档、恢复、修正和删除长期记忆；开发者模式可查看并复制单条记忆生命周期审计，包含来源、证据、重要度、置信度、引用次数、衰减和归档状态 |
 | 冲突解释 | `ProfileProjectionService` 汇总 insight contradictions，画像页展示“需要核对的变化”，支持采纳变化或保持原画像，开发者模式显示来源 |

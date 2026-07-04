@@ -258,6 +258,10 @@ class _RecentRetrievalTraceCardState extends State<_RecentRetrievalTraceCard> {
                 const SizedBox(height: 8),
                 for (final trace in traces.items) ...[
                   _DebugLine(label: trace.label, value: trace.summary),
+                  if (trace.sourceSummary.isNotEmpty)
+                    _DebugLine(label: 'sources', value: trace.sourceSummary),
+                  if (trace.signalSummary.isNotEmpty)
+                    _DebugLine(label: 'signals', value: trace.signalSummary),
                   for (final line in trace.lines.take(4))
                     _DebugLine(label: 'source', value: line),
                   if (trace != traces.items.last) const SizedBox(height: 8),
@@ -1768,6 +1772,8 @@ class _RecentRetrievalTraces {
         '',
         '### ${item.label}',
         item.summary,
+        if (item.sourceSummary.isNotEmpty) 'sources=${item.sourceSummary}',
+        if (item.signalSummary.isNotEmpty) 'signals=${item.signalSummary}',
         ...item.lines,
       ],
     ].join('\n');
@@ -1778,11 +1784,15 @@ class _RecentRetrievalTraceItem {
   const _RecentRetrievalTraceItem({
     required this.label,
     required this.summary,
+    required this.sourceSummary,
+    required this.signalSummary,
     required this.lines,
   });
 
   final String label;
   final String summary;
+  final String sourceSummary;
+  final String signalSummary;
   final List<String> lines;
 
   static _RecentRetrievalTraceItem fromTrace(AiRetrievalTrace trace) {
@@ -1801,6 +1811,8 @@ class _RecentRetrievalTraceItem {
     return _RecentRetrievalTraceItem(
       label: label,
       summary: summary,
+      sourceSummary: _sourceSummary(trace),
+      signalSummary: _signalSummary(trace),
       lines: [
         for (final item in trace.items)
           '${formatAiSourceId(item.sourceType, item.sourceId)} score=${item.score} '
@@ -1815,6 +1827,55 @@ class _RecentRetrievalTraceItem {
     return signals.entries
         .map((entry) => '${entry.key}:${entry.value.toStringAsFixed(2)}')
         .join(',');
+  }
+
+  static String _sourceSummary(AiRetrievalTrace trace) {
+    final counts = <String, int>{};
+    for (final item in trace.items) {
+      counts.update(item.sourceType, (value) => value + 1, ifAbsent: () => 1);
+    }
+    if (counts.isEmpty) return '';
+    final entries = counts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
+    return entries.map((entry) => '${entry.key}:${entry.value}').join(',');
+  }
+
+  static String _signalSummary(AiRetrievalTrace trace) {
+    final buckets = <String, _SignalBucket>{};
+    for (final item in trace.items) {
+      for (final signal in item.rerankSignals.entries) {
+        buckets.putIfAbsent(signal.key, _SignalBucket.new).add(signal.value);
+      }
+    }
+    if (buckets.isEmpty) return '';
+    final entries = buckets.entries.toList()
+      ..sort((a, b) {
+        final byAverage = b.value.average.compareTo(a.value.average);
+        if (byAverage != 0) return byAverage;
+        return a.key.compareTo(b.key);
+      });
+    return entries
+        .map((entry) =>
+            '${entry.key}:avg=${entry.value.average.toStringAsFixed(2)},max=${entry.value.max.toStringAsFixed(2)},n=${entry.value.count}')
+        .join(' | ');
+  }
+}
+
+class _SignalBucket {
+  var count = 0;
+  var total = 0.0;
+  var max = double.negativeInfinity;
+
+  double get average => count == 0 ? 0 : total / count;
+
+  void add(double value) {
+    count += 1;
+    total += value;
+    if (value > max) max = value;
   }
 }
 

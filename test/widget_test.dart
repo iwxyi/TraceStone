@@ -1902,6 +1902,8 @@ void main() {
     expect(find.textContaining('周期总结:'), findsOneWidget);
     expect(find.textContaining('entry_summary:search-entry'), findsWidgets);
     expect(find.textContaining('segment:'), findsWidgets);
+    expect(find.textContaining('entry_summary:'), findsWidgets);
+    expect(find.textContaining('avg='), findsWidgets);
     await tester.tap(find.widgetWithText(TextButton, '复制').first);
     await tester.pumpAndSettle();
     expect(find.text('复制调试上下文？'), findsOneWidget);
@@ -1913,6 +1915,10 @@ void main() {
     expect(copiedText, contains('### 问答'));
     expect(copiedText, contains('### 周期总结'));
     expect(copiedText, contains('entry_summary:search-entry'));
+    expect(copiedText, contains('sources='));
+    expect(copiedText, contains('signals='));
+    expect(copiedText, contains('avg='));
+    expect(copiedText, contains('max='));
 
     await tester.scrollUntilVisible(
       find.text('最近周期总结'),
