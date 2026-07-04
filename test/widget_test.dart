@@ -2174,6 +2174,21 @@ void main() {
   testWidgets('AI debug queue overview separates recoverable job states',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
     const queueRepository = AiAnalysisQueueRepository();
     final date = DateTime(2026, 7, 3);
     await queueRepository.saveJob(AiAnalysisJob(
@@ -2197,6 +2212,17 @@ void main() {
       updatedAt: date,
       batchId: 'batch-debug',
       batchLabel: '导入 2026 年日记',
+      stageLogs: [
+        AiAnalysisStageLog(
+          stage: AiAnalysisStage.embedding,
+          startedAt: date,
+          message: '上次整理被系统中断',
+          inputSummary: 'entry=debug-incomplete',
+          outputSummary: 'summaryId=debug-incomplete',
+          error: '超过 10 分钟未更新',
+          retryCount: 1,
+        ),
+      ],
     ));
     await queueRepository.saveJob(AiAnalysisJob(
       id: 'debug-retryable-failed',
@@ -2236,8 +2262,27 @@ void main() {
     expect(find.text('导入 2026 年日记'), findsOneWidget);
     expect(find.text('0/2'), findsOneWidget);
     expect(find.text('待处理 2｜运行中 0｜失败 0'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '复制队列'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, '继续队列'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, '暂停队列'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '复制队列'));
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    expect(copiedText, isNull);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('已复制队列审计'), findsOneWidget);
+    expect(copiedText, contains('## AI Analysis Queue Audit'));
+    expect(copiedText, contains('paused=false'));
+    expect(copiedText, contains('states=pending:1,running:0,incomplete:1'));
+    expect(copiedText, contains('## Batches'));
+    expect(copiedText, contains('batch-debug 导入 2026 年日记'));
+    expect(copiedText, contains('debug-incomplete'));
+    expect(copiedText, contains('stageLogs=1'));
+    expect(copiedText, contains('上次整理被系统中断'));
+    expect(copiedText, contains('error=超过 10 分钟未更新'));
   });
 
   testWidgets('AI debug page shows inaccurate feedback and requeue trace',

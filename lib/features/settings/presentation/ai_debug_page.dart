@@ -514,8 +514,20 @@ class _QueueSummaryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('队列概览',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text('队列概览',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                ),
+                TextButton.icon(
+                  onPressed: () => _copyQueueAudit(context),
+                  icon: const Icon(Icons.copy_all_outlined),
+                  label: const Text('复制队列'),
+                ),
+              ],
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -592,6 +604,79 @@ class _QueueSummaryCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _copyQueueAudit(BuildContext context) async {
+    final confirmed = await _confirmDebugContextCopy(context);
+    if (!confirmed) return;
+    await Clipboard.setData(ClipboardData(text: _queueAuditText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制队列审计')),
+    );
+  }
+
+  String _queueAuditText() {
+    final stateCounts = <AiAnalysisJobState, int>{
+      for (final state in AiAnalysisJobState.values)
+        state: queue.jobs.where((job) => job.state == state).length,
+    };
+    final lines = <String>[
+      '## AI Analysis Queue Audit',
+      'paused=${queue.isPaused}',
+      'jobs=${queue.jobs.length}',
+      'runnable=${queue.runnableCount}',
+      'waiting=${queue.waitingCount}',
+      'remainingStages=${queue.remainingStageCount}',
+      if (queue.estimatedRemainingLabel.isNotEmpty)
+        'estimatedRemaining=${queue.estimatedRemainingLabel}',
+      'estimateSamples=${queue.estimateSampleCount}',
+      'averageStageDuration=${queue.averageStageDurationLabel}',
+      if (queue.stageCalibrationSummary.isNotEmpty)
+        'stageDurations=${queue.stageCalibrationSummary}',
+      'states=${stateCounts.entries.map((entry) => '${entry.key.name}:${entry.value}').join(',')}',
+      if (queue.batches.isNotEmpty) ...[
+        '',
+        '## Batches',
+        for (final batch in queue.batches)
+          '- ${batch.id} ${batch.label} progress=${batch.progressLabel} runnable=${batch.runnableCount} running=${batch.runningCount} failed=${batch.failedCount}',
+      ],
+      '',
+      '## Jobs',
+      for (final job in queue.jobs) ...[
+        '- ${job.id} entry=${job.entryId} state=${job.state.name} stage=${job.currentStage.name} canRun=${job.canRun} retry=${job.retryCount} updatedAt=${job.updatedAt.toIso8601String()}',
+        if (job.batchId?.isNotEmpty ?? false) '  batch=${job.batchId}',
+        if (job.lastError?.isNotEmpty ?? false) '  error=${job.lastError}',
+        if (job.summaryId?.isNotEmpty ?? false) '  summary=${job.summaryId}',
+        if (job.segmentIds.isNotEmpty) '  segments=${job.segmentIds.join(',')}',
+        if (job.embeddingIds.isNotEmpty)
+          '  embeddings=${job.embeddingIds.join(',')}',
+        if (job.insightId?.isNotEmpty ?? false) '  insight=${job.insightId}',
+        if (job.retrievalTraceId?.isNotEmpty ?? false)
+          '  retrievalTrace=${job.retrievalTraceId}',
+        if (job.completedStages.isNotEmpty)
+          '  completedStages=${job.completedStages.map((stage) => stage.name).join(',')}',
+        if (job.stageLogs.isNotEmpty) ...[
+          '  stageLogs=${job.stageLogs.length}',
+          for (final log in job.stageLogs.reversed.take(6))
+            '  ${_queueStageLogLine(log)}',
+        ],
+      ],
+    ];
+    return lines.join('\n');
+  }
+
+  String _queueStageLogLine(AiAnalysisStageLog log) {
+    final parts = [
+      log.startedAt.toIso8601String(),
+      log.stage.name,
+      log.message,
+      if (log.inputSummary.isNotEmpty) 'input=${log.inputSummary}',
+      if (log.outputSummary.isNotEmpty) 'output=${log.outputSummary}',
+      if (log.error?.isNotEmpty ?? false) 'error=${log.error}',
+      'retry=${log.retryCount}',
+    ];
+    return parts.join(' | ');
   }
 }
 

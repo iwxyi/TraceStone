@@ -990,7 +990,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 | 多年今日 | 已支持阳历同日、附近日期、固定节日和自定义纪念日上下文，并在检索 trace 中记录年份距离、日期偏移、得分和摘要使用情况 |
 | 农历关联 | 已支持常见农历节日和自定义农历纪念日的查表匹配，用于多年今日上下文，并记录农历/节日类型调试信号 |
 | 周期总结 | `PeriodSummaryService` 支持月/年等周期摘要与来源追踪 |
-| 后台队列 | `AiAnalysisQueueRunner` / `AiAnalysisQueueRepository` 支持 pending/running/incomplete/failed/completed、全局暂停/继续、批次分组、基于阶段日志校准的剩余耗时估算和阶段级耗时校准摘要 |
+| 后台队列 | `AiAnalysisQueueRunner` / `AiAnalysisQueueRepository` 支持 pending/running/incomplete/failed/completed、全局暂停/继续、批次分组、基于阶段日志校准的剩余耗时估算、阶段级耗时校准摘要和开发者队列审计复制 |
 | 可恢复 Pipeline | 摘要、分段、向量、检索、洞察、记忆更新分阶段落库 |
 | 失败降级 | 摘要失败用正文预览，向量失败保留结构化摘要，AI 未配置不消耗重试 |
 | 开发者模式 | 设置开关控制来源、分数、prompt trace、retrieval trace、队列、embedding 元数据；最近检索调试可汇总来源类型和 rerank signal 的均值/峰值/命中数 |
