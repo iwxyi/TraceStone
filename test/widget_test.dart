@@ -1906,6 +1906,8 @@ void main() {
     expect(find.textContaining('entry_summary:search-entry'), findsWidgets);
     expect(find.textContaining('segment:'), findsWidgets);
     expect(find.textContaining('entry_summary:'), findsWidgets);
+    expect(find.textContaining('budget'), findsWidgets);
+    expect(find.textContaining('searchMatches:'), findsWidgets);
     expect(find.textContaining('avg='), findsWidgets);
     await tester.tap(find.widgetWithText(TextButton, '复制').first);
     await tester.pumpAndSettle();
@@ -1919,6 +1921,7 @@ void main() {
     expect(copiedText, contains('### 周期总结'));
     expect(copiedText, contains('entry_summary:search-entry'));
     expect(copiedText, contains('sources='));
+    expect(copiedText, contains('budget=searchMatches:'));
     expect(copiedText, contains('signals='));
     expect(copiedText, contains('avg='));
     expect(copiedText, contains('max='));

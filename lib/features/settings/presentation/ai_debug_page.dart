@@ -260,6 +260,8 @@ class _RecentRetrievalTraceCardState extends State<_RecentRetrievalTraceCard> {
                   _DebugLine(label: trace.label, value: trace.summary),
                   if (trace.sourceSummary.isNotEmpty)
                     _DebugLine(label: 'sources', value: trace.sourceSummary),
+                  if (trace.budgetSummary.isNotEmpty)
+                    _DebugLine(label: 'budget', value: trace.budgetSummary),
                   if (trace.signalSummary.isNotEmpty)
                     _DebugLine(label: 'signals', value: trace.signalSummary),
                   for (final line in trace.lines.take(4))
@@ -2094,6 +2096,7 @@ class _RecentRetrievalTraces {
         '### ${item.label}',
         item.summary,
         if (item.sourceSummary.isNotEmpty) 'sources=${item.sourceSummary}',
+        if (item.budgetSummary.isNotEmpty) 'budget=${item.budgetSummary}',
         if (item.signalSummary.isNotEmpty) 'signals=${item.signalSummary}',
         ...item.lines,
       ],
@@ -2106,6 +2109,7 @@ class _RecentRetrievalTraceItem {
     required this.label,
     required this.summary,
     required this.sourceSummary,
+    required this.budgetSummary,
     required this.signalSummary,
     required this.lines,
   });
@@ -2113,6 +2117,7 @@ class _RecentRetrievalTraceItem {
   final String label;
   final String summary;
   final String sourceSummary;
+  final String budgetSummary;
   final String signalSummary;
   final List<String> lines;
 
@@ -2133,6 +2138,7 @@ class _RecentRetrievalTraceItem {
       label: label,
       summary: summary,
       sourceSummary: _sourceSummary(trace),
+      budgetSummary: _budgetSummary(context),
       signalSummary: _signalSummary(trace),
       lines: [
         for (final item in trace.items)
@@ -2163,6 +2169,18 @@ class _RecentRetrievalTraceItem {
         return a.key.compareTo(b.key);
       });
     return entries.map((entry) => '${entry.key}:${entry.value}').join(',');
+  }
+
+  static String _budgetSummary(String contextSummary) {
+    final marker = 'budget=';
+    final index = contextSummary.indexOf(marker);
+    if (index < 0) return '';
+    final value = contextSummary.substring(index + marker.length).trim();
+    if (value.isEmpty) return '';
+    final nextField = RegExp(r'\s[a-zA-Z][a-zA-Z0-9_]*=').firstMatch(value);
+    final budget =
+        nextField == null ? value : value.substring(0, nextField.start).trim();
+    return budget.trim();
   }
 
   static String _signalSummary(AiRetrievalTrace trace) {
