@@ -40,6 +40,7 @@ import 'package:trace_stone/data/services/ai_artifact_rebuild_service.dart';
 import 'package:trace_stone/data/services/ai_client_service.dart';
 import 'package:trace_stone/data/services/ai_data_inventory_service.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
+import 'package:trace_stone/data/services/ai_profile_decision_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
 import 'package:trace_stone/data/services/companion_answer_service.dart';
@@ -809,6 +810,126 @@ void main() {
       expect(job?.state, AiAnalysisJobState.completed);
       expect(job?.stageLogs.last.message, '开发者重建今日洞察');
       expect(job?.stageLogs.last.outputSummary, contains('facts=1'));
+    });
+  });
+
+  group('AiProfileDecisionService', () {
+    test('summarizes profile fact decisions for developer review', () {
+      final date = DateTime(2026, 7, 3);
+      final facts = [
+        ProfileFact(
+          id: 'self_regulation:散步可能帮助恢复状态',
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          status: ProfileFactStatus.emerging,
+          confidence: 0.63,
+          evidenceCount: 2,
+          distinctDays: 2,
+          firstSeenAt: date,
+          lastSeenAt: date,
+        ),
+        ProfileFact(
+          id: 'self_regulation:写计划能缓解焦虑',
+          field: 'self_regulation',
+          value: '写计划能缓解焦虑',
+          status: ProfileFactStatus.weak,
+          confidence: 0.52,
+          evidenceCount: 1,
+          distinctDays: 1,
+          firstSeenAt: date,
+          lastSeenAt: date,
+        ),
+        ProfileFact(
+          id: 'pressure:工作压力',
+          field: 'pressure',
+          value: '工作压力近期较明显',
+          status: ProfileFactStatus.stable,
+          confidence: 0.72,
+          evidenceCount: 3,
+          distinctDays: 2,
+          firstSeenAt: date,
+          lastSeenAt: date,
+        ),
+      ];
+      final preferences = [
+        AiProfilePreference(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: facts.last.id,
+          correctedValue: '工作压力近期较明显，但运动后会缓解',
+          updatedAt: date,
+        ),
+        AiProfilePreference(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: 'hidden:old',
+          hidden: true,
+          updatedAt: date,
+        ),
+      ];
+
+      final decisions =
+          const AiProfileDecisionService().buildProfileFactDecisions(
+        facts: facts,
+        preferences: preferences,
+      );
+
+      expect(decisions.first.kind, AiProfileDecisionKind.corrected);
+      expect(decisions.first.actionLabel, '使用用户修正');
+      expect(
+        decisions.where((item) => item.kind == AiProfileDecisionKind.hidden),
+        hasLength(1),
+      );
+      expect(
+        decisions
+            .where((item) => item.actionLabel == '同字段候选')
+            .map((item) => item.targetId),
+        containsAll([facts[0].id, facts[1].id]),
+      );
+    });
+
+    test('summarizes relationship decisions for developer review', () {
+      final date = DateTime(2026, 7, 3);
+      final profiles = [
+        RelationshipProfile(
+          personName: '小李',
+          names: const ['小李'],
+          status: ProfileFactStatus.stable,
+          confidence: 0.7,
+          interactionCount: 3,
+          distinctDays: 2,
+          lastInteractionAt: date,
+          relationship: '同事',
+        ),
+        RelationshipProfile(
+          personName: '小王',
+          names: const ['小王'],
+          status: ProfileFactStatus.weak,
+          confidence: 0.5,
+          interactionCount: 1,
+          distinctDays: 1,
+          lastInteractionAt: date,
+        ),
+      ];
+      final preferences = [
+        AiProfilePreference(
+          targetType: AiProfilePreferenceTargetType.relationship,
+          targetId: '小王',
+          confirmed: true,
+          updatedAt: date,
+        ),
+      ];
+
+      final decisions =
+          const AiProfileDecisionService().buildRelationshipDecisions(
+        profiles: profiles,
+        preferences: preferences,
+      );
+
+      expect(decisions.first.title, '小王');
+      expect(decisions.first.actionLabel, '用户已确认');
+      expect(
+        decisions.map((item) => item.actionLabel),
+        contains('可进入稳定关系档案'),
+      );
     });
   });
 

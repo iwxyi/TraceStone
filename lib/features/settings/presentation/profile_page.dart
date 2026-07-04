@@ -7,6 +7,7 @@ import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
+import '../../../data/services/ai_profile_decision_service.dart';
 import '../../../data/services/profile_projection_service.dart';
 import '../../../data/utils/ai_source_formatter.dart';
 
@@ -22,6 +23,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final _developerSettings = const DeveloperSettingsRepository();
   final _profilePreferences = const AiProfilePreferenceRepository();
   final _projectionService = const ProfileProjectionService();
+  final _decisionService = const AiProfileDecisionService();
   late Future<_ProfilePageData> _dataFuture = _loadData();
   late final Future<bool> _developerModeFuture =
       _developerSettings.isDeveloperModeEnabled();
@@ -29,10 +31,17 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<_ProfilePageData> _loadData() async {
     final insights = await _repository.listInsights();
     final facts = _projectionService.buildProfileFacts(insights);
+    final preferences = await _profilePreferences.listPreferences();
+    final conflicts = _projectionService.buildConflictNotes(insights);
     final visibleFacts = await _profilePreferences.applyToProfileFacts(facts);
     return _ProfilePageData(
       facts: visibleFacts,
-      conflicts: _projectionService.buildConflictNotes(insights),
+      conflicts: conflicts,
+      decisions: _decisionService.buildProfileFactDecisions(
+        facts: visibleFacts,
+        preferences: preferences,
+        conflicts: conflicts,
+      ),
     );
   }
 
@@ -126,7 +135,9 @@ class _ProfilePageState extends State<ProfilePage> {
                       child: CircularProgressIndicator(),
                     ),
                   )
-                else if (facts.isEmpty && data.conflicts.isEmpty)
+                else if (facts.isEmpty &&
+                    data.conflicts.isEmpty &&
+                    data.decisions.isEmpty)
                   const _EmptyProfileCandidates()
                 else
                   FutureBuilder<bool>(
@@ -140,6 +151,10 @@ class _ProfilePageState extends State<ProfilePage> {
                               conflicts: data.conflicts,
                               developerMode: developerMode,
                             ),
+                            if (facts.isNotEmpty) const SizedBox(height: 16),
+                          ],
+                          if (developerMode && data.decisions.isNotEmpty) ...[
+                            _ProfileDecisionCard(decisions: data.decisions),
                             if (facts.isNotEmpty) const SizedBox(height: 16),
                           ],
                           if (facts.isNotEmpty)
@@ -167,10 +182,12 @@ class _ProfilePageData {
   const _ProfilePageData({
     this.facts = const [],
     this.conflicts = const [],
+    this.decisions = const [],
   });
 
   final List<ProfileFact> facts;
   final List<ProfileConflictNote> conflicts;
+  final List<AiProfileDecision> decisions;
 }
 
 class _ProfileHeader extends StatelessWidget {
@@ -329,6 +346,75 @@ class _ProfileConflictCard extends StatelessWidget {
 
   static String _dateLabel(DateTime date) =>
       '${date.year}年${date.month}月${date.day}日';
+}
+
+class _ProfileDecisionCard extends StatelessWidget {
+  const _ProfileDecisionCard({required this.decisions});
+
+  final List<AiProfileDecision> decisions;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.rule_outlined, size: 22),
+              const SizedBox(width: 8),
+              Text('画像决策', style: theme.textTheme.titleLarge),
+            ]),
+            const SizedBox(height: 8),
+            Text(
+              '开发者视图：用于核对候选是否应确认、合并、隐藏或继续观察。',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            for (final decision in decisions.take(5)) ...[
+              _DecisionLine(decision: decision),
+              if (decision != decisions.take(5).last) const Divider(height: 18),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DecisionLine extends StatelessWidget {
+  const _DecisionLine({required this.decision});
+
+  final AiProfileDecision decision;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Chip(label: Text(decision.actionLabel)),
+            Text(decision.title,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(decision.reason),
+        if (decision.debugLine.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(decision.debugLine, style: theme.textTheme.bodySmall),
+        ],
+      ],
+    );
+  }
 }
 
 class _ProfileFactTile extends StatelessWidget {

@@ -7,6 +7,7 @@ import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
+import '../../../data/services/ai_profile_decision_service.dart';
 import '../../../data/services/profile_projection_service.dart';
 import '../../../data/utils/ai_source_formatter.dart';
 
@@ -22,15 +23,25 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
   final _developerSettings = const DeveloperSettingsRepository();
   final _profilePreferences = const AiProfilePreferenceRepository();
   final _projectionService = const ProfileProjectionService();
+  final _decisionService = const AiProfileDecisionService();
   final _filterController = TextEditingController();
-  late Future<List<RelationshipProfile>> _profilesFuture = _loadProfiles();
+  late Future<_RelationshipPageData> _dataFuture = _loadData();
   late final Future<bool> _developerModeFuture =
       _developerSettings.isDeveloperModeEnabled();
 
-  Future<List<RelationshipProfile>> _loadProfiles() async {
+  Future<_RelationshipPageData> _loadData() async {
     final insights = await _repository.listInsights();
     final profiles = _projectionService.buildRelationshipProfiles(insights);
-    return _profilePreferences.applyToRelationshipProfiles(profiles);
+    final preferences = await _profilePreferences.listPreferences();
+    final visibleProfiles =
+        await _profilePreferences.applyToRelationshipProfiles(profiles);
+    return _RelationshipPageData(
+      profiles: visibleProfiles,
+      decisions: _decisionService.buildRelationshipDecisions(
+        profiles: visibleProfiles,
+        preferences: preferences,
+      ),
+    );
   }
 
   Future<void> _setConfirmed(
@@ -94,9 +105,9 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
 
   Future<void> _refresh() async {
     setState(() {
-      _profilesFuture = _loadProfiles();
+      _dataFuture = _loadData();
     });
-    await _profilesFuture;
+    await _dataFuture;
   }
 
   @override
@@ -105,24 +116,27 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
       appBar: AppBar(title: const Text('关系')),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<List<RelationshipProfile>>(
-          future: _profilesFuture,
+        child: FutureBuilder<_RelationshipPageData>(
+          future: _dataFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator());
             }
-            final profiles = snapshot.data ?? const <RelationshipProfile>[];
+            final data = snapshot.data ?? const _RelationshipPageData();
+            final profiles = data.profiles;
             if (profiles.isEmpty) return const _EmptyRelationships();
             return FutureBuilder<bool>(
               future: _developerModeFuture,
               builder: (context, developerSnapshot) {
                 final developerMode = developerSnapshot.data ?? false;
+                final visibleProfiles = _visibleProfiles(profiles);
+                final itemOffset =
+                    developerMode && data.decisions.isNotEmpty ? 2 : 1;
                 return ListView.separated(
                   padding: const EdgeInsets.all(20),
-                  itemCount: _visibleProfiles(profiles).length + 1,
+                  itemCount: visibleProfiles.length + itemOffset,
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
-                    final visibleProfiles = _visibleProfiles(profiles);
                     if (index == 0) {
                       return _RelationshipFilter(
                         controller: _filterController,
@@ -130,7 +144,14 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
                         onChanged: (_) => setState(() {}),
                       );
                     }
-                    final profile = visibleProfiles[index - 1];
+                    if (developerMode &&
+                        data.decisions.isNotEmpty &&
+                        index == 1) {
+                      return _RelationshipDecisionCard(
+                        decisions: data.decisions,
+                      );
+                    }
+                    final profile = visibleProfiles[index - itemOffset];
                     return _RelationshipCard(
                       profile: profile,
                       developerMode: developerMode,
@@ -178,6 +199,16 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
   }
 }
 
+class _RelationshipPageData {
+  const _RelationshipPageData({
+    this.profiles = const [],
+    this.decisions = const [],
+  });
+
+  final List<RelationshipProfile> profiles;
+  final List<AiProfileDecision> decisions;
+}
+
 class _RelationshipFilter extends StatelessWidget {
   const _RelationshipFilter({
     required this.controller,
@@ -217,6 +248,75 @@ class _RelationshipFilter extends StatelessWidget {
             resultCount == 0 ? '没有匹配的关系记录' : '找到 $resultCount 位相关人物',
             style: Theme.of(context).textTheme.bodySmall,
           ),
+        ],
+      ],
+    );
+  }
+}
+
+class _RelationshipDecisionCard extends StatelessWidget {
+  const _RelationshipDecisionCard({required this.decisions});
+
+  final List<AiProfileDecision> decisions;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.rule_outlined, size: 22),
+              const SizedBox(width: 8),
+              Text('关系决策', style: theme.textTheme.titleLarge),
+            ]),
+            const SizedBox(height: 8),
+            Text(
+              '开发者视图：核对关系候选是否应确认、修正或继续观察。',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            for (final decision in decisions.take(5)) ...[
+              _RelationshipDecisionLine(decision: decision),
+              if (decision != decisions.take(5).last) const Divider(height: 18),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RelationshipDecisionLine extends StatelessWidget {
+  const _RelationshipDecisionLine({required this.decision});
+
+  final AiProfileDecision decision;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Chip(label: Text(decision.actionLabel)),
+            Text(decision.title,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(decision.reason),
+        if (decision.debugLine.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(decision.debugLine, style: theme.textTheme.bodySmall),
         ],
       ],
     );

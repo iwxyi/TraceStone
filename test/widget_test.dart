@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/app/trace_stone_app.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
 import 'package:trace_stone/data/models/ai_feedback.dart';
+import 'package:trace_stone/data/models/ai_profile_preference.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
@@ -13,6 +14,7 @@ import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
 import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
+import 'package:trace_stone/data/repositories/ai_profile_preference_repository.dart';
 import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_retrieval_trace_repository.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
@@ -36,6 +38,7 @@ import 'package:trace_stone/features/settings/presentation/calendar_memory_page.
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
 import 'package:trace_stone/features/settings/presentation/ai_debug_page.dart';
 import 'package:trace_stone/features/settings/presentation/memory_management_page.dart';
+import 'package:trace_stone/features/settings/presentation/profile_page.dart';
 import 'package:trace_stone/features/search/presentation/search_page.dart';
 import 'package:trace_stone/features/shaping_stone/presentation/shaping_stone_page.dart';
 
@@ -625,6 +628,92 @@ void main() {
         findsOneWidget);
   });
 
+  testWidgets('profile page shows developer decision review', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    final date = DateTime(2026, 7, 3);
+    const preferenceRepository = AiProfilePreferenceRepository();
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-decision-entry',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.62,
+        ),
+      ],
+    ));
+    await preferenceRepository.setCorrectedValue(
+      targetType: AiProfilePreferenceTargetType.profileFact,
+      targetId: 'self_regulation:散步可能帮助恢复状态',
+      correctedValue: '散步有时能帮助恢复状态',
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('画像决策'), findsOneWidget);
+    expect(find.text('使用用户修正'), findsOneWidget);
+    expect(find.text('散步有时能帮助恢复状态'), findsWidgets);
+    expect(find.textContaining('preference=corrected'), findsOneWidget);
+  });
+
+  testWidgets('relationships page shows developer decision review',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': true,
+    });
+    final date = DateTime(2026, 7, 3);
+    const preferenceRepository = AiProfilePreferenceRepository();
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'relationship-decision-entry',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const ['小李'],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      relationshipUpdates: const [
+        RelationshipUpdateCandidate(
+          personName: '小李',
+          relationship: '同事',
+          summary: '一起讨论了项目推进。',
+          confidence: 0.62,
+        ),
+      ],
+    ));
+    await preferenceRepository.setConfirmed(
+      targetType: AiProfilePreferenceTargetType.relationship,
+      targetId: '小李',
+      confirmed: true,
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: RelationshipsPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('关系决策'), findsOneWidget);
+    expect(find.text('用户已确认'), findsOneWidget);
+    expect(find.text('小李'), findsWidgets);
+    expect(find.textContaining('preference=confirmed'), findsOneWidget);
+  });
+
   testWidgets('corrects long term memory summary', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);
@@ -1132,6 +1221,13 @@ void main() {
     await tester.pumpWidget(
       const MaterialApp(home: RelationshipsPage()),
     );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('最近互动'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
     await tester.pumpAndSettle();
     await tester.tap(find.text('最近互动'));
     await tester.pumpAndSettle();
