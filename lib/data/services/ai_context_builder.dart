@@ -494,6 +494,7 @@ class AiContextBuilder {
                         ? 8
                         : 5,
         dayOffset: effectiveOffset,
+        yearDistance: yearDistance,
         label: label,
         calendarType: calendarType ?? 'solar',
         summary: summary,
@@ -657,6 +658,13 @@ class AiContextBuilder {
             matchedTokens: [
               if (match.label != null) match.label!,
             ],
+            rerankSignals: {
+              'calendarScore': match.score.toDouble(),
+              'yearDistance': match.yearDistance.toDouble(),
+              'dayOffset': match.dayOffset.toDouble(),
+              'usedSummary': match.summary == null ? 0 : 1,
+              ..._calendarTypeSignal(match.calendarType),
+            },
           ),
         for (final match in searchMatches)
           AiRetrievalTraceItem(
@@ -732,6 +740,15 @@ class AiContextBuilder {
       default:
         return '纪念日';
     }
+  }
+
+  Map<String, double> _calendarTypeSignal(String type) {
+    return switch (type) {
+      'lunar' => const {'calendarType.lunar': 1.0},
+      'lunar_festival' => const {'calendarType.lunarFestival': 1.0},
+      'solar_festival' => const {'calendarType.solarFestival': 1.0},
+      _ => const {'calendarType.solar': 1.0},
+    };
   }
 
   AiRetrievalTrace _traceWithEntryId(AiRetrievalTrace trace, String entryId) {

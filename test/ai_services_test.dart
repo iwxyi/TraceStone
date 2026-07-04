@@ -4701,6 +4701,13 @@ void main() {
             .map((item) => item.sourceId),
         ['same-day', 'nearby'],
       );
+      final traceItem = package.retrievalTrace?.items
+          .firstWhere((item) => item.sourceId == 'same-day');
+      expect(traceItem?.rerankSignals['calendarScore'], 8);
+      expect(traceItem?.rerankSignals['yearDistance'], 1);
+      expect(traceItem?.rerankSignals['dayOffset'], 0);
+      expect(traceItem?.rerankSignals['usedSummary'], 0);
+      expect(traceItem?.rerankSignals['calendarType.solar'], 1);
     });
 
     test('uses entry summaries for calendar context when available', () async {
@@ -4811,6 +4818,9 @@ void main() {
       expect(festival.reason, contains('端午节'));
       expect(traceItem?.reasons, contains('农历节日：端午节'));
       expect(traceItem?.matchedTokens, contains('端午节'));
+      expect(traceItem?.rerankSignals['calendarType.lunarFestival'], 1);
+      expect(traceItem?.rerankSignals['calendarScore'], 10);
+      expect(traceItem?.rerankSignals['yearDistance'], 1);
     });
 
     test('uses custom calendar memories for today matches', () async {

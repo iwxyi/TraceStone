@@ -93,6 +93,7 @@ class AiCalendarMatch {
     required this.reason,
     required this.score,
     required this.dayOffset,
+    required this.yearDistance,
     this.label,
     this.calendarType = 'solar',
     this.summary,
@@ -102,6 +103,7 @@ class AiCalendarMatch {
   final String reason;
   final int score;
   final int dayOffset;
+  final int yearDistance;
   final String? label;
   final String calendarType;
   final EntrySummary? summary;
