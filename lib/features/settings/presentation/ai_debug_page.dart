@@ -1455,6 +1455,10 @@ class _JobArtifacts {
     final value = summary;
     if (value == null) return const [];
     return [
+      'summary revision: ${value.revision}',
+      'summary generator: ${value.generator}',
+      if (value.correctedAt != null)
+        'summary correctedAt: ${value.correctedAt!.toIso8601String()}',
       if (value.keyPoints.isNotEmpty)
         'summary keyPoints: ${value.keyPoints.join('；')}',
       if (value.importantQuotes.isNotEmpty)

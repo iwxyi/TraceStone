@@ -3042,6 +3042,8 @@ void main() {
       expect(summary.emotion, contains('放松'));
       expect(summary.importance, greaterThan(0.4));
       expect(summary.generator, 'local-rule-v1');
+      expect(summary.revision, 1);
+      expect(summary.correctedAt, isNull);
     });
 
     test('reads legacy summary json with safe defaults', () {
@@ -3058,6 +3060,33 @@ void main() {
       expect(summary.title, isEmpty);
       expect(summary.emotion, isEmpty);
       expect(summary.importance, 0.5);
+      expect(summary.revision, 1);
+      expect(summary.correctedAt, isNull);
+    });
+
+    test('reads malformed summary metadata with safe defaults', () {
+      final updatedAt = DateTime(2026, 7, 3);
+
+      final summary = EntrySummary.fromJson({
+        'entryId': <String>['bad'],
+        'entryUpdatedAt': updatedAt.toIso8601String(),
+        'generatedAt': <String>['bad'],
+        'brief': <String>['bad'],
+        'keyPoints': 'bad',
+        'importance': <String>['bad'],
+        'generator': <String>['bad'],
+        'revision': <String>['bad'],
+        'correctedAt': <String>['bad'],
+      });
+
+      expect(summary.entryId, isEmpty);
+      expect(summary.generatedAt, isNot(updatedAt));
+      expect(summary.brief, isEmpty);
+      expect(summary.keyPoints, isEmpty);
+      expect(summary.importance, 0.5);
+      expect(summary.generator, 'unknown');
+      expect(summary.revision, 1);
+      expect(summary.correctedAt, isNull);
     });
 
     test('corrects summary brief and refreshes summary embedding', () async {
@@ -3098,6 +3127,8 @@ void main() {
 
       expect(updated?.brief, '晚上散步后，焦虑感有所下降。');
       expect(updated?.generator, 'user-corrected');
+      expect(updated?.revision, summary.revision + 1);
+      expect(updated?.correctedAt, isNotNull);
       expect(after?.textHash, isNot(before?.textHash));
       expect((await summaryRepository.getSummary(entry.id))?.brief,
           '晚上散步后，焦虑感有所下降。');
@@ -3154,6 +3185,8 @@ void main() {
       expect(updated?.keyPoints, ['完成散步', '焦虑下降', '保留原文']);
       expect(updated?.importantQuotes, ['走完以后轻松一点']);
       expect(updated?.generator, 'user-corrected');
+      expect(updated?.revision, summary.revision + 2);
+      expect(updated?.correctedAt, isNotNull);
       expect(secondEmbedding?.textHash, isNot(firstEmbedding?.textHash));
     });
 

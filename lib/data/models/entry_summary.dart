@@ -14,6 +14,8 @@ class EntrySummary {
     required this.importance,
     required this.importantQuotes,
     required this.generator,
+    this.revision = 1,
+    this.correctedAt,
   });
 
   final String entryId;
@@ -30,10 +32,13 @@ class EntrySummary {
   final double importance;
   final List<String> importantQuotes;
   final String generator;
+  final int revision;
+  final DateTime? correctedAt;
 
   EntrySummary copyWith({
     DateTime? date,
     DateTime? generatedAt,
+    DateTime? entryUpdatedAt,
     String? title,
     String? brief,
     List<String>? keyPoints,
@@ -44,11 +49,13 @@ class EntrySummary {
     double? importance,
     List<String>? importantQuotes,
     String? generator,
+    int? revision,
+    DateTime? correctedAt,
   }) {
     return EntrySummary(
       entryId: entryId,
       date: date ?? this.date,
-      entryUpdatedAt: entryUpdatedAt,
+      entryUpdatedAt: entryUpdatedAt ?? this.entryUpdatedAt,
       generatedAt: generatedAt ?? this.generatedAt,
       title: title ?? this.title,
       brief: brief ?? this.brief,
@@ -60,6 +67,8 @@ class EntrySummary {
       importance: importance ?? this.importance,
       importantQuotes: importantQuotes ?? this.importantQuotes,
       generator: generator ?? this.generator,
+      revision: revision ?? this.revision,
+      correctedAt: correctedAt ?? this.correctedAt,
     );
   }
 
@@ -78,34 +87,48 @@ class EntrySummary {
         'importance': importance,
         'importantQuotes': importantQuotes,
         'generator': generator,
+        'revision': revision,
+        if (correctedAt != null) 'correctedAt': correctedAt!.toIso8601String(),
       };
 
   static EntrySummary fromJson(Map<String, dynamic> json) {
-    final entryUpdatedAt =
-        DateTime.tryParse(json['entryUpdatedAt'] as String? ?? '') ??
-            DateTime.now();
+    final entryUpdatedAt = _dateValue(json['entryUpdatedAt']) ?? DateTime.now();
     return EntrySummary(
-      entryId: json['entryId'] as String? ?? '',
-      date: DateTime.tryParse(json['date'] as String? ?? '') ?? entryUpdatedAt,
+      entryId: _stringValue(json['entryId']),
+      date: _dateValue(json['date']) ?? entryUpdatedAt,
       entryUpdatedAt: entryUpdatedAt,
-      generatedAt: DateTime.tryParse(json['generatedAt'] as String? ?? '') ??
-          DateTime.now(),
-      title: json['title'] as String? ?? '',
-      brief: json['brief'] as String? ?? '',
+      generatedAt: _dateValue(json['generatedAt']) ?? DateTime.now(),
+      title: _stringValue(json['title']),
+      brief: _stringValue(json['brief']),
       keyPoints: _stringList(json['keyPoints']),
       topics: _stringList(json['topics']),
       people: _stringList(json['people']),
       places: _stringList(json['places']),
-      emotion: json['emotion'] as String? ?? '',
-      importance: (json['importance'] as num?)?.toDouble() ?? 0.5,
+      emotion: _stringValue(json['emotion']),
+      importance: _doubleValue(json['importance']) ?? 0.5,
       importantQuotes: _stringList(json['importantQuotes']),
-      generator: json['generator'] as String? ?? 'unknown',
+      generator: _stringValue(json['generator'], fallback: 'unknown'),
+      revision: _intValue(json['revision']) ?? 1,
+      correctedAt: _dateValue(json['correctedAt']),
     );
   }
 
-  static List<String> _stringList(Object? value) =>
-      (value as List<dynamic>? ?? [])
-          .map((item) => item.toString().trim())
-          .where((item) => item.isNotEmpty)
-          .toList();
+  static String _stringValue(Object? value, {String fallback = ''}) =>
+      value is String ? value : fallback;
+
+  static DateTime? _dateValue(Object? value) =>
+      value is String ? DateTime.tryParse(value) : null;
+
+  static double? _doubleValue(Object? value) =>
+      value is num ? value.toDouble() : null;
+
+  static int? _intValue(Object? value) => value is num ? value.toInt() : null;
+
+  static List<String> _stringList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
 }

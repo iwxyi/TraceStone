@@ -60,6 +60,7 @@ class EntrySummaryRepository {
     if (value.isEmpty) return getSummary(entryId);
     final current = await getSummary(entryId);
     if (current == null) return null;
+    final correctedAt = DateTime.now();
     final updated = current.copyWith(
       title: title ?? current.title,
       brief: value,
@@ -67,8 +68,10 @@ class EntrySummaryRepository {
       importance: importance ?? current.importance,
       keyPoints: keyPoints ?? current.keyPoints,
       importantQuotes: importantQuotes ?? current.importantQuotes,
-      generatedAt: DateTime.now(),
+      generatedAt: correctedAt,
       generator: 'user-corrected',
+      revision: current.revision + 1,
+      correctedAt: correctedAt,
     );
     await saveSummary(updated);
     await _refreshSummaryEmbedding(updated);

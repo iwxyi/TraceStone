@@ -314,7 +314,8 @@ class _EntrySummaryCard extends StatelessWidget {
           if (developerMode) ...[
             const SizedBox(height: 8),
             Text(
-              'generator=${summary.generator}',
+              'generator=${summary.generator} revision=${summary.revision}'
+              '${summary.correctedAt == null ? '' : ' correctedAt=${summary.correctedAt!.toIso8601String()}'}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
