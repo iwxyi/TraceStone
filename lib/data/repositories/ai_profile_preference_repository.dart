@@ -172,7 +172,11 @@ class AiProfilePreferenceRepository {
         items.add(item);
       }
     }
-    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    items.sort((a, b) {
+      final byCreatedAt = b.createdAt.compareTo(a.createdAt);
+      if (byCreatedAt != 0) return byCreatedAt;
+      return b.id.compareTo(a.id);
+    });
     await prefs.setStringList(
       _mergeHistoryIndexKey,
       items.map((item) => item.id).toList(growable: false),

@@ -28,6 +28,7 @@ class AiDataInventoryService {
         backupPolicy: '可随日记备份，也可恢复后重建',
         deletePolicy: '来源删除或重建时清理',
         exportPolicy: '默认不展示原始向量，开发者模式可导出元数据',
+        details: _embeddingIndexDetails(keys),
       ),
       _section(
         keys,
@@ -126,6 +127,7 @@ class AiDataInventoryService {
     required String backupPolicy,
     required String deletePolicy,
     required String exportPolicy,
+    List<String> details = const [],
   }) {
     final matched = keys
         .where((key) => prefixes.any(key.startsWith))
@@ -139,8 +141,35 @@ class AiDataInventoryService {
       backupPolicy: backupPolicy,
       deletePolicy: deletePolicy,
       exportPolicy: exportPolicy,
+      details: details,
       sampleKeys: matched.take(5).toList(growable: false),
     );
+  }
+
+  List<String> _embeddingIndexDetails(Set<String> keys) {
+    const objectPrefix = 'ai.embeddings.';
+    const entryIndexPrefix = 'ai.embeddings.entryIndex.';
+    const typeIndexPrefix = 'ai.embeddings.typeIndex.';
+    final objectKeys = keys
+        .where((key) =>
+            key.startsWith(objectPrefix) &&
+            !key.startsWith(entryIndexPrefix) &&
+            !key.startsWith(typeIndexPrefix))
+        .toList(growable: false);
+    final entryIndexCount =
+        keys.where((key) => key.startsWith(entryIndexPrefix)).length;
+    final typeIndexCount =
+        keys.where((key) => key.startsWith(typeIndexPrefix)).length;
+    final details = <String>[
+      'objects=${objectKeys.length}',
+      'entryIndexes=$entryIndexCount',
+      'typeIndexes=$typeIndexCount',
+    ];
+    if (objectKeys.isNotEmpty &&
+        (entryIndexCount == 0 || typeIndexCount == 0)) {
+      details.add('warning=存在缺少 entry/type 索引的向量对象');
+    }
+    return details;
   }
 }
 
@@ -171,6 +200,7 @@ class AiDataInventory {
         'backupPolicy=${section.backupPolicy}',
         'deletePolicy=${section.deletePolicy}',
         'exportPolicy=${section.exportPolicy}',
+        if (section.details.isNotEmpty) 'details=${section.details.join(';')}',
         'prefixes=${section.prefixes.join(',')}',
         if (section.sampleKeys.isNotEmpty)
           'sampleKeys=${section.sampleKeys.join(',')}',
@@ -189,6 +219,7 @@ class AiDataInventorySection {
     required this.backupPolicy,
     required this.deletePolicy,
     required this.exportPolicy,
+    this.details = const [],
     required this.sampleKeys,
   });
 
@@ -199,5 +230,6 @@ class AiDataInventorySection {
   final String backupPolicy;
   final String deletePolicy;
   final String exportPolicy;
+  final List<String> details;
   final List<String> sampleKeys;
 }

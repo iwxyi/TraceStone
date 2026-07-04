@@ -649,6 +649,15 @@ class _AiDataInventoryCard extends StatelessWidget {
                         Chip(label: Text('${section.label} ${section.count}')),
                     ],
                   ),
+                  for (final section in inventory.sections
+                      .where((item) => item.details.isNotEmpty))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '${section.label}: ${section.details.take(4).join('；')}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
                 ],
               ],
             ),

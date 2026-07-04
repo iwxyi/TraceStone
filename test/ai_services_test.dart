@@ -675,6 +675,8 @@ void main() {
         'ai.entrySummaryRevisions.entry-1:r2': '{}',
         'ai.entrySegments.index.entry-1': <String>['entry-1#s1'],
         'ai.embeddings.summary:entry-1': '{}',
+        'ai.embeddings.entryIndex.entry-1': <String>['summary:entry-1'],
+        'ai.embeddings.typeIndex.summary': <String>['summary:entry-1'],
         'diary.insights.entry-1': '{}',
         'memory.entries.memory-1': '{}',
         'ai.profilePreferences.profileFact:1': '{}',
@@ -695,15 +697,21 @@ void main() {
       };
 
       expect(counts['日记摘要'], 3);
-      expect(counts['向量索引'], 1);
+      expect(counts['向量索引'], 3);
+      final embeddingSection =
+          inventory.sections.firstWhere((section) => section.label == '向量索引');
+      expect(embeddingSection.details, contains('objects=1'));
+      expect(embeddingSection.details, contains('entryIndexes=1'));
+      expect(embeddingSection.details, contains('typeIndexes=1'));
       expect(counts['调试记录'], 3);
       expect(counts['后台队列'], 1);
       expect(counts['关系合并历史'], 1);
-      expect(inventory.totalCount, 15);
+      expect(inventory.totalCount, 17);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
+      expect(inventory.toDebugText(), contains('details=objects=1'));
       expect(inventory.toDebugText(), contains('backupPolicy=默认不建议云备份'));
       expect(inventory.toDebugText(), contains('exportPolicy=复制前必须确认'));
     });
@@ -5323,6 +5331,27 @@ void main() {
       final items = await const DiaryRepository().listTrashEntries();
 
       expect(items, isEmpty);
+    });
+
+    test('falls back when trash metadata has invalid field types', () async {
+      final entry = _entry(
+        id: 'entry-1',
+        date: DateTime(2026, 7, 3),
+        content: '回收站元数据类型异常也不能阻断启动。',
+      );
+      SharedPreferences.setMockInitialValues({
+        'diary.trash.index': <String>['entry-1'],
+        'diary.trash.entry-1': jsonEncode({
+          'entry': entry.toJson(),
+          'deletedAt': <String>['corrupted'],
+        }),
+      });
+
+      final items = await const DiaryRepository().listTrashEntries();
+
+      expect(items, hasLength(1));
+      expect(items.single.entry.id, entry.id);
+      expect(items.single.deletedAt, entry.updatedAt);
     });
 
     test('repairs trash index values when non-string ids are present',

@@ -229,26 +229,25 @@ class DiaryRepository {
 
   Future<DiaryTrashItem?> _trashItem(SharedPreferences prefs, String id) async {
     final key = '$_trashPrefix$id';
-    final legacyListValue = _safeGetStringList(prefs, key);
-    if (legacyListValue != null) {
+    final value = _safeGetValue(prefs, key);
+    if (value == null) return null;
+    if (value is! String) {
       await prefs.remove(key);
       return null;
     }
-    final raw = _safeGetString(prefs, key);
-    if (raw == null) return null;
     try {
-      final parsed = jsonDecode(raw) as Map<String, dynamic>;
+      final parsed = jsonDecode(value) as Map<String, dynamic>;
       final hasMetadata = parsed['entry'] is Map<String, dynamic>;
       final entryJson =
           hasMetadata ? parsed['entry'] as Map<String, dynamic> : parsed;
       final entry = DiaryEntry.fromJson(entryJson);
+      final deletedAtRaw = parsed['deletedAt'];
       final deletedAt =
-          DateTime.tryParse(parsed['deletedAt'] as String? ?? '') ??
-              entry.updatedAt;
+          deletedAtRaw is String ? DateTime.tryParse(deletedAtRaw) : null;
       return DiaryTrashItem(
         entry: entry,
-        deletedAt: deletedAt,
-        expiresAt: deletedAt.add(trashRetention),
+        deletedAt: deletedAt ?? entry.updatedAt,
+        expiresAt: (deletedAt ?? entry.updatedAt).add(trashRetention),
       );
     } on Object {
       return null;
@@ -287,7 +286,7 @@ class DiaryRepository {
 
   String? _safeGetString(SharedPreferences prefs, String key) {
     try {
-      final value = prefs.get(key);
+      final value = _safeGetValue(prefs, key);
       return value is String ? value : null;
     } catch (_) {
       return null;
@@ -296,10 +295,18 @@ class DiaryRepository {
 
   List<String>? _safeGetStringList(SharedPreferences prefs, String key) {
     try {
-      final value = prefs.get(key);
+      final value = _safeGetValue(prefs, key);
       if (value is List<String>) return List<String>.from(value);
       if (value is List) return value.whereType<String>().toList();
       return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Object? _safeGetValue(SharedPreferences prefs, String key) {
+    try {
+      return prefs.get(key);
     } catch (_) {
       return null;
     }
