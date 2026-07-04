@@ -691,6 +691,7 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
   late Future<AiDataInventory> _future =
       const AiDataInventoryService().buildInventory();
   bool _repairingEmbeddingIndexes = false;
+  bool _rebuildingOutdatedEmbeddings = false;
   _InventoryFilter _filter = _InventoryFilter.all;
 
   void _reload() {
@@ -764,6 +765,20 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                             )
                           : const Icon(Icons.construction_outlined),
                       label: const Text('修复向量索引'),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('rebuild-outdated-embeddings'),
+                      onPressed: _rebuildingOutdatedEmbeddings
+                          ? null
+                          : _rebuildOutdatedEmbeddings,
+                      icon: _rebuildingOutdatedEmbeddings
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.hub_outlined),
+                      label: const Text('重建旧向量'),
                     ),
                   ],
                 ),
@@ -910,6 +925,32 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
       if (mounted) {
         setState(() {
           _repairingEmbeddingIndexes = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _rebuildOutdatedEmbeddings() async {
+    setState(() {
+      _rebuildingOutdatedEmbeddings = true;
+    });
+    try {
+      final result =
+          await const AiArtifactRebuildService().rebuildOutdatedEmbeddings();
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已重建旧向量：${result.summary}')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('重建旧向量失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _rebuildingOutdatedEmbeddings = false;
         });
       }
     }

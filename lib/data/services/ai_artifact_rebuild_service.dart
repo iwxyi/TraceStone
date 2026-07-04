@@ -42,6 +42,26 @@ class AiArtifactRebuildResult {
   final String? insightId;
 }
 
+class AiArtifactBulkRebuildResult {
+  const AiArtifactBulkRebuildResult({
+    required this.target,
+    required this.requestedEntryIds,
+    required this.rebuiltEntryIds,
+    required this.embeddingIds,
+    required this.skippedEntryIds,
+  });
+
+  final AiArtifactRebuildTarget target;
+  final List<String> requestedEntryIds;
+  final List<String> rebuiltEntryIds;
+  final List<String> embeddingIds;
+  final List<String> skippedEntryIds;
+
+  String get summary =>
+      'entries=${rebuiltEntryIds.length}/${requestedEntryIds.length} '
+      'embeddings=${embeddingIds.length} skipped=${skippedEntryIds.length}';
+}
+
 class AiArtifactRebuildService {
   const AiArtifactRebuildService({
     DiaryRepository? diaryRepository,
@@ -136,6 +156,35 @@ class AiArtifactRebuildService {
       summaryId: artifacts.summary.entryId,
       segmentIds: artifacts.segments.map((segment) => segment.id).toList(),
       embeddingIds: embeddingIds,
+    );
+  }
+
+  Future<AiArtifactBulkRebuildResult> rebuildOutdatedEmbeddings() async {
+    final entryIds = await _embeddingRepository.listOutdatedEntryIds(
+      modelId: EmbeddingService.modelId,
+      modelVersion: EmbeddingService.modelVersion,
+      dimensions: EmbeddingService.dimensions,
+    );
+    final rebuiltEntryIds = <String>[];
+    final embeddingIds = <String>[];
+    final skippedEntryIds = <String>[];
+
+    for (final entryId in entryIds) {
+      final result = await rebuildEmbeddings(entryId);
+      if (result == null) {
+        skippedEntryIds.add(entryId);
+        continue;
+      }
+      rebuiltEntryIds.add(entryId);
+      embeddingIds.addAll(result.embeddingIds);
+    }
+
+    return AiArtifactBulkRebuildResult(
+      target: AiArtifactRebuildTarget.embeddings,
+      requestedEntryIds: entryIds,
+      rebuiltEntryIds: rebuiltEntryIds,
+      embeddingIds: embeddingIds,
+      skippedEntryIds: skippedEntryIds,
     );
   }
 

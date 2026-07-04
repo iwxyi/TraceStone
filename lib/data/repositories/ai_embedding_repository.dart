@@ -44,6 +44,27 @@ class AiEmbeddingRepository {
     return _loadMany(prefs, ids, indexKey: key);
   }
 
+  Future<List<String>> listOutdatedEntryIds({
+    required String modelId,
+    required String modelVersion,
+    required int dimensions,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final entryIds = <String>{};
+    for (final key in _embeddingObjectKeys(prefs)) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) continue;
+      final embedding = _embeddingFromRaw(raw);
+      if (embedding == null || embedding.entryId.isEmpty) continue;
+      if (embedding.modelId != modelId ||
+          embedding.modelVersion != modelVersion ||
+          embedding.dimensions != dimensions) {
+        entryIds.add(embedding.entryId);
+      }
+    }
+    return entryIds.toList()..sort();
+  }
+
   Future<AiEmbedding?> getBySource({
     required AiEmbeddingSourceType sourceType,
     required String sourceId,

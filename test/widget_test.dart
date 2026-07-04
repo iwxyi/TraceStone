@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/app/trace_stone_app.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
+import 'package:trace_stone/data/models/ai_embedding.dart';
 import 'package:trace_stone/data/models/ai_feedback.dart';
 import 'package:trace_stone/data/models/ai_profile_preference.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
@@ -15,6 +16,7 @@ import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
+import 'package:trace_stone/data/repositories/ai_embedding_repository.dart';
 import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
 import 'package:trace_stone/data/repositories/ai_profile_preference_repository.dart';
 import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
@@ -27,6 +29,7 @@ import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
+import 'package:trace_stone/data/services/embedding_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
 import 'package:trace_stone/features/ai_insight/presentation/ai_feedback_bar.dart';
@@ -2285,6 +2288,58 @@ void main() {
     expect(find.textContaining('已修复向量索引'), findsOneWidget);
     expect(find.textContaining('缺少 entry/type 索引'), findsNothing);
     expect(find.text('向量索引 3'), findsOneWidget);
+  });
+
+  testWidgets('AI debug page rebuilds outdated embeddings from inventory',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const diaryRepository = DiaryRepository();
+    const embeddingRepository = AiEmbeddingRepository();
+    final date = DateTime(2026, 7, 3, 20);
+    final entry = DiaryEntry(
+      id: 'debug-outdated-embedding',
+      date: date,
+      createdAt: date,
+      content: '这篇日记的向量模型已经过期，需要从数据清单重建。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    );
+    await diaryRepository.saveEntry(entry);
+    await embeddingRepository.saveEmbedding(AiEmbedding(
+      id: 'entry:${entry.id}',
+      sourceType: AiEmbeddingSourceType.entry,
+      sourceId: entry.id,
+      entryId: entry.id,
+      modelId: 'legacy-hashing-embedding',
+      modelVersion: 'v0',
+      dimensions: 64,
+      vector: List<double>.filled(64, 0),
+      generatedAt: DateTime(2026, 7, 1),
+      textHash: 'legacy',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('AI 数据清单'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('staleModel=1'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('rebuild-outdated-embeddings')));
+    await tester.pumpAndSettle();
+
+    final embeddings = await embeddingRepository.listForEntry(entry.id);
+    expect(embeddings.map((embedding) => embedding.modelId).toSet(),
+        {EmbeddingService.modelId});
+    expect(embeddings.map((embedding) => embedding.dimensions).toSet(),
+        {EmbeddingService.dimensions});
+    expect(find.textContaining('已重建旧向量：entries=1/1'), findsOneWidget);
+    expect(find.textContaining('staleModel=1'), findsNothing);
   });
 
   testWidgets('AI debug queue overview separates recoverable job states',

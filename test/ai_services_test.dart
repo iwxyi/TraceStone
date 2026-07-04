@@ -1311,6 +1311,83 @@ void main() {
       expect(job?.stageLogs.last.message, '开发者重建多级向量');
     });
 
+    test('rebuilds outdated embeddings in bulk and skips missing entries',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const service = AiArtifactRebuildService();
+      final staleEntry = _entry(
+        id: 'bulk-stale-embedding',
+        date: DateTime(2026, 7, 3),
+        content: '这篇日记有旧模型向量，需要批量重建。',
+      );
+      final currentEntry = _entry(
+        id: 'bulk-current-embedding',
+        date: DateTime(2026, 7, 4),
+        content: '这篇日记已经是当前模型向量。',
+      );
+      await diaryRepository.saveEntry(staleEntry);
+      await diaryRepository.saveEntry(currentEntry);
+      await embeddingRepository.saveEmbedding(AiEmbedding(
+        id: 'entry:${staleEntry.id}',
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: staleEntry.id,
+        entryId: staleEntry.id,
+        modelId: 'legacy-hashing-embedding',
+        modelVersion: 'v0',
+        dimensions: 64,
+        vector: List<double>.filled(64, 0),
+        generatedAt: DateTime(2026, 7, 1),
+        textHash: 'stale',
+      ));
+      await embeddingRepository.saveEmbedding(AiEmbedding(
+        id: 'entry:missing-stale-embedding',
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: 'missing-stale-embedding',
+        entryId: 'missing-stale-embedding',
+        modelId: 'legacy-hashing-embedding',
+        modelVersion: 'v0',
+        dimensions: 64,
+        vector: List<double>.filled(64, 0),
+        generatedAt: DateTime(2026, 7, 1),
+        textHash: 'missing',
+      ));
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: const EmbeddingService(),
+        entryId: currentEntry.id,
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: currentEntry.id,
+        text: currentEntry.content,
+        generatedAt: DateTime(2026, 7, 4),
+      );
+
+      final result = await service.rebuildOutdatedEmbeddings();
+      final staleEmbeddings =
+          await embeddingRepository.listForEntry(staleEntry.id);
+      final currentEmbeddings =
+          await embeddingRepository.listForEntry(currentEntry.id);
+      final job = await queueRepository.getJob(staleEntry.id);
+
+      expect(result.target, AiArtifactRebuildTarget.embeddings);
+      expect(result.requestedEntryIds,
+          ['bulk-stale-embedding', 'missing-stale-embedding']);
+      expect(result.rebuiltEntryIds, [staleEntry.id]);
+      expect(result.skippedEntryIds, ['missing-stale-embedding']);
+      expect(result.embeddingIds.length, 3);
+      expect(result.summary, 'entries=1/2 embeddings=3 skipped=1');
+      expect(staleEmbeddings.map((embedding) => embedding.modelId).toSet(),
+          {EmbeddingService.modelId});
+      expect(staleEmbeddings.map((embedding) => embedding.dimensions).toSet(),
+          {EmbeddingService.dimensions});
+      expect(currentEmbeddings, hasLength(1));
+      expect(currentEmbeddings.single.textHash,
+          const EmbeddingService().embed(currentEntry.content).textHash);
+      expect(job?.stageLogs.last.message, '开发者重建多级向量');
+    });
+
     test('rebuilds today insight and records the debug action', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
