@@ -2183,10 +2183,29 @@ void main() {
     expect(find.text('纪念日 1'), findsNothing);
     expect(find.text('塑石行动 1'), findsNothing);
     expect(find.textContaining('缺少 entry/type 索引'), findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey('copy-filtered-ai-data-inventory')));
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(copiedText, contains('scope=需核对'));
+    expect(copiedText, contains('### 日记摘要'));
+    expect(copiedText, contains('### 向量索引'));
+    expect(copiedText, isNot(contains('### 纪念日')));
+    expect(copiedText, isNot(contains('### 塑石行动')));
+    expect(find.text('已复制需核对 AI 数据清单'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
     await tester.tap(find.widgetWithText(ChoiceChip, '全部'));
     await tester.pumpAndSettle();
     expect(find.text('纪念日 1'), findsOneWidget);
     expect(find.text('塑石行动 1'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byTooltip('复制日记摘要清单'),
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('复制日记摘要清单'));
     await tester.pumpAndSettle();
     expect(find.text('复制调试上下文？'), findsOneWidget);
@@ -2195,8 +2214,13 @@ void main() {
     expect(copiedText, contains('### 日记摘要'));
     expect(copiedText, contains('summaryObjects=1'));
     expect(copiedText, isNot(contains('### 向量索引')));
-    expect(find.text('已复制日记摘要清单'), findsOneWidget);
 
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('copy-ai-data-inventory')),
+      -160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('copy-ai-data-inventory')));
     await tester.pumpAndSettle();
     expect(find.text('复制调试上下文？'), findsOneWidget);

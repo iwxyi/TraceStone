@@ -1142,6 +1142,15 @@ void main() {
       expect(summarySection.needsReview, isTrue);
       expect(summarySection.reviewDetailCount, greaterThanOrEqualTo(1));
       expect(summarySection.isHighSensitivity, isTrue);
+      final reviewDebugText = inventory.toDebugText(
+        scope: '需核对',
+        selectedSections:
+            inventory.sections.where((section) => section.needsReview),
+      );
+      expect(reviewDebugText, contains('scope=需核对'));
+      expect(reviewDebugText, contains('### 日记摘要'));
+      expect(reviewDebugText, isNot(contains('### 向量索引')));
+      expect(reviewDebugText, isNot(contains('### 纪念日')));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));

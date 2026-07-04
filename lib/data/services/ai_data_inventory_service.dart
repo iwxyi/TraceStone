@@ -1347,13 +1347,21 @@ class AiDataInventory {
   int get reviewSectionCount =>
       sections.where((section) => section.needsReview).length;
 
-  String toDebugText() {
+  String toDebugText({
+    String? scope,
+    Iterable<AiDataInventorySection>? selectedSections,
+  }) {
+    final exportSections =
+        selectedSections?.toList(growable: false) ?? sections;
+    final exportTotal =
+        exportSections.fold(0, (total, section) => total + section.count);
     return [
       '## TraceStone AI Data Inventory',
-      'total=$totalCount',
+      'total=$exportTotal',
+      if (scope != null && scope.isNotEmpty) 'scope=$scope',
       'policy=AI 衍生数据默认视为日记数据的一部分，应随日记一起备份、删除和保护。',
       '',
-      for (final section in sections) ...[
+      for (final section in exportSections) ...[
         section.toDebugText(),
         '',
       ],

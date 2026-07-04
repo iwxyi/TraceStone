@@ -740,6 +740,18 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                       label: const Text('复制'),
                     ),
                     TextButton.icon(
+                      key: const ValueKey('copy-filtered-ai-data-inventory'),
+                      onPressed: inventory == null || filteredSections.isEmpty
+                          ? null
+                          : () => _copyFiltered(
+                                context,
+                                inventory,
+                                filteredSections,
+                              ),
+                      icon: const Icon(Icons.filter_alt_outlined),
+                      label: const Text('复制筛选'),
+                    ),
+                    TextButton.icon(
                       key: const ValueKey('repair-embedding-indexes'),
                       onPressed: _repairingEmbeddingIndexes
                           ? null
@@ -832,6 +844,25 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已复制 AI 数据清单')),
+    );
+  }
+
+  Future<void> _copyFiltered(
+    BuildContext context,
+    AiDataInventory inventory,
+    List<AiDataInventorySection> sections,
+  ) async {
+    final allowed = await _confirmDebugContextCopy(context);
+    if (!allowed) return;
+    await Clipboard.setData(ClipboardData(
+      text: inventory.toDebugText(
+        scope: _filter.label,
+        selectedSections: sections,
+      ),
+    ));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制${_filter.label} AI 数据清单')),
     );
   }
 
