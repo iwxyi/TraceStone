@@ -775,7 +775,28 @@ void main() {
         'ai.promptTraces.companion:last': '{}',
         'ai.retrievalTraces.search:last': '{}',
         'ai.feedback.entry-1': '{}',
-        'period.summaries.month:2026-07': '{}',
+        'ai.periodSummaries.month:2026-07': jsonEncode(
+          PeriodSummary(
+            id: 'month:2026-07',
+            type: PeriodSummaryType.month,
+            startDate: DateTime(2026, 7),
+            endDate: DateTime(2026, 7, 31, 23, 59, 59),
+            generatedAt: DateTime(2026, 7, 4),
+            entryCount: 2,
+            brief: '7 月主要围绕恢复和散步。',
+            themes: const ['恢复', '散步'],
+            emotions: const ['平静'],
+            representativeEntryIds: const ['entry-1', 'entry-2'],
+            generator: 'local-aggregate-v1',
+            relationshipHighlights: const ['小王｜一起散步'],
+            stoneHighlights: const ['完成：饭后散步'],
+            contextDebugSummary: 'period=2026-07 sources=4',
+            contextSourceLines: const [
+              'period_entry:entry-1 | 2026-07-03 | 散步',
+              'memory:memory-1 | 饭后散步有助于恢复状态。',
+            ],
+          ).toJson(),
+        ),
         'calendar.memories.anniversary': jsonEncode({
           'id': 'anniversary',
           'title': '农历家庭日',
@@ -883,6 +904,23 @@ void main() {
         mergeHistorySection.details,
         contains('topPairs=小王->王同学:1'),
       );
+      expect(counts['周期总结'], 1);
+      final periodSection =
+          inventory.sections.firstWhere((section) => section.label == '周期总结');
+      expect(periodSection.details, contains('objects=1'));
+      expect(periodSection.details, contains('months=1'));
+      expect(periodSection.details, contains('years=0'));
+      expect(periodSection.details, contains('entryCount=2'));
+      expect(periodSection.details, contains('representativeRefs=2'));
+      expect(periodSection.details, contains('contextLines=2'));
+      expect(periodSection.details, contains('relationshipHighlights=1'));
+      expect(periodSection.details, contains('stoneHighlights=1'));
+      expect(
+        periodSection.details,
+        contains('generators=local-aggregate-v1:1'),
+      );
+      expect(periodSection.details, contains('topThemes=恢复:1,散步:1'));
+      expect(periodSection.details, contains('topEmotions=平静:1'));
       final calendarSection =
           inventory.sections.firstWhere((section) => section.label == '纪念日');
       expect(calendarSection.details, contains('objects=1'));
@@ -914,6 +952,8 @@ void main() {
       expect(inventory.toDebugText(), contains('stageLogErrors=1'));
       expect(inventory.toDebugText(), contains('profileFacts=1'));
       expect(inventory.toDebugText(), contains('topPairs=小王->王同学:1'));
+      expect(inventory.toDebugText(), contains('contextLines=2'));
+      expect(inventory.toDebugText(), contains('topEmotions=平静:1'));
       expect(inventory.toDebugText(), contains('topMonths=lunar-5:1'));
       expect(inventory.toDebugText(), contains('topTags=恢复:1,运动:1'));
       expect(inventory.toDebugText(), contains('details=objects=1'));

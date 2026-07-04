@@ -7,6 +7,7 @@ import '../models/ai_profile_preference.dart';
 import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
 import '../models/memory_entry.dart';
+import '../models/period_summary.dart';
 import '../models/stone_task.dart';
 
 class AiDataInventoryService {
@@ -105,11 +106,12 @@ class AiDataInventoryService {
       _section(
         keys,
         label: '周期总结',
-        prefixes: const ['period.summaries.'],
+        prefixes: const ['ai.periodSummaries.', 'period.summaries.'],
         sensitivity: 'high',
         backupPolicy: '随日记备份',
         deletePolicy: '来源日记变更或删除时失效清理',
         exportPolicy: '可随月/年总结导出，开发者模式含来源',
+        details: _periodSummaryDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -572,6 +574,111 @@ class AiDataInventoryService {
     ];
   }
 
+  List<String> _periodSummaryDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const prefix = 'ai.periodSummaries.';
+    const legacyPrefix = 'period.summaries.';
+    final objectKeys = keys
+        .where((key) => key.startsWith(prefix) || key.startsWith(legacyPrefix))
+        .toList(growable: false)
+      ..sort();
+    if (objectKeys.isEmpty) return const [];
+
+    final typeCounts = <PeriodSummaryType, int>{
+      for (final type in PeriodSummaryType.values) type: 0,
+    };
+    final generatorCounts = <String, int>{};
+    final themeCounts = <String, int>{};
+    final emotionCounts = <String, int>{};
+    var legacyObjects = 0;
+    var emptyBrief = 0;
+    var missingRepresentatives = 0;
+    var invalidRequired = 0;
+    var malformed = 0;
+    var entryCount = 0;
+    var representativeRefs = 0;
+    var contextLines = 0;
+    var relationshipHighlights = 0;
+    var stoneHighlights = 0;
+
+    for (final key in objectKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final summary = PeriodSummary.fromJson(decoded);
+        typeCounts.update(summary.type, (value) => value + 1);
+        if (key.startsWith(legacyPrefix)) legacyObjects += 1;
+        if (summary.brief.trim().isEmpty) emptyBrief += 1;
+        if (summary.representativeEntryIds.isEmpty && summary.entryCount > 0) {
+          missingRepresentatives += 1;
+        }
+        final keyId = key.startsWith(prefix)
+            ? key.substring(prefix.length)
+            : key.substring(legacyPrefix.length);
+        if (summary.id.trim().isEmpty ||
+            keyId != summary.id ||
+            summary.endDate.isBefore(summary.startDate)) {
+          invalidRequired += 1;
+        }
+        entryCount += summary.entryCount;
+        representativeRefs += summary.representativeEntryIds.length;
+        contextLines += summary.contextSourceLines.length;
+        relationshipHighlights += summary.relationshipHighlights.length;
+        stoneHighlights += summary.stoneHighlights.length;
+        final generator = summary.generator.trim();
+        if (generator.isNotEmpty) {
+          generatorCounts.update(generator, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
+        for (final theme in summary.themes) {
+          themeCounts.update(theme, (value) => value + 1, ifAbsent: () => 1);
+        }
+        for (final emotion in summary.emotions) {
+          emotionCounts.update(emotion, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
+      } on Object {
+        malformed += 1;
+      }
+    }
+
+    final topGenerators = _topStringCounts(generatorCounts);
+    final topThemes = _topStringCounts(themeCounts);
+    final topEmotions = _topStringCounts(emotionCounts);
+    return [
+      'objects=${objectKeys.length}',
+      'months=${typeCounts[PeriodSummaryType.month] ?? 0}',
+      'years=${typeCounts[PeriodSummaryType.year] ?? 0}',
+      'entryCount=$entryCount',
+      'representativeRefs=$representativeRefs',
+      'contextLines=$contextLines',
+      'relationshipHighlights=$relationshipHighlights',
+      'stoneHighlights=$stoneHighlights',
+      if (legacyObjects > 0) 'legacyObjects=$legacyObjects',
+      if (emptyBrief > 0) 'emptyBrief=$emptyBrief',
+      if (missingRepresentatives > 0)
+        'missingRepresentatives=$missingRepresentatives',
+      if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+      if (malformed > 0) 'malformed=$malformed',
+      if (topGenerators.isNotEmpty)
+        'generators=${topGenerators.take(3).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (topThemes.isNotEmpty)
+        'topThemes=${topThemes.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (topEmotions.isNotEmpty)
+        'topEmotions=${topEmotions.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+    ];
+  }
+
   List<String> _relationshipMergeHistoryDetails(
     SharedPreferences prefs,
     Set<String> keys,
@@ -757,6 +864,15 @@ bool? _safeGetInventoryBool(SharedPreferences prefs, String key) {
   } on Object {
     return null;
   }
+}
+
+List<MapEntry<String, int>> _topStringCounts(Map<String, int> counts) {
+  return counts.entries.toList()
+    ..sort((a, b) {
+      final byCount = b.value.compareTo(a.value);
+      if (byCount != 0) return byCount;
+      return a.key.compareTo(b.key);
+    });
 }
 
 List<String> _stoneTaskDetails(
