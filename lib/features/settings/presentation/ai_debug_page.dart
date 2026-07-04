@@ -779,15 +779,10 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                         Chip(label: Text('${section.label} ${section.count}')),
                     ],
                   ),
+                  const SizedBox(height: 8),
                   for (final section in inventory.sections
                       .where((item) => item.details.isNotEmpty))
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        '${section.label}: ${section.details.take(4).join('；')}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
+                    _InventoryDetailsSection(section: section),
                 ],
               ],
             ),
@@ -830,6 +825,109 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
         });
       }
     }
+  }
+}
+
+class _InventoryDetailsSection extends StatelessWidget {
+  const _InventoryDetailsSection({required this.section});
+
+  final AiDataInventorySection section;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final warningCount = section.details
+        .where((detail) =>
+            detail.startsWith('warning=') ||
+            detail.startsWith('malformed=') ||
+            detail.startsWith('invalid') ||
+            detail.startsWith('missing') ||
+            detail.startsWith('stale') ||
+            detail.startsWith('lowQuality=') ||
+            detail.startsWith('lowConfidence=') ||
+            detail.startsWith('highDecay=') ||
+            detail.startsWith('claimsWithoutEvidence='))
+        .length;
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      section.label,
+                      style: theme.textTheme.labelLarge,
+                    ),
+                  ),
+                  if (warningCount > 0)
+                    Text(
+                      '需核对 $warningCount',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final detail in section.details)
+                    _InventoryDetailChip(detail: detail),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InventoryDetailChip extends StatelessWidget {
+  const _InventoryDetailChip({required this.detail});
+
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isWarning = detail.startsWith('warning=') ||
+        detail.startsWith('malformed=') ||
+        detail.startsWith('invalid') ||
+        detail.startsWith('missing') ||
+        detail.startsWith('stale') ||
+        detail.startsWith('lowQuality=') ||
+        detail.startsWith('lowConfidence=') ||
+        detail.startsWith('highDecay=') ||
+        detail.startsWith('claimsWithoutEvidence=');
+    final colors = theme.colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color:
+            isWarning ? colors.errorContainer : colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        child: Text(
+          detail,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: isWarning ? colors.onErrorContainer : null,
+          ),
+        ),
+      ),
+    );
   }
 }
 
