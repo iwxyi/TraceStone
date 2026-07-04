@@ -735,6 +735,8 @@ class AiDataInventoryService {
     var artifactRefs = 0;
     var invalidRequired = 0;
     var malformed = 0;
+    final lastErrorTypes = <String, int>{};
+    final stageLogErrorTypes = <String, int>{};
 
     for (final key in objectKeys) {
       final raw = _safeGetString(prefs, key);
@@ -760,11 +762,22 @@ class AiDataInventoryService {
           }
         }
         if (job.retryCount > 0) retrying += 1;
-        if ((job.lastError ?? '').trim().isNotEmpty) jobsWithError += 1;
+        final lastError = _compactErrorType(job.lastError);
+        if (lastError.isNotEmpty) {
+          jobsWithError += 1;
+          lastErrorTypes.update(lastError, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
         stageLogs += job.stageLogs.length;
         stageLogErrors += job.stageLogs
             .where((log) => (log.error ?? '').trim().isNotEmpty)
             .length;
+        for (final log in job.stageLogs) {
+          final error = _compactErrorType(log.error);
+          if (error.isEmpty) continue;
+          stageLogErrorTypes.update(error, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
         artifactRefs += [
           job.summaryId,
           job.insightId,
@@ -818,6 +831,10 @@ class AiDataInventoryService {
       if (staleIndex > 0) 'staleIndex=$staleIndex',
       if (topStages.isNotEmpty)
         'topStages=${topStages.take(4).map((entry) => '${entry.key.name}:${entry.value}').join(',')}',
+      if (lastErrorTypes.isNotEmpty)
+        'lastErrorTypes=${_topStringCounts(lastErrorTypes).take(3).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (stageLogErrorTypes.isNotEmpty)
+        'stageLogErrorTypes=${_topStringCounts(stageLogErrorTypes).take(3).map((entry) => '${entry.key}:${entry.value}').join(',')}',
     ];
   }
 
@@ -1313,6 +1330,13 @@ List<MapEntry<String, int>> _topStringCounts(Map<String, int> counts) {
       if (byCount != 0) return byCount;
       return a.key.compareTo(b.key);
     });
+}
+
+String _compactErrorType(String? value) {
+  final normalized = (value ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (normalized.isEmpty) return '';
+  if (normalized.length <= 60) return normalized;
+  return '${normalized.substring(0, 60)}...';
 }
 
 List<String> _stoneTaskDetails(

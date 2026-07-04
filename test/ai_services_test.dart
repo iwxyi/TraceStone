@@ -1181,6 +1181,9 @@ void main() {
         queueSection.details,
         contains('topStages=generatingInsight:1'),
       );
+      expect(queueSection.details, contains('lastErrorTypes=AI unavailable:1'));
+      expect(queueSection.details,
+          contains('stageLogErrorTypes=AI unavailable:1'));
       final profilePreferenceSection =
           inventory.sections.firstWhere((section) => section.label == '画像偏好');
       expect(profilePreferenceSection.details, contains('objects=1'));
@@ -1268,6 +1271,10 @@ void main() {
       expect(inventory.toDebugText(), contains('retrievalSignals=3'));
       expect(inventory.toDebugText(), contains('retryableFailed=1'));
       expect(inventory.toDebugText(), contains('stageLogErrors=1'));
+      expect(
+          inventory.toDebugText(), contains('lastErrorTypes=AI unavailable:1'));
+      expect(inventory.toDebugText(),
+          contains('stageLogErrorTypes=AI unavailable:1'));
       expect(inventory.toDebugText(), contains('profileFacts=1'));
       expect(inventory.toDebugText(), contains('topPairs=小王->王同学:1'));
       expect(inventory.toDebugText(), contains('contextLines=2'));
