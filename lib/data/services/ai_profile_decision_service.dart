@@ -6,6 +6,7 @@ enum AiProfileDecisionKind {
   corrected,
   hidden,
   conflict,
+  merged,
   mergeCandidate,
   observe,
 }
@@ -212,6 +213,22 @@ class AiProfileDecisionService {
       ));
     }
 
+    for (final preference in preferences.where((item) =>
+        item.targetType == AiProfilePreferenceTargetType.relationship &&
+        item.mergedInto.trim().isNotEmpty)) {
+      final targetName = preference.mergedInto.trim();
+      decisions.add(AiProfileDecision(
+        kind: AiProfileDecisionKind.merged,
+        targetType: AiProfilePreferenceTargetType.relationship,
+        targetId: preference.targetId,
+        title: preference.targetId,
+        actionLabel: '已合并人物',
+        reason: '已合并到 $targetName',
+        debugLine:
+            'target=${preference.targetId} mergedInto=$targetName preference=merged updatedAt=${preference.updatedAt.toIso8601String()}',
+      ));
+    }
+
     decisions.sort(_compare);
     return decisions;
   }
@@ -230,12 +247,14 @@ class AiProfileDecisionService {
         return 1;
       case AiProfileDecisionKind.confirmed:
         return 2;
-      case AiProfileDecisionKind.mergeCandidate:
+      case AiProfileDecisionKind.merged:
         return 3;
-      case AiProfileDecisionKind.observe:
+      case AiProfileDecisionKind.mergeCandidate:
         return 4;
-      case AiProfileDecisionKind.hidden:
+      case AiProfileDecisionKind.observe:
         return 5;
+      case AiProfileDecisionKind.hidden:
+        return 6;
     }
   }
 

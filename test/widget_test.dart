@@ -892,6 +892,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('已将'), findsOneWidget);
+    expect(find.text('已合并人物'), findsOneWidget);
+    expect(find.textContaining('preference=merged'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('别名 2 个'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     expect(find.text('别名 2 个'), findsOneWidget);
     expect(find.textContaining('也包括：'), findsOneWidget);
     expect(find.byTooltip('关系操作'), findsOneWidget);

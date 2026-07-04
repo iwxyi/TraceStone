@@ -930,6 +930,12 @@ void main() {
           confirmed: true,
           updatedAt: date,
         ),
+        AiProfilePreference(
+          targetType: AiProfilePreferenceTargetType.relationship,
+          targetId: '李同学',
+          mergedInto: '小李',
+          updatedAt: date,
+        ),
       ];
 
       final decisions =
@@ -943,6 +949,17 @@ void main() {
       expect(
         decisions.map((item) => item.actionLabel),
         contains('可进入稳定关系档案'),
+      );
+      expect(
+        decisions
+            .where((item) => item.kind == AiProfileDecisionKind.merged)
+            .single
+            .debugLine,
+        contains('mergedInto=小李'),
+      );
+      expect(
+        decisions.map((item) => item.reason),
+        contains('已合并到 小李'),
       );
     });
   });
