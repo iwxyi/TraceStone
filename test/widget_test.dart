@@ -1924,6 +1924,8 @@ void main() {
     expect(find.text('日记摘要 1'), findsOneWidget);
     expect(find.text('向量索引 1'), findsOneWidget);
     expect(find.text('调试记录 2'), findsOneWidget);
+    expect(find.textContaining('高敏感类别'), findsOneWidget);
+    expect(find.textContaining('调试记录可能包含 prompt'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('copy-ai-data-inventory')));
     await tester.pumpAndSettle();
     expect(find.text('复制调试上下文？'), findsOneWidget);
@@ -1933,6 +1935,8 @@ void main() {
     expect(copiedText, contains('TraceStone AI Data Inventory'));
     expect(copiedText, contains('policy=AI 衍生数据默认视为日记数据的一部分'));
     expect(copiedText, contains('### 向量索引'));
+    expect(copiedText, contains('sensitivity=critical'));
+    expect(copiedText, contains('backupPolicy=默认不建议云备份'));
   });
 
   testWidgets('AI debug queue overview separates recoverable job states',

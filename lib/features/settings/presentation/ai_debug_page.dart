@@ -631,6 +631,15 @@ class _AiDataInventoryCard extends StatelessWidget {
                   const LinearProgressIndicator(minHeight: 3)
                 else ...[
                   _DebugLine(label: 'total', value: '${inventory.totalCount}'),
+                  _DebugLine(
+                    label: '高敏感类别',
+                    value: '${inventory.highSensitivitySectionCount}',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '调试记录可能包含 prompt、上下文和原始响应；云备份或复制前需要用户明确确认。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,

@@ -700,8 +700,12 @@ void main() {
       expect(counts['后台队列'], 1);
       expect(counts['关系合并历史'], 1);
       expect(inventory.totalCount, 15);
+      expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
+      expect(inventory.toDebugText(), contains('sensitivity=critical'));
+      expect(inventory.toDebugText(), contains('backupPolicy=默认不建议云备份'));
+      expect(inventory.toDebugText(), contains('exportPolicy=复制前必须确认'));
     });
   });
 
