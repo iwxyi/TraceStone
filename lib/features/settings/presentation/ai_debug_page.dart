@@ -782,7 +782,10 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                   const SizedBox(height: 8),
                   for (final section in inventory.sections
                       .where((item) => item.details.isNotEmpty))
-                    _InventoryDetailsSection(section: section),
+                    _InventoryDetailsSection(
+                      section: section,
+                      onCopy: () => _copySection(context, section),
+                    ),
                 ],
               ],
             ),
@@ -799,6 +802,19 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已复制 AI 数据清单')),
+    );
+  }
+
+  Future<void> _copySection(
+    BuildContext context,
+    AiDataInventorySection section,
+  ) async {
+    final allowed = await _confirmDebugContextCopy(context);
+    if (!allowed) return;
+    await Clipboard.setData(ClipboardData(text: section.toDebugText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制${section.label}清单')),
     );
   }
 
@@ -829,9 +845,13 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
 }
 
 class _InventoryDetailsSection extends StatelessWidget {
-  const _InventoryDetailsSection({required this.section});
+  const _InventoryDetailsSection({
+    required this.section,
+    required this.onCopy,
+  });
 
   final AiDataInventorySection section;
+  final VoidCallback onCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -875,6 +895,11 @@ class _InventoryDetailsSection extends StatelessWidget {
                         color: theme.colorScheme.error,
                       ),
                     ),
+                  IconButton(
+                    tooltip: '复制${section.label}清单',
+                    onPressed: onCopy,
+                    icon: const Icon(Icons.copy_all_outlined),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),

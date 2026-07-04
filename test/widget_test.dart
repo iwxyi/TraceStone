@@ -2175,6 +2175,16 @@ void main() {
     expect(find.textContaining('缺少 entry/type 索引'), findsOneWidget);
     expect(find.textContaining('高敏感类别'), findsOneWidget);
     expect(find.textContaining('调试记录可能包含 prompt'), findsOneWidget);
+    await tester.tap(find.byTooltip('复制日记摘要清单'));
+    await tester.pumpAndSettle();
+    expect(find.text('复制调试上下文？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '复制'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(copiedText, contains('### 日记摘要'));
+    expect(copiedText, contains('summaryObjects=1'));
+    expect(copiedText, isNot(contains('### 向量索引')));
+    expect(find.text('已复制日记摘要清单'), findsOneWidget);
+
     await tester.tap(find.byKey(const ValueKey('copy-ai-data-inventory')));
     await tester.pumpAndSettle();
     expect(find.text('复制调试上下文？'), findsOneWidget);

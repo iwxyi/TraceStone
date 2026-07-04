@@ -1351,16 +1351,7 @@ class AiDataInventory {
       'policy=AI 衍生数据默认视为日记数据的一部分，应随日记一起备份、删除和保护。',
       '',
       for (final section in sections) ...[
-        '### ${section.label}',
-        'count=${section.count}',
-        'sensitivity=${section.sensitivity}',
-        'backupPolicy=${section.backupPolicy}',
-        'deletePolicy=${section.deletePolicy}',
-        'exportPolicy=${section.exportPolicy}',
-        if (section.details.isNotEmpty) 'details=${section.details.join(';')}',
-        'prefixes=${section.prefixes.join(',')}',
-        if (section.sampleKeys.isNotEmpty)
-          'sampleKeys=${section.sampleKeys.join(',')}',
+        section.toDebugText(),
         '',
       ],
     ].join('\n');
@@ -1389,4 +1380,18 @@ class AiDataInventorySection {
   final String exportPolicy;
   final List<String> details;
   final List<String> sampleKeys;
+
+  String toDebugText() {
+    return [
+      '### $label',
+      'count=$count',
+      'sensitivity=$sensitivity',
+      'backupPolicy=$backupPolicy',
+      'deletePolicy=$deletePolicy',
+      'exportPolicy=$exportPolicy',
+      if (details.isNotEmpty) 'details=${details.join(';')}',
+      'prefixes=${prefixes.join(',')}',
+      if (sampleKeys.isNotEmpty) 'sampleKeys=${sampleKeys.join(',')}',
+    ].join('\n');
+  }
 }
