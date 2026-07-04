@@ -1,6 +1,7 @@
 import '../models/ai_analysis_job.dart';
 import '../models/ai_feedback.dart';
 import '../models/diary_analysis_status.dart';
+import '../models/diary_insight.dart';
 import '../repositories/ai_analysis_queue_repository.dart';
 import '../repositories/ai_feedback_repository.dart';
 import '../repositories/diary_repository.dart';
@@ -32,11 +33,20 @@ class AiFeedbackService {
     required AiFeedbackValue value,
     String? note,
   }) async {
+    final previousInsight = value == AiFeedbackValue.inaccurate
+        ? await _insightRepository.getInsight(entryId)
+        : null;
     final feedback = AiFeedback(
       entryId: entryId,
       value: value,
       createdAt: DateTime.now(),
       note: note?.trim().isEmpty ?? true ? null : note!.trim(),
+      previousInsightSummary: previousInsight == null
+          ? null
+          : _previousInsightSummary(previousInsight),
+      previousInsightSources: previousInsight == null
+          ? const []
+          : _previousInsightSources(previousInsight),
     );
     await _feedbackRepository.saveFeedback(feedback);
     await _memoryRepository.applyFeedback(
@@ -78,9 +88,7 @@ class AiFeedbackService {
           startedAt: now,
           message: '用户标记洞察不准确，重新生成今日洞察',
           inputSummary: 'entryId=${entry.id}',
-          outputSummary: feedback.note == null
-              ? 'feedback=inaccurate'
-              : 'feedback=inaccurate note=${_compactNote(feedback.note!)}',
+          outputSummary: _feedbackOutputSummary(feedback),
         ),
       ],
       lastError: '用户标记洞察不准确，等待重新生成',
@@ -97,5 +105,95 @@ class AiFeedbackService {
     final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (normalized.length <= 160) return normalized;
     return '${normalized.substring(0, 160)}...';
+  }
+
+  String _feedbackOutputSummary(AiFeedback feedback) {
+    return [
+      'feedback=${feedback.value.name}',
+      if (feedback.note != null) 'note=${_compactNote(feedback.note!)}',
+      if (feedback.previousInsightSummary != null) 'previousInsight=attached',
+      if (feedback.previousInsightSources.isNotEmpty)
+        'previousSources=${feedback.previousInsightSources.length}',
+    ].join(' ');
+  }
+
+  String _previousInsightSummary(DiaryInsight insight) {
+    final parts = <String>[
+      if (insight.reflection.trim().isNotEmpty)
+        '读后感：${insight.reflection.trim()}',
+      if (insight.emotion.trim().isNotEmpty) '情绪：${insight.emotion.trim()}',
+      if (insight.keywords.isNotEmpty)
+        '关键词：${insight.keywords.take(8).join('、')}',
+      if (insight.relatedMemories.isNotEmpty)
+        '关联记忆：${insight.relatedMemories.take(3).map((item) => [
+              item.title,
+              item.reason,
+              if (item.entryId != null) item.entryId!,
+            ].where((part) => part.trim().isNotEmpty).join('/')).join('；')}',
+      if (insight.facts.isNotEmpty)
+        '事实：${insight.facts.take(3).map((item) => item.text).join('；')}',
+      if (insight.signals.isNotEmpty)
+        '信号：${insight.signals.take(3).map((item) => item.text).join('；')}',
+      if (insight.hypotheses.isNotEmpty)
+        '推测：${insight.hypotheses.take(3).map((item) => item.text).join('；')}',
+      if (insight.suggestions.isNotEmpty)
+        '建议：${insight.suggestions.take(3).map((item) => item.text).join('；')}',
+      if (insight.stoneTitle.trim().isNotEmpty)
+        '塑石：${[
+          insight.stoneTitle.trim(),
+          insight.stoneDescription.trim(),
+        ].where((part) => part.isNotEmpty).join(' / ')}',
+      if (insight.memorySummary.trim().isNotEmpty)
+        '记忆更新：${insight.memorySummary.trim()}',
+    ];
+    final text = parts.join('\n');
+    if (text.length <= 1200) return text;
+    return '${text.substring(0, 1200)}...';
+  }
+
+  List<String> _previousInsightSources(DiaryInsight insight) {
+    final sources = <String>{};
+    for (final memory in insight.relatedMemories) {
+      if (memory.entryId?.trim().isNotEmpty ?? false) {
+        sources.add('related:${memory.entryId!.trim()}');
+      }
+    }
+    for (final claim in [
+      ...insight.facts,
+      ...insight.signals,
+      ...insight.hypotheses,
+      ...insight.suggestions,
+    ]) {
+      for (final evidence in claim.evidence) {
+        final id = evidence.id.trim();
+        if (id.isEmpty) continue;
+        sources.add(evidence.type.trim().isEmpty ? id : '${evidence.type}:$id');
+      }
+    }
+    for (final candidate in insight.profileUpdateCandidates) {
+      for (final evidence in candidate.evidence) {
+        final id = evidence.id.trim();
+        if (id.isEmpty) continue;
+        sources.add(evidence.type.trim().isEmpty ? id : '${evidence.type}:$id');
+      }
+    }
+    for (final update in insight.relationshipUpdates) {
+      for (final evidence in update.evidence) {
+        final id = evidence.id.trim();
+        if (id.isEmpty) continue;
+        sources.add(evidence.type.trim().isEmpty ? id : '${evidence.type}:$id');
+      }
+    }
+    for (final contradiction in insight.contradictions) {
+      if (contradiction.oldMemoryId.trim().isNotEmpty) {
+        sources.add('contradiction:${contradiction.oldMemoryId.trim()}');
+      }
+      for (final evidence in contradiction.evidence) {
+        final id = evidence.id.trim();
+        if (id.isEmpty) continue;
+        sources.add(evidence.type.trim().isEmpty ? id : '${evidence.type}:$id');
+      }
+    }
+    return sources.take(20).toList(growable: false);
   }
 }

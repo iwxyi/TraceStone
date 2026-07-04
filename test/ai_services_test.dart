@@ -387,9 +387,36 @@ void main() {
         content: '今天的洞察需要重新整理。',
       );
       await const DiaryRepository().saveEntry(entry);
-      await const InsightRepository().saveInsight(_insight(
+      await const InsightRepository().saveInsight(DiaryInsight(
         entryId: entry.id,
-        date: entry.date,
+        entryDate: entry.date,
+        generatedAt: entry.date,
+        reflection: '上一版把轻松误读成焦虑。',
+        relatedMemories: const [
+          RelatedMemoryInsight(
+            title: '旧散步记忆',
+            reason: '同样提到散步',
+            entryId: 'old-walk-entry',
+          ),
+        ],
+        emotion: '焦虑',
+        keywords: const ['散步', '焦虑'],
+        people: const [],
+        stoneTitle: '',
+        stoneDescription: '',
+        memorySummary: '',
+        memoryTags: const [],
+        facts: const [
+          InsightClaim(
+            text: '今天散步了。',
+            evidence: [
+              InsightEvidence(
+                type: 'current_entry',
+                id: 'feedback-entry',
+              ),
+            ],
+          ),
+        ],
       ));
 
       final feedback = await const AiFeedbackService().submitInsightFeedback(
@@ -405,6 +432,12 @@ void main() {
 
       expect(feedback.value, AiFeedbackValue.inaccurate);
       expect(savedFeedback?.note, '把情绪判断错了');
+      expect(savedFeedback?.previousInsightSummary, contains('上一版把轻松误读成焦虑'));
+      expect(savedFeedback?.previousInsightSummary, contains('情绪：焦虑'));
+      expect(
+          savedFeedback?.previousInsightSources,
+          containsAll(
+              ['related:old-walk-entry', 'current_entry:feedback-entry']));
       expect(await const InsightRepository().getInsight(entry.id), isNull);
       expect(await const InsightRepository().getLatestInsight(), isNull);
       expect(job?.state, AiAnalysisJobState.incomplete);
@@ -415,6 +448,8 @@ void main() {
         contains('用户标记洞察不准确，重新生成今日洞察'),
       );
       expect(job?.stageLogs.last.outputSummary, contains('把情绪判断错了'));
+      expect(job?.stageLogs.last.outputSummary,
+          contains('previousInsight=attached'));
       expect(status?.state, DiaryAnalysisState.incomplete);
       expect(status?.message, contains('重新整理队列'));
     });
@@ -537,6 +572,11 @@ void main() {
         value: AiFeedbackValue.inaccurate,
         createdAt: DateTime(2026, 7, 3),
         note: '不要把轻松判断成焦虑',
+        previousInsightSummary: '读后感：上一版把散步后的轻松说成焦虑。\n情绪：焦虑\n建议：立刻处理压力',
+        previousInsightSources: const [
+          'current_entry:feedback-prompt-entry',
+          'memory:memory-walk-source',
+        ],
       ));
 
       await DiaryAnalysisService(client: client).analyzeEntry(entry);
@@ -546,6 +586,10 @@ void main() {
       expect(client.lastUserPrompt, contains('用户反馈：'));
       expect(client.lastUserPrompt, contains('上一版洞察被用户标记为不准确'));
       expect(client.lastUserPrompt, contains('不要把轻松判断成焦虑'));
+      expect(client.lastUserPrompt, contains('上一版洞察快照'));
+      expect(client.lastUserPrompt, contains('上一版把散步后的轻松说成焦虑'));
+      expect(client.lastUserPrompt, contains('上一版使用过的来源'));
+      expect(client.lastUserPrompt, contains('memory:memory-walk-source'));
       expect(client.lastUserPrompt, contains('segment:${segments.first.id}'));
       expect(client.lastUserPrompt, contains('entry:recent-source-entry'));
       expect(

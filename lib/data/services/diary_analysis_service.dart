@@ -180,12 +180,17 @@ $feedbackBlock
       return '无';
     }
     final note = feedback.note?.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (note == null || note.isEmpty) {
-      return '用户曾标记上一版洞察不准确，但没有填写具体原因。请重新核对原文和证据。';
-    }
+    final previous =
+        feedback.previousInsightSummary?.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final sources = feedback.previousInsightSources.take(12).join('、');
     return [
       '上一版洞察被用户标记为不准确。',
-      '用户指出：${note.length <= 240 ? note : '${note.substring(0, 240)}...'}',
+      note == null || note.isEmpty
+          ? '用户曾标记上一版洞察不准确，但没有填写具体原因。'
+          : '用户指出：${note.length <= 240 ? note : '${note.substring(0, 240)}...'}',
+      if (previous != null && previous.isNotEmpty)
+        '上一版洞察快照：${previous.length <= 700 ? previous : '${previous.substring(0, 700)}...'}',
+      if (sources.isNotEmpty) '上一版使用过的来源：$sources',
       '请不要机械重复上一版判断，尤其要核对用户指出的问题。',
     ].join('\n');
   }

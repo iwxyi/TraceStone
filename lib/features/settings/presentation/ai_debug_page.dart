@@ -1984,6 +1984,10 @@ class _JobArtifacts {
               'createdAt=${feedback.createdAt.toIso8601String()}',
               if (feedback.note?.isNotEmpty ?? false)
                 'note=${_compactDebugValue(feedback.note!)}',
+              if (feedback.previousInsightSummary?.isNotEmpty ?? false)
+                'previous=${_compactDebugValue(feedback.previousInsightSummary!)}',
+              if (feedback.previousInsightSources.isNotEmpty)
+                'previousSources=${feedback.previousInsightSources.take(8).join(',')}',
             ].join(' '),
       memoryLifecycle: sourceMemory == null
           ? ''

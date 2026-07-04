@@ -6,18 +6,24 @@ class AiFeedback {
     required this.value,
     required this.createdAt,
     this.note,
+    this.previousInsightSummary,
+    this.previousInsightSources = const [],
   });
 
   final String entryId;
   final AiFeedbackValue value;
   final DateTime createdAt;
   final String? note;
+  final String? previousInsightSummary;
+  final List<String> previousInsightSources;
 
   Map<String, dynamic> toJson() => {
         'entryId': entryId,
         'value': value.name,
         'createdAt': createdAt.toIso8601String(),
         'note': note,
+        'previousInsightSummary': previousInsightSummary,
+        'previousInsightSources': previousInsightSources,
       };
 
   static AiFeedback fromJson(Map<String, dynamic> json) {
@@ -33,6 +39,8 @@ class AiFeedback {
       createdAt:
           DateTime.tryParse(_stringValue(json['createdAt'])) ?? DateTime.now(),
       note: _nullableString(json['note']),
+      previousInsightSummary: _nullableString(json['previousInsightSummary']),
+      previousInsightSources: _stringList(json['previousInsightSources']),
     );
   }
 
@@ -41,4 +49,13 @@ class AiFeedback {
 
   static String? _nullableString(Object? value) =>
       value is String ? value : null;
+
+  static List<String> _stringList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .where((item) => item != null)
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
 }
