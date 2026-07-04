@@ -1043,6 +1043,9 @@ class AiDataInventoryService {
     var feedbackMalformed = 0;
     var feedbackInvalidRequired = 0;
     var feedbackWithNote = 0;
+    var feedbackWithPreviousInsight = 0;
+    var feedbackPreviousSources = 0;
+    var inaccurateFeedbackWithoutContext = 0;
     final feedbackValues = <String, int>{};
     for (final key in feedbackKeys) {
       final raw = _safeGetString(prefs, key);
@@ -1062,6 +1065,15 @@ class AiDataInventoryService {
           feedbackInvalidRequired += 1;
         }
         if ((feedback.note ?? '').trim().isNotEmpty) feedbackWithNote += 1;
+        final hasPreviousInsight =
+            (feedback.previousInsightSummary ?? '').trim().isNotEmpty;
+        if (hasPreviousInsight) feedbackWithPreviousInsight += 1;
+        feedbackPreviousSources += feedback.previousInsightSources.length;
+        if (feedback.value == AiFeedbackValue.inaccurate &&
+            !hasPreviousInsight &&
+            feedback.previousInsightSources.isEmpty) {
+          inaccurateFeedbackWithoutContext += 1;
+        }
         feedbackValues.update(feedback.value.name, (value) => value + 1,
             ifAbsent: () => 1);
       } on Object {
@@ -1088,6 +1100,10 @@ class AiDataInventoryService {
       'retrievalSourceCount=$retrievalSourceCount',
       'retrievalSignals=$retrievalSignals',
       'feedbackWithNote=$feedbackWithNote',
+      'feedbackWithPreviousInsight=$feedbackWithPreviousInsight',
+      'feedbackPreviousSources=$feedbackPreviousSources',
+      if (inaccurateFeedbackWithoutContext > 0)
+        'inaccurateFeedbackWithoutContext=$inaccurateFeedbackWithoutContext',
       if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
       if (malformed > 0) 'malformed=$malformed',
       if (promptScenarios.isNotEmpty)
@@ -1466,7 +1482,8 @@ class AiDataInventorySection {
             detail.startsWith('lowQuality=') ||
             detail.startsWith('lowConfidence=') ||
             detail.startsWith('highDecay=') ||
-            detail.startsWith('claimsWithoutEvidence=');
+            detail.startsWith('claimsWithoutEvidence=') ||
+            detail.startsWith('inaccurateFeedbackWithoutContext=');
       });
 
   int get reviewDetailCount => details.where((detail) {
@@ -1478,7 +1495,8 @@ class AiDataInventorySection {
             detail.startsWith('lowQuality=') ||
             detail.startsWith('lowConfidence=') ||
             detail.startsWith('highDecay=') ||
-            detail.startsWith('claimsWithoutEvidence=');
+            detail.startsWith('claimsWithoutEvidence=') ||
+            detail.startsWith('inaccurateFeedbackWithoutContext=');
       }).length;
 
   String toDebugText() {

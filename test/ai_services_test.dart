@@ -996,6 +996,11 @@ void main() {
             value: AiFeedbackValue.inaccurate,
             createdAt: DateTime(2026, 7, 3),
             note: '这条洞察不准确。',
+            previousInsightSummary: '上一版把轻松误判成焦虑。',
+            previousInsightSources: const [
+              'current_entry:entry-1',
+              'memory:memory-1',
+            ],
           ).toJson(),
         ),
         'ai.periodSummaries.month:2026-07': jsonEncode(
@@ -1142,6 +1147,8 @@ void main() {
       expect(debugSection.details, contains('retrievalSourceCount=2'));
       expect(debugSection.details, contains('retrievalSignals=3'));
       expect(debugSection.details, contains('feedbackWithNote=1'));
+      expect(debugSection.details, contains('feedbackWithPreviousInsight=1'));
+      expect(debugSection.details, contains('feedbackPreviousSources=2'));
       expect(debugSection.details, contains('promptScenarios=companion:1'));
       expect(debugSection.details, contains('retrievalScenarios=search:1'));
       expect(
@@ -1255,6 +1262,9 @@ void main() {
       expect(inventory.toDebugText(), contains('averageConfidence=0.30'));
       expect(inventory.toDebugText(), contains('topPeople=小王:1'));
       expect(inventory.toDebugText(), contains('feedbackValues=inaccurate:1'));
+      expect(
+          inventory.toDebugText(), contains('feedbackWithPreviousInsight=1'));
+      expect(inventory.toDebugText(), contains('feedbackPreviousSources=2'));
       expect(inventory.toDebugText(), contains('retrievalSignals=3'));
       expect(inventory.toDebugText(), contains('retryableFailed=1'));
       expect(inventory.toDebugText(), contains('stageLogErrors=1'));
@@ -1267,6 +1277,37 @@ void main() {
       expect(inventory.toDebugText(), contains('details=objects=1'));
       expect(inventory.toDebugText(), contains('backupPolicy=默认不建议云备份'));
       expect(inventory.toDebugText(), contains('exportPolicy=复制前必须确认'));
+    });
+
+    test('flags inaccurate feedback without prior insight context', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.feedback.entry-without-context': jsonEncode(
+          AiFeedback(
+            entryId: 'entry-without-context',
+            value: AiFeedbackValue.inaccurate,
+            createdAt: DateTime(2026, 7, 3),
+            note: '没有保存上一版洞察。',
+          ).toJson(),
+        ),
+      });
+
+      final inventory = await const AiDataInventoryService().buildInventory();
+      final debugSection =
+          inventory.sections.firstWhere((section) => section.label == '调试记录');
+
+      expect(debugSection.details, contains('feedback=1'));
+      expect(debugSection.details, contains('feedbackWithNote=1'));
+      expect(debugSection.details, contains('feedbackWithPreviousInsight=0'));
+      expect(debugSection.details, contains('feedbackPreviousSources=0'));
+      expect(
+        debugSection.details,
+        contains('inaccurateFeedbackWithoutContext=1'),
+      );
+      expect(debugSection.needsReview, isTrue);
+      expect(
+        inventory.toDebugText(),
+        contains('inaccurateFeedbackWithoutContext=1'),
+      );
     });
   });
 
