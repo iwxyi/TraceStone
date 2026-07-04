@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/models/entry_summary.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
+import '../../../data/repositories/entry_summary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/utils/ai_source_formatter.dart';
 import 'ai_feedback_bar.dart';
@@ -19,16 +21,26 @@ class InsightPage extends StatefulWidget {
 
 class _InsightPageState extends State<InsightPage> {
   final _repository = const InsightRepository();
+  final _summaryRepository = const EntrySummaryRepository();
   final _developerSettings = const DeveloperSettingsRepository();
-  late Future<DiaryInsight?> _insightFuture = _repository.getLatestInsight();
+  late Future<_InsightPageData?> _dataFuture = _loadData();
   late final Future<bool> _developerModeFuture =
       _developerSettings.isDeveloperModeEnabled();
 
+  Future<_InsightPageData?> _loadData() async {
+    final insight = await _repository.getLatestInsight();
+    if (insight == null) return null;
+    return _InsightPageData(
+      insight: insight,
+      summary: await _summaryRepository.getSummary(insight.entryId),
+    );
+  }
+
   Future<void> _refresh() async {
     setState(() {
-      _insightFuture = _repository.getLatestInsight();
+      _dataFuture = _loadData();
     });
-    await _insightFuture;
+    await _dataFuture;
   }
 
   @override
@@ -37,20 +49,21 @@ class _InsightPageState extends State<InsightPage> {
       appBar: AppBar(title: const Text('今日洞察')),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<DiaryInsight?>(
-          future: _insightFuture,
+        child: FutureBuilder<_InsightPageData?>(
+          future: _dataFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-            final insight = snapshot.data;
-            if (insight == null) return const _EmptyInsight();
+            final data = snapshot.data;
+            if (data == null) return const _EmptyInsight();
             return FutureBuilder<bool>(
               future: _developerModeFuture,
               builder: (context, developerSnapshot) {
                 return _InsightBody(
-                  insight: insight,
+                  data: data,
                   developerMode: developerSnapshot.data ?? false,
+                  onSummaryChanged: _refresh,
                 );
               },
             );
@@ -61,17 +74,30 @@ class _InsightPageState extends State<InsightPage> {
   }
 }
 
-class _InsightBody extends StatelessWidget {
-  const _InsightBody({
+class _InsightPageData {
+  const _InsightPageData({
     required this.insight,
-    required this.developerMode,
+    required this.summary,
   });
 
   final DiaryInsight insight;
+  final EntrySummary? summary;
+}
+
+class _InsightBody extends StatelessWidget {
+  const _InsightBody({
+    required this.data,
+    required this.developerMode,
+    required this.onSummaryChanged,
+  });
+
+  final _InsightPageData data;
   final bool developerMode;
+  final Future<void> Function() onSummaryChanged;
 
   @override
   Widget build(BuildContext context) {
+    final insight = data.insight;
     final meta = [
       _dateLabel(insight.entryDate),
       if (insight.emotion.isNotEmpty) insight.emotion,
@@ -83,6 +109,14 @@ class _InsightBody extends StatelessWidget {
         Text('今日洞察', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 6),
         Text(meta, style: Theme.of(context).textTheme.bodySmall),
+        if (data.summary != null) ...[
+          const SizedBox(height: 16),
+          _EntrySummaryCard(
+            summary: data.summary!,
+            onChanged: onSummaryChanged,
+            developerMode: developerMode,
+          ),
+        ],
         const SizedBox(height: 16),
         _SectionCard(
           title: '读后感',
@@ -226,6 +260,220 @@ class _InsightBody extends StatelessWidget {
   }
 
   String _dateLabel(DateTime date) => '${date.year}年${date.month}月${date.day}日';
+}
+
+class _EntrySummaryCard extends StatelessWidget {
+  const _EntrySummaryCard({
+    required this.summary,
+    required this.onChanged,
+    required this.developerMode,
+  });
+
+  final EntrySummary summary;
+  final Future<void> Function() onChanged;
+  final bool developerMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = summary.title.trim();
+    return _SectionCard(
+      title: '日记摘要',
+      icon: Icons.summarize_outlined,
+      trailing: IconButton(
+        tooltip: '修正摘要',
+        onPressed: () => _editSummary(context),
+        icon: const Icon(Icons.edit_note_outlined),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty) ...[
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+          ],
+          SimpleMarkdownText(
+            text: summary.brief,
+            emptyText: '还没有摘要。',
+          ),
+          if (summary.keyPoints.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            for (final point in summary.keyPoints.take(5))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('• $point'),
+              ),
+          ],
+          if (summary.importantQuotes.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            for (final quote in summary.importantQuotes.take(3))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('“$quote”'),
+              ),
+          ],
+          if (developerMode) ...[
+            const SizedBox(height: 8),
+            Text(
+              'generator=${summary.generator}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editSummary(BuildContext context) async {
+    final edited = await showDialog<_SummaryEditResult>(
+      context: context,
+      builder: (context) => _SummaryEditDialog(summary: summary),
+    );
+    if (edited == null || edited.brief.isEmpty) return;
+    final updated = await const EntrySummaryRepository().correctSummaryPackage(
+      entryId: summary.entryId,
+      title: edited.title,
+      brief: edited.brief,
+      keyPoints: edited.keyPoints,
+      importantQuotes: edited.importantQuotes,
+    );
+    if (!context.mounted) return;
+    if (updated == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('摘要不存在，无法修正')),
+      );
+      return;
+    }
+    await onChanged();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已修正摘要并刷新向量')),
+    );
+  }
+}
+
+class _SummaryEditResult {
+  const _SummaryEditResult({
+    required this.title,
+    required this.brief,
+    required this.keyPoints,
+    required this.importantQuotes,
+  });
+
+  final String title;
+  final String brief;
+  final List<String> keyPoints;
+  final List<String> importantQuotes;
+}
+
+class _SummaryEditDialog extends StatefulWidget {
+  const _SummaryEditDialog({required this.summary});
+
+  final EntrySummary summary;
+
+  @override
+  State<_SummaryEditDialog> createState() => _SummaryEditDialogState();
+}
+
+class _SummaryEditDialogState extends State<_SummaryEditDialog> {
+  late final _titleController =
+      TextEditingController(text: widget.summary.title);
+  late final _briefController =
+      TextEditingController(text: widget.summary.brief);
+  late final _keyPointsController =
+      TextEditingController(text: widget.summary.keyPoints.join('\n'));
+  late final _quotesController =
+      TextEditingController(text: widget.summary.importantQuotes.join('\n'));
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _briefController.dispose();
+    _keyPointsController.dispose();
+    _quotesController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final brief = _briefController.text.trim();
+    if (brief.isEmpty) return;
+    Navigator.of(context).pop(_SummaryEditResult(
+      title: _titleController.text.trim(),
+      brief: brief,
+      keyPoints: _lines(_keyPointsController.text),
+      importantQuotes: _lines(_quotesController.text),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('修正摘要'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: '摘要标题',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _briefController,
+                autofocus: true,
+                minLines: 3,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: '更准确的日记摘要',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _keyPointsController,
+                minLines: 3,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: '关键要点，每行一条',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _quotesController,
+                minLines: 2,
+                maxLines: 5,
+                decoration: const InputDecoration(
+                  labelText: '重要原文，每行一条',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+
+  List<String> _lines(String text) => text
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList(growable: false);
 }
 
 class _InsightExportButton extends StatelessWidget {
@@ -531,11 +779,13 @@ class _SectionCard extends StatelessWidget {
     required this.title,
     required this.icon,
     required this.child,
+    this.trailing,
   });
 
   final String title;
   final IconData icon;
   final Widget child;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -550,7 +800,13 @@ class _SectionCard extends StatelessWidget {
               children: [
                 Icon(icon, size: 20),
                 const SizedBox(width: 8),
-                Text(title, style: Theme.of(context).textTheme.titleMedium),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                if (trailing != null) trailing!,
               ],
             ),
             const SizedBox(height: 12),

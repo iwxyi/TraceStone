@@ -393,6 +393,74 @@ void main() {
     expect(copiedText, contains('明天晚饭后散步 10 分钟'));
   });
 
+  testWidgets('insight page edits entry summary', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    final entry = DiaryEntry(
+      id: 'insight-summary-edit-entry',
+      date: date,
+      createdAt: date,
+      content: '晚上散步以后，焦虑下降了一些，也整理了明天计划。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    );
+    final summaryService = const EntrySummaryService();
+    final segments = summaryService.buildSegments(entry);
+    final summary = summaryService.buildSummary(entry, segments);
+    await const EntrySummaryRepository().saveSummary(summary);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: entry.id,
+      entryDate: date,
+      generatedAt: date,
+      reflection: '散步后状态轻了一点。',
+      relatedMemories: const [],
+      emotion: '放松',
+      keywords: const ['散步'],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: InsightPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('日记摘要'), findsOneWidget);
+    await tester.tap(find.byTooltip('修正摘要'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, '摘要标题'),
+      '散步恢复',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '更准确的日记摘要'),
+      '晚上散步后，焦虑感有所下降，也简单安排了明天。',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '关键要点，每行一条'),
+      '散步后焦虑下降\n整理明天计划',
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('散步恢复'), findsOneWidget);
+    expect(
+      find.textContaining(
+        '晚上散步后，焦虑感有所下降',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('• 散步后焦虑下降'), findsOneWidget);
+    final updated = await const EntrySummaryRepository()
+        .getSummary('insight-summary-edit-entry');
+    expect(updated?.generator, 'user-corrected');
+    expect(updated?.keyPoints, ['散步后焦虑下降', '整理明天计划']);
+  });
+
   testWidgets('insight feedback dialog keeps debug copy developer-only',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
