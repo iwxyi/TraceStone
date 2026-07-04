@@ -14,6 +14,8 @@ class EntrySummary {
     required this.importance,
     required this.importantQuotes,
     required this.generator,
+    this.qualityScore = 0,
+    this.qualityWarnings = const [],
     this.revision = 1,
     this.correctedAt,
   });
@@ -32,6 +34,8 @@ class EntrySummary {
   final double importance;
   final List<String> importantQuotes;
   final String generator;
+  final double qualityScore;
+  final List<String> qualityWarnings;
   final int revision;
   final DateTime? correctedAt;
 
@@ -49,6 +53,8 @@ class EntrySummary {
     double? importance,
     List<String>? importantQuotes,
     String? generator,
+    double? qualityScore,
+    List<String>? qualityWarnings,
     int? revision,
     DateTime? correctedAt,
   }) {
@@ -67,6 +73,8 @@ class EntrySummary {
       importance: importance ?? this.importance,
       importantQuotes: importantQuotes ?? this.importantQuotes,
       generator: generator ?? this.generator,
+      qualityScore: qualityScore ?? this.qualityScore,
+      qualityWarnings: qualityWarnings ?? this.qualityWarnings,
       revision: revision ?? this.revision,
       correctedAt: correctedAt ?? this.correctedAt,
     );
@@ -87,6 +95,8 @@ class EntrySummary {
         'importance': importance,
         'importantQuotes': importantQuotes,
         'generator': generator,
+        'qualityScore': qualityScore,
+        'qualityWarnings': qualityWarnings,
         'revision': revision,
         if (correctedAt != null) 'correctedAt': correctedAt!.toIso8601String(),
       };
@@ -108,6 +118,9 @@ class EntrySummary {
       importance: _doubleValue(json['importance']) ?? 0.5,
       importantQuotes: _stringList(json['importantQuotes']),
       generator: _stringValue(json['generator'], fallback: 'unknown'),
+      qualityScore:
+          (_doubleValue(json['qualityScore']) ?? 0).clamp(0, 1).toDouble(),
+      qualityWarnings: _stringList(json['qualityWarnings']),
       revision: _intValue(json['revision']) ?? 1,
       correctedAt: _dateValue(json['correctedAt']),
     );

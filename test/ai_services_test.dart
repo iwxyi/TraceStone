@@ -3215,6 +3215,7 @@ void main() {
       expect(summary.emotion, contains('放松'));
       expect(summary.importance, greaterThan(0.4));
       expect(summary.generator, 'local-rule-v1');
+      expect(summary.qualityScore, greaterThan(0.5));
       expect(summary.revision, 1);
       expect(summary.correctedAt, isNull);
     });
@@ -3233,6 +3234,8 @@ void main() {
       expect(summary.title, isEmpty);
       expect(summary.emotion, isEmpty);
       expect(summary.importance, 0.5);
+      expect(summary.qualityScore, 0);
+      expect(summary.qualityWarnings, isEmpty);
       expect(summary.revision, 1);
       expect(summary.correctedAt, isNull);
     });
@@ -3248,6 +3251,8 @@ void main() {
         'keyPoints': 'bad',
         'importance': <String>['bad'],
         'generator': <String>['bad'],
+        'qualityScore': <String>['bad'],
+        'qualityWarnings': 'bad',
         'revision': <String>['bad'],
         'correctedAt': <String>['bad'],
       });
@@ -3258,6 +3263,8 @@ void main() {
       expect(summary.keyPoints, isEmpty);
       expect(summary.importance, 0.5);
       expect(summary.generator, 'unknown');
+      expect(summary.qualityScore, 0);
+      expect(summary.qualityWarnings, isEmpty);
       expect(summary.revision, 1);
       expect(summary.correctedAt, isNull);
     });
@@ -3300,6 +3307,7 @@ void main() {
 
       expect(updated?.brief, '晚上散步后，焦虑感有所下降。');
       expect(updated?.generator, 'user-corrected');
+      expect(updated?.qualityScore, greaterThan(0.5));
       expect(updated?.revision, summary.revision + 1);
       expect(updated?.correctedAt, isNotNull);
       expect(after?.textHash, isNot(before?.textHash));
@@ -3358,6 +3366,7 @@ void main() {
       expect(updated?.keyPoints, ['完成散步', '焦虑下降', '保留原文']);
       expect(updated?.importantQuotes, ['走完以后轻松一点']);
       expect(updated?.generator, 'user-corrected');
+      expect(updated?.qualityScore, greaterThan(0.6));
       expect(updated?.revision, summary.revision + 2);
       expect(updated?.correctedAt, isNotNull);
       expect(secondEmbedding?.textHash, isNot(firstEmbedding?.textHash));

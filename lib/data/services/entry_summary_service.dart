@@ -13,25 +13,47 @@ class EntrySummaryService {
         .where((summary) => summary.isNotEmpty)
         .take(6)
         .toList();
+    final title = entry.title ?? _truncate(body, 28);
+    final brief = _truncate(body, 120);
+    final resolvedKeyPoints =
+        keyPoints.isEmpty ? [_truncate(body, 80)] : keyPoints;
+    final topics = _topics(entry.content);
+    final people = _people(entry.content);
+    final places = [
+      if (entry.location.trim().isNotEmpty && entry.location.trim() != '未选择地点')
+        entry.location.trim(),
+    ];
+    final emotion = _emotion(entry.content);
+    final importance = _importance(entry, segments);
+    final importantQuotes = _importantQuotes(entry.content);
+    final quality = _quality(
+      title: title,
+      brief: brief,
+      keyPoints: resolvedKeyPoints,
+      topics: topics,
+      people: people,
+      places: places,
+      emotion: emotion,
+      importantQuotes: importantQuotes,
+      segmentCount: segments.length,
+    );
     return EntrySummary(
       entryId: entry.id,
       date: entry.date,
       entryUpdatedAt: entry.updatedAt,
       generatedAt: DateTime.now(),
-      title: entry.title ?? _truncate(body, 28),
-      brief: _truncate(body, 120),
-      keyPoints: keyPoints.isEmpty ? [_truncate(body, 80)] : keyPoints,
-      topics: _topics(entry.content),
-      people: _people(entry.content),
-      places: [
-        if (entry.location.trim().isNotEmpty &&
-            entry.location.trim() != '未选择地点')
-          entry.location.trim(),
-      ],
-      emotion: _emotion(entry.content),
-      importance: _importance(entry, segments),
-      importantQuotes: _importantQuotes(entry.content),
+      title: title,
+      brief: brief,
+      keyPoints: resolvedKeyPoints,
+      topics: topics,
+      people: people,
+      places: places,
+      emotion: emotion,
+      importance: importance,
+      importantQuotes: importantQuotes,
       generator: 'local-rule-v1',
+      qualityScore: quality.score,
+      qualityWarnings: quality.warnings,
     );
   }
 
@@ -352,6 +374,48 @@ class EntrySummaryService {
     return score.clamp(0.2, 0.95).toDouble();
   }
 
+  EntrySummaryQuality _quality({
+    required String title,
+    required String brief,
+    required List<String> keyPoints,
+    required List<String> topics,
+    required List<String> people,
+    required List<String> places,
+    required String emotion,
+    required List<String> importantQuotes,
+    required int segmentCount,
+  }) {
+    var score = 0.35;
+    final warnings = <String>[];
+    if (title.trim().isNotEmpty) {
+      score += 0.08;
+    } else {
+      warnings.add('缺少标题');
+    }
+    if (brief.characters.length >= 20) {
+      score += 0.18;
+    } else {
+      warnings.add('摘要过短');
+    }
+    if (keyPoints.length >= 2 || (segmentCount <= 1 && keyPoints.isNotEmpty)) {
+      score += 0.16;
+    } else {
+      warnings.add('关键点不足');
+    }
+    if (topics.isNotEmpty) {
+      score += 0.1;
+    } else {
+      warnings.add('缺少主题');
+    }
+    if (emotion.isNotEmpty) score += 0.08;
+    if (importantQuotes.isNotEmpty) score += 0.08;
+    if (people.isNotEmpty || places.isNotEmpty) score += 0.05;
+    return EntrySummaryQuality(
+      score: score.clamp(0.05, 1).toDouble(),
+      warnings: warnings.take(4).toList(growable: false),
+    );
+  }
+
   String _plainText(String text) =>
       text.replaceAll(RegExp(r'[#>*_`\[\]\(\)!-]'), '');
 
@@ -360,6 +424,16 @@ class EntrySummaryService {
     if (value.characters.length <= maxLength) return value;
     return '${value.characters.take(maxLength).toString()}…';
   }
+}
+
+class EntrySummaryQuality {
+  const EntrySummaryQuality({
+    required this.score,
+    required this.warnings,
+  });
+
+  final double score;
+  final List<String> warnings;
 }
 
 class _SegmentBlock {

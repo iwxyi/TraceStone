@@ -1465,6 +1465,9 @@ class _JobArtifacts {
     return [
       'summary revision: ${value.revision}',
       'summary generator: ${value.generator}',
+      'summary quality: ${value.qualityScore.toStringAsFixed(2)}',
+      if (value.qualityWarnings.isNotEmpty)
+        'summary qualityWarnings: ${value.qualityWarnings.join('、')}',
       if (value.correctedAt != null)
         'summary correctedAt: ${value.correctedAt!.toIso8601String()}',
       if (value.keyPoints.isNotEmpty)

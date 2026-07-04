@@ -461,6 +461,7 @@ void main() {
     final updated = await const EntrySummaryRepository()
         .getSummary('insight-summary-edit-entry');
     expect(updated?.generator, 'user-corrected');
+    expect(updated?.qualityScore, greaterThan(0.5));
     expect(updated?.keyPoints, ['散步后焦虑下降', '整理明天计划']);
   });
 
@@ -2226,6 +2227,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('summary keyPoints'), findsOneWidget);
+    expect(find.textContaining('summary quality:'), findsOneWidget);
     expect(find.textContaining('完成散步；焦虑下降'), findsOneWidget);
     expect(find.textContaining('summary quotes'), findsOneWidget);
     expect(find.textContaining('summary:debug-summary-entry'), findsWidgets);

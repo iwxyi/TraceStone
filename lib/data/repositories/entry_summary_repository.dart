@@ -61,6 +61,13 @@ class EntrySummaryRepository {
     final current = await getSummary(entryId);
     if (current == null) return null;
     final correctedAt = DateTime.now();
+    final quality = _qualityFor(
+      brief: value,
+      keyPoints: keyPoints ?? current.keyPoints,
+      topics: current.topics,
+      emotion: emotion ?? current.emotion,
+      importantQuotes: importantQuotes ?? current.importantQuotes,
+    );
     final updated = current.copyWith(
       title: title ?? current.title,
       brief: value,
@@ -70,6 +77,8 @@ class EntrySummaryRepository {
       importantQuotes: importantQuotes ?? current.importantQuotes,
       generatedAt: correctedAt,
       generator: 'user-corrected',
+      qualityScore: quality.score,
+      qualityWarnings: quality.warnings,
       revision: current.revision + 1,
       correctedAt: correctedAt,
     );
@@ -164,6 +173,40 @@ class EntrySummaryRepository {
     ));
   }
 
+  _SummaryQuality _qualityFor({
+    required String brief,
+    required List<String> keyPoints,
+    required List<String> topics,
+    required String emotion,
+    required List<String> importantQuotes,
+  }) {
+    var score = 0.36;
+    final warnings = <String>[];
+    if (brief.trim().length >= 20) {
+      score += 0.22;
+    } else {
+      warnings.add('摘要过短');
+    }
+    if (keyPoints.length >= 2) {
+      score += 0.18;
+    } else if (keyPoints.isNotEmpty) {
+      score += 0.1;
+    } else {
+      warnings.add('缺少关键点');
+    }
+    if (topics.isNotEmpty) {
+      score += 0.1;
+    } else {
+      warnings.add('缺少主题');
+    }
+    if (emotion.isNotEmpty) score += 0.06;
+    if (importantQuotes.isNotEmpty) score += 0.08;
+    return _SummaryQuality(
+      score: score.clamp(0.05, 1).toDouble(),
+      warnings: warnings.take(4).toList(growable: false),
+    );
+  }
+
   String? _safeGetString(SharedPreferences prefs, String key) {
     try {
       final value = prefs.get(key);
@@ -183,4 +226,14 @@ class EntrySummaryRepository {
       return null;
     }
   }
+}
+
+class _SummaryQuality {
+  const _SummaryQuality({
+    required this.score,
+    required this.warnings,
+  });
+
+  final double score;
+  final List<String> warnings;
 }

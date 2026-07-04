@@ -315,9 +315,15 @@ class _EntrySummaryCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               'generator=${summary.generator} revision=${summary.revision}'
+              ' quality=${summary.qualityScore.toStringAsFixed(2)}'
               '${summary.correctedAt == null ? '' : ' correctedAt=${summary.correctedAt!.toIso8601String()}'}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+            if (summary.qualityWarnings.isNotEmpty)
+              Text(
+                'qualityWarnings=${summary.qualityWarnings.join('、')}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
           ],
         ],
       ),
