@@ -5239,6 +5239,10 @@ void main() {
       expect(package.periodSummaries, hasLength(48));
       expect(package.periodSummaries.first.entryId, 'period-budget-49');
       expect(package.debugSummary, contains('periodSummaries=48'));
+      expect(
+        package.debugSummary,
+        contains('budget=periodEntries:50/50,periodSummaries:48/50'),
+      );
       expect(latestTrace?.scenario, AiContextScenario.periodSummary.name);
       expect(latestTrace?.contextSummary, package.debugSummary);
     });
@@ -5713,6 +5717,7 @@ void main() {
       expect(package.searchMatches.map((match) => match.sourceType),
           containsAll(['entry_summary', 'segment']));
       expect(package.debugSummary, contains('search='));
+      expect(package.debugSummary, contains('budget=searchMatches:'));
       expect(
         package.retrievalTrace?.items
             .map((item) => item.sourceType)
@@ -5874,6 +5879,7 @@ void main() {
         hasLength(8),
       );
       expect(package.debugSummary, contains('memories=8'));
+      expect(package.debugSummary, contains('budget=memories:8/8'));
     });
 
     test('today context keeps profile fact budget within design limit',
@@ -5903,6 +5909,7 @@ void main() {
 
       expect(package.profileFacts, hasLength(5));
       expect(package.debugSummary, contains('profile=5'));
+      expect(package.debugSummary, contains('profile:5/7'));
     });
 
     test('today context keeps relationship profile budget within design limit',

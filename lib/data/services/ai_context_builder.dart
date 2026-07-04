@@ -94,6 +94,19 @@ class AiContextBuilder {
       profileFacts: profileFacts,
       relationshipProfiles: relationshipProfiles,
       stoneTasks: stoneTasks,
+      budgetNotes: [
+        _budgetNote('memories', relatedMemories.length, _todayMemoryLimit),
+        _budgetNote(
+          'profile',
+          profileFacts.length,
+          _eligibleProfileFacts(projection.profileFacts).length,
+        ),
+        _budgetNote(
+          'relationships',
+          relationshipProfiles.length,
+          projection.relationshipProfiles.length,
+        ),
+      ],
     );
     final trace = _traceFromResults(
       entry.id,
@@ -120,6 +133,7 @@ class AiContextBuilder {
       relationshipProfiles: package.relationshipProfiles,
       stoneTasks: package.stoneTasks,
       retrievalTrace: trace,
+      budgetNotes: package.budgetNotes,
     );
   }
 
@@ -181,6 +195,28 @@ class AiContextBuilder {
       profileFacts: profileFacts,
       relationshipProfiles: relationshipProfiles,
       stoneTasks: stoneTasks,
+      budgetNotes: [
+        _budgetNote(
+          'searchMatches',
+          searchMatches.length,
+          searchMatches.length,
+        ),
+        _budgetNote(
+          'memories',
+          dedupedRelatedMemories.length,
+          relatedMemories.length,
+        ),
+        _budgetNote(
+          'profile',
+          profileFacts.length,
+          _matchingProfileFacts(projection.profileFacts, query).length,
+        ),
+        _budgetNote(
+          'relationships',
+          relationshipProfiles.length,
+          projection.relationshipProfiles.length,
+        ),
+      ],
     );
     final trace = _traceFromResults(
       traceId,
@@ -203,6 +239,7 @@ class AiContextBuilder {
       relationshipProfiles: package.relationshipProfiles,
       stoneTasks: package.stoneTasks,
       retrievalTrace: trace,
+      budgetNotes: package.budgetNotes,
     );
   }
 
@@ -269,6 +306,23 @@ class AiContextBuilder {
       profileFacts: profileFacts,
       relationshipProfiles: relationshipProfiles,
       stoneTasks: stoneTasks,
+      budgetNotes: [
+        _budgetNote(
+            'periodEntries', periodEntries.length, periodEntries.length),
+        _budgetNote(
+            'periodSummaries', contextSummaries.length, summaries.length),
+        _budgetNote('memories', relatedMemories.length, relatedMemories.length),
+        _budgetNote(
+          'profile',
+          profileFacts.length,
+          _eligibleProfileFacts(projection.profileFacts).length,
+        ),
+        _budgetNote(
+          'relationships',
+          relationshipProfiles.length,
+          projection.relationshipProfiles.length,
+        ),
+      ],
     );
     final traceId =
         'period:${start.toIso8601String()}:${end.toIso8601String()}';
@@ -297,6 +351,7 @@ class AiContextBuilder {
       relationshipProfiles: package.relationshipProfiles,
       stoneTasks: package.stoneTasks,
       retrievalTrace: trace,
+      budgetNotes: package.budgetNotes,
     );
   }
 
@@ -315,10 +370,15 @@ class AiContextBuilder {
   }
 
   List<ProfileFact> _topProfileFacts(List<ProfileFact> facts) {
+    return _eligibleProfileFacts(facts).take(_profileFactLimit).toList(
+          growable: false,
+        );
+  }
+
+  List<ProfileFact> _eligibleProfileFacts(List<ProfileFact> facts) {
     return facts
         .where((fact) =>
             fact.status != ProfileFactStatus.weak || fact.userConfirmed)
-        .take(_profileFactLimit)
         .toList(growable: false);
   }
 
@@ -610,6 +670,10 @@ class AiContextBuilder {
       }
     }
     return tokens;
+  }
+
+  String _budgetNote(String label, int selected, int available) {
+    return '$label:$selected/$available';
   }
 
   AiRetrievalTrace _traceFromResults(

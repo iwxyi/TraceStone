@@ -28,6 +28,7 @@ class AiContextPackage {
     this.query,
     this.periodStart,
     this.periodEnd,
+    this.budgetNotes = const [],
   });
 
   final AiContextScenario scenario;
@@ -48,6 +49,7 @@ class AiContextPackage {
   final String? query;
   final DateTime? periodStart;
   final DateTime? periodEnd;
+  final List<String> budgetNotes;
 
   int get sourceCount =>
       (currentEntry == null ? 0 : 1) +
@@ -82,6 +84,7 @@ class AiContextPackage {
       if (relationshipProfiles.isNotEmpty)
         'relationships=${relationshipProfiles.length}',
       if (stoneTasks.isNotEmpty) 'stone=${stoneTasks.length}',
+      if (budgetNotes.isNotEmpty) 'budget=${budgetNotes.join(',')}',
     ];
     return parts.join(' ');
   }
