@@ -261,6 +261,31 @@ void main() {
     expect(find.text('继续整理记忆'), findsOneWidget);
     expect(find.textContaining('正在整理 1/1 篇'), findsOneWidget);
     expect(find.textContaining('已完成 2/7 个阶段'), findsOneWidget);
+    expect(find.textContaining('预计剩余 约 40 秒'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '暂停'), findsOneWidget);
+  });
+
+  testWidgets('today queue card shows paused state', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const queueRepository = AiAnalysisQueueRepository();
+    await queueRepository.setPaused(true);
+    final date = DateTime(2026, 7, 3);
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'paused-home-entry',
+      entryId: 'paused-home-entry',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.pending,
+      currentStage: AiAnalysisStage.queued,
+      createdAt: date,
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pump();
+
+    expect(find.text('记忆整理已暂停'), findsOneWidget);
+    expect(find.textContaining('已暂停，继续后会从当前队列位置整理'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
   });
 
   testWidgets('insight page exports insight package in developer mode',
@@ -1456,7 +1481,11 @@ void main() {
     expect(find.text('待恢复 1'), findsOneWidget);
     expect(find.text('可重试失败 1'), findsOneWidget);
     expect(find.text('失败 1'), findsOneWidget);
+    expect(find.text('paused: false'), findsOneWidget);
+    expect(find.text('remainingStages: 21'), findsOneWidget);
+    expect(find.text('estimatedRemaining: 约 2 分钟'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, '继续队列'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, '暂停队列'), findsOneWidget);
   });
 
   testWidgets('AI debug page shows inaccurate feedback and requeue trace',
@@ -1572,6 +1601,13 @@ void main() {
     await queueRepository.enqueueEntry(entry);
 
     await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('修正摘要'),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
     await tester.pumpAndSettle();
     await tester.tap(find.text('修正摘要'));
     await tester.pumpAndSettle();

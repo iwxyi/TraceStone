@@ -267,10 +267,12 @@ class AiAnalysisQueueSnapshot {
   const AiAnalysisQueueSnapshot({
     required this.jobs,
     this.currentJob,
+    this.isPaused = false,
   });
 
   final List<AiAnalysisJob> jobs;
   final AiAnalysisJob? currentJob;
+  final bool isPaused;
 
   int get pendingCount => jobs.where((job) => job.canRun).length;
 
@@ -294,6 +296,45 @@ class AiAnalysisQueueSnapshot {
 
   int get totalTrackedCount => jobs.length;
 
+  int get remainingStageCount {
+    return jobs
+        .where((job) => job.canRun || job.state == AiAnalysisJobState.running)
+        .fold(
+      0,
+      (total, job) {
+        final completed = job.completedStages
+            .where((stage) =>
+                stage != AiAnalysisStage.queued &&
+                stage != AiAnalysisStage.completed)
+            .toSet()
+            .length;
+        final remaining =
+            (_pipelineStageCount - completed).clamp(1, _pipelineStageCount);
+        return total + remaining.toInt();
+      },
+    );
+  }
+
+  Duration? get estimatedRemainingDuration {
+    final stages = remainingStageCount;
+    if (stages <= 0) return null;
+    return _averageStageDuration * stages;
+  }
+
+  String get estimatedRemainingLabel {
+    final duration = estimatedRemainingDuration;
+    if (duration == null) return '';
+    if (duration.inMinutes < 1) {
+      return '约 ${duration.inSeconds.clamp(1, 59)} 秒';
+    }
+    if (duration.inHours < 1) {
+      return '约 ${duration.inMinutes} 分钟';
+    }
+    final minutes = duration.inMinutes.remainder(60);
+    if (minutes == 0) return '约 ${duration.inHours} 小时';
+    return '约 ${duration.inHours} 小时 $minutes 分钟';
+  }
+
   int get activeOrdinal {
     final job = currentJob;
     if (job == null) return 0;
@@ -309,4 +350,26 @@ class AiAnalysisQueueSnapshot {
 
   bool get hasVisibleWork =>
       currentJob != null || pendingCount > 0 || failedCount > 0;
+
+  Duration get _averageStageDuration {
+    final completedDurations = jobs
+        .where((job) => job.state == AiAnalysisJobState.completed)
+        .map((job) => job.updatedAt.difference(job.createdAt))
+        .where((duration) =>
+            duration.inMilliseconds > 0 && duration < const Duration(days: 1))
+        .toList();
+    if (completedDurations.isEmpty) return const Duration(seconds: 8);
+    final averageJobMs = completedDurations
+            .map((duration) => duration.inMilliseconds)
+            .reduce((a, b) => a + b) /
+        completedDurations.length;
+    final averageStageMs = averageJobMs / _pipelineStageCount;
+    final clamped = averageStageMs.clamp(1000, 10 * 60 * 1000).round();
+    return Duration(milliseconds: clamped);
+  }
+
+  static final int _pipelineStageCount = AiAnalysisStage.values
+      .where((stage) =>
+          stage != AiAnalysisStage.queued && stage != AiAnalysisStage.completed)
+      .length;
 }

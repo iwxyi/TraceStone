@@ -91,7 +91,17 @@ class _TodayPageState extends State<TodayPage> {
   }
 
   Future<void> _retryQueue() async {
+    await queueRepository.setPaused(false);
     await _runQueuedAnalysis();
+  }
+
+  Future<void> _toggleQueuePaused(bool paused) async {
+    await queueRepository.setPaused(paused);
+    if (!paused) {
+      await _runQueuedAnalysis();
+      return;
+    }
+    _refreshQueue();
   }
 
   Future<_AnalysisData> _loadAnalysisData(DiaryEntry entry) async {
@@ -113,6 +123,7 @@ class _TodayPageState extends State<TodayPage> {
           child: _AiQueueCard(
             snapshot: queue,
             onRetry: _retryQueue,
+            onPauseChanged: _toggleQueuePaused,
           ),
         );
       },
@@ -274,10 +285,12 @@ class _AiQueueCard extends StatelessWidget {
   const _AiQueueCard({
     required this.snapshot,
     required this.onRetry,
+    required this.onPauseChanged,
   });
 
   final AiAnalysisQueueSnapshot snapshot;
   final VoidCallback onRetry;
+  final Future<void> Function(bool paused) onPauseChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -286,11 +299,13 @@ class _AiQueueCard extends StatelessWidget {
     final hasRunning = job?.state == AiAnalysisJobState.running;
     final hasFailed = snapshot.failedCount > 0 && !hasRunning;
     final isResuming = job?.state == AiAnalysisJobState.incomplete;
-    final title = hasFailed
-        ? '有日记整理失败'
-        : isResuming
-            ? '继续整理记忆'
-            : '正在整理记忆';
+    final title = snapshot.isPaused
+        ? '记忆整理已暂停'
+        : hasFailed
+            ? '有日记整理失败'
+            : isResuming
+                ? '继续整理记忆'
+                : '正在整理记忆';
     final stage = job?.stageLabel ?? '等待继续';
     final waiting = snapshot.waitingCount;
     final totalActive = snapshot.runnableCount +
@@ -322,6 +337,10 @@ class _AiQueueCard extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 18, fontWeight: FontWeight.w600)),
               ),
+              TextButton(
+                onPressed: () => onPauseChanged(!snapshot.isPaused),
+                child: Text(snapshot.isPaused ? '继续' : '暂停'),
+              ),
               if (hasFailed)
                 TextButton(onPressed: onRetry, child: const Text('重试')),
             ],
@@ -335,7 +354,16 @@ class _AiQueueCard extends StatelessWidget {
             Text(batchProgress, style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
           ],
-          Text(isResuming ? '上次整理被中断，将从已完成阶段继续：$stage' : stage),
+          Text(snapshot.isPaused
+              ? '已暂停，继续后会从当前队列位置整理：$stage'
+              : isResuming
+                  ? '上次整理被中断，将从已完成阶段继续：$stage'
+                  : stage),
+          if (snapshot.estimatedRemainingLabel.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text('预计剩余 ${snapshot.estimatedRemainingLabel}',
+                style: theme.textTheme.bodySmall),
+          ],
           if (job != null && job.completedStages.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(

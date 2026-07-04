@@ -1140,6 +1140,33 @@ void main() {
       expect(snapshot.completedCount, 1);
       expect(snapshot.totalTrackedCount, 4);
       expect(snapshot.activeOrdinal, 1);
+      expect(snapshot.remainingStageCount, 21);
+      expect(snapshot.estimatedRemainingLabel, '约 2 分钟');
+    });
+
+    test('paused queue keeps jobs visible but does not return runnable work',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'paused-queue-entry',
+        content: '暂停时仍然保留在队列里。',
+      );
+
+      await repository.enqueueEntry(entry);
+      await repository.setPaused(true);
+
+      final snapshot = await repository.snapshot();
+      final runnable = await repository.nextRunnableJob();
+
+      expect(snapshot.isPaused, isTrue);
+      expect(snapshot.hasVisibleWork, isTrue);
+      expect(snapshot.currentJob, isNull);
+      expect(snapshot.runnableCount, 1);
+      expect(runnable, isNull);
+
+      await repository.setPaused(false);
+      expect((await repository.nextRunnableJob())?.id, entry.id);
     });
 
     test('reenqueue resets failed job with current entry version', () async {

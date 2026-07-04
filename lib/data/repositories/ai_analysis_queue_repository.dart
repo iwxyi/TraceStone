@@ -10,6 +10,7 @@ class AiAnalysisQueueRepository {
   const AiAnalysisQueueRepository();
 
   static const _indexKey = 'ai.analysis.jobs.index';
+  static const _pausedKey = 'ai.analysis.jobs.paused';
   static const _prefix = 'ai.analysis.jobs.';
   static const _staleRunningAge = Duration(minutes: 10);
 
@@ -115,16 +116,37 @@ class AiAnalysisQueueRepository {
 
   Future<AiAnalysisQueueSnapshot> snapshot() async {
     final jobs = await listJobs();
-    final currentJob = jobs.where((job) {
-      return job.state == AiAnalysisJobState.running || job.canRun;
-    }).firstOrNull;
-    return AiAnalysisQueueSnapshot(jobs: jobs, currentJob: currentJob);
+    final paused = await isPaused();
+    final currentJob = paused
+        ? jobs
+            .where((job) => job.state == AiAnalysisJobState.running)
+            .firstOrNull
+        : jobs.where((job) {
+            return job.state == AiAnalysisJobState.running || job.canRun;
+          }).firstOrNull;
+    return AiAnalysisQueueSnapshot(
+      jobs: jobs,
+      currentJob: currentJob,
+      isPaused: paused,
+    );
   }
 
   Future<AiAnalysisJob?> nextRunnableJob() async {
     await markStaleRunningIncomplete();
+    if (await isPaused()) return null;
     final jobs = await listJobs();
     return jobs.where((job) => job.canRun).firstOrNull;
+  }
+
+  Future<bool> isPaused() async {
+    final prefs = await SharedPreferences.getInstance();
+    return _safeGetBool(prefs, _pausedKey) ?? false;
+  }
+
+  Future<void> setPaused(bool paused) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_pausedKey, paused);
+    AiAnalysisQueueBus.bump();
   }
 
   Future<void> markStaleRunningIncomplete() async {
@@ -192,6 +214,15 @@ class AiAnalysisQueueRepository {
       if (value is List<String>) return List<String>.from(value);
       if (value is List) return value.whereType<String>().toList();
       return null;
+    } on Object {
+      return null;
+    }
+  }
+
+  bool? _safeGetBool(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is bool ? value : null;
     } on Object {
       return null;
     }

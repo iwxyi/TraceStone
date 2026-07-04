@@ -59,7 +59,16 @@ class _AiDebugPageState extends State<AiDebugPage> {
   }
 
   Future<void> _continueQueue() async {
+    await _queueRepository.setPaused(false);
     await _queueRunner.processUntilIdle(maxJobs: 5);
+    _refresh();
+  }
+
+  Future<void> _toggleQueuePaused(bool paused) async {
+    await _queueRepository.setPaused(paused);
+    if (!paused) {
+      await _queueRunner.processUntilIdle(maxJobs: 5);
+    }
     _refresh();
   }
 
@@ -144,6 +153,7 @@ class _AiDebugPageState extends State<AiDebugPage> {
                 queue: queue,
                 onContinue: _continueQueue,
                 onBackfill: _enqueueBackfill,
+                onPauseChanged: _toggleQueuePaused,
               ),
               const SizedBox(height: 16),
               _RecentRetrievalTraceCard(
@@ -460,11 +470,13 @@ class _QueueSummaryCard extends StatelessWidget {
     required this.queue,
     required this.onContinue,
     required this.onBackfill,
+    required this.onPauseChanged,
   });
 
   final AiAnalysisQueueSnapshot queue;
   final Future<void> Function() onContinue;
   final Future<void> Function() onBackfill;
+  final Future<void> Function(bool paused) onPauseChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -510,6 +522,20 @@ class _QueueSummaryCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
+            _DebugLine(
+              label: 'paused',
+              value: queue.isPaused ? 'true' : 'false',
+            ),
+            _DebugLine(
+              label: 'remainingStages',
+              value: '${queue.remainingStageCount}',
+            ),
+            if (queue.estimatedRemainingLabel.isNotEmpty)
+              _DebugLine(
+                label: 'estimatedRemaining',
+                value: queue.estimatedRemainingLabel,
+              ),
+            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -518,6 +544,11 @@ class _QueueSummaryCard extends StatelessWidget {
                   onPressed: canContinue ? onContinue : null,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('继续队列'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => onPauseChanged(!queue.isPaused),
+                  icon: Icon(queue.isPaused ? Icons.play_arrow : Icons.pause),
+                  label: Text(queue.isPaused ? '恢复队列' : '暂停队列'),
                 ),
                 OutlinedButton.icon(
                   onPressed: onBackfill,
