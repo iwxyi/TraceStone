@@ -3006,6 +3006,24 @@ void main() {
       expect(segments[3].text, startsWith('睡前'));
     });
 
+    test('splits implicit multi-event paragraphs by semantic shifts', () {
+      final entry = _entry(
+        id: 'semantic-split',
+        content:
+            '今天工作上一直在改需求，会议结束后还是有点焦虑。午饭吃了火锅，味道不错但有点撑。健身时练了腿，最后拉伸以后身体轻松了一些。回家后简单整理了明天计划。',
+      );
+
+      final segments = const EntrySummaryService().buildSegments(entry);
+
+      expect(segments, hasLength(4));
+      expect(segments.map((segment) => segment.boundary).toSet(),
+          {DiarySegmentBoundary.semanticShift});
+      expect(segments[0].text, contains('工作'));
+      expect(segments[1].text, contains('火锅'));
+      expect(segments[2].text, contains('健身'));
+      expect(segments[3].text, contains('计划'));
+    });
+
     test('builds summary from segment key points', () {
       final entry = _entry(
         content: '# 晚间恢复\n\n今天跑步，也整理了产品计划，感觉轻松了一些。',

@@ -978,7 +978,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 | --- | --- |
 | 今日洞察 | `DiaryAnalysisService.analyzeEntry` 生成结构化 `DiaryInsight` |
 | 日记摘要 | `EntrySummary` / `EntrySummaryRepository` / `EntrySummaryService` |
-| 日记分段 | `DiarySegment`，支持 Markdown 标题、分割线、段落和常见时间词切分 |
+| 日记分段 | `DiarySegment`，支持 Markdown 标题、分割线、段落、常见时间词和本地语义转场切分 |
 | 证据结构 | `InsightEvidence`，facts/signals/hypotheses/suggestions 均可带 evidence |
 | 输出分层 | `DiaryInsight` 已包含事实、信号、推测、建议、反证、画像候选、关系候选 |
 | 长期记忆 | `MemoryEntry` 支持 evidence、importance、confidence、referenceCount、archived |
@@ -1006,7 +1006,7 @@ AI Pipeline 应由持久化后台队列驱动，而不是由页面生命周期�
 
 1. 当前 embedding 仍是本地 hashing 方案，适合验证管线，不等于最终高质量中文语义模型。
 2. 还没有接入 ObjectBox Vector Search 或其它成熟向量索引；当前适合中小规模数据。
-3. 分段主要是规则实现，已支持常见时间词拆分同段多事件，但还没有 AI 语义分段来处理更隐式的多事件日记。
+3. 分段主要是规则实现，已支持常见时间词和本地语义转场拆分同段多事件；还没有真正由 AI 判断隐式事件边界的语义分段。
 4. 农历关联已有常见节日和自定义农历纪念日的查表匹配；还需要完整农历日期计算、范围更长的年份覆盖和索引缓存。
 5. 画像和关系档案已有候选、投影、确认、修正、隐藏、冲突解释和开发者决策清单；还需要把候选合并与冲突处理变成更完整的用户决策流程。
 6. `ProfileFact`、`RelationshipProfile` 和塑石行动已有第一版独立 embedding，并会在搜索时补建、刷新和清理失效索引；还需要更成熟的向量索引。

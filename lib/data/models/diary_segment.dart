@@ -4,6 +4,7 @@ enum DiarySegmentBoundary {
   divider,
   paragraphGap,
   timeMarker,
+  semanticShift,
   lengthSplit,
 }
 
