@@ -1774,6 +1774,8 @@ void main() {
     expect(find.text('paused: false'), findsOneWidget);
     expect(find.text('remainingStages: 21'), findsOneWidget);
     expect(find.text('estimatedRemaining: 约 2 分钟'), findsOneWidget);
+    expect(find.text('estimateSamples: 0'), findsOneWidget);
+    expect(find.text('avgStageDuration: 约 8 秒'), findsOneWidget);
     expect(find.text('批次进度'), findsOneWidget);
     expect(find.text('导入 2026 年日记'), findsOneWidget);
     expect(find.text('0/2'), findsOneWidget);

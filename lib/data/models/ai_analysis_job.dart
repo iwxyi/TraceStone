@@ -330,21 +330,38 @@ class AiAnalysisQueueSnapshot {
   Duration? get estimatedRemainingDuration {
     final stages = remainingStageCount;
     if (stages <= 0) return null;
-    return _averageStageDuration * stages;
+    return averageStageDuration * stages;
   }
+
+  Duration get averageStageDuration {
+    final stageSamples = _completedStageDurations;
+    if (stageSamples.isNotEmpty) {
+      final averageMs = stageSamples
+              .map((duration) => duration.inMilliseconds)
+              .reduce((a, b) => a + b) /
+          stageSamples.length;
+      final clamped = averageMs.clamp(1000, 10 * 60 * 1000).round();
+      return Duration(milliseconds: clamped);
+    }
+    final jobSamples = _completedJobDurations;
+    if (jobSamples.isEmpty) return const Duration(seconds: 8);
+    final averageJobMs = jobSamples
+            .map((duration) => duration.inMilliseconds)
+            .reduce((a, b) => a + b) /
+        jobSamples.length;
+    final averageStageMs = averageJobMs / _pipelineStageCount;
+    final clamped = averageStageMs.clamp(1000, 10 * 60 * 1000).round();
+    return Duration(milliseconds: clamped);
+  }
+
+  int get estimateSampleCount => _completedStageDurations.length;
+
+  String get averageStageDurationLabel => _durationLabel(averageStageDuration);
 
   String get estimatedRemainingLabel {
     final duration = estimatedRemainingDuration;
     if (duration == null) return '';
-    if (duration.inMinutes < 1) {
-      return '约 ${duration.inSeconds.clamp(1, 59)} 秒';
-    }
-    if (duration.inHours < 1) {
-      return '约 ${duration.inMinutes} 分钟';
-    }
-    final minutes = duration.inMinutes.remainder(60);
-    if (minutes == 0) return '约 ${duration.inHours} 小时';
-    return '约 ${duration.inHours} 小时 $minutes 分钟';
+    return _durationLabel(duration);
   }
 
   int get activeOrdinal {
@@ -386,21 +403,49 @@ class AiAnalysisQueueSnapshot {
     return result;
   }
 
-  Duration get _averageStageDuration {
-    final completedDurations = jobs
+  List<Duration> get _completedStageDurations {
+    final durations = <Duration>[];
+    for (final job in jobs) {
+      if (job.state != AiAnalysisJobState.completed) continue;
+      final logs = [...job.stageLogs]
+        ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
+      for (var index = 0; index < logs.length - 1; index++) {
+        final duration = logs[index + 1].startedAt.difference(
+              logs[index].startedAt,
+            );
+        if (_isValidCalibrationDuration(duration)) durations.add(duration);
+      }
+      if (logs.isNotEmpty) {
+        final finalDuration = job.updatedAt.difference(logs.last.startedAt);
+        if (_isValidCalibrationDuration(finalDuration)) {
+          durations.add(finalDuration);
+        }
+      }
+    }
+    return durations;
+  }
+
+  List<Duration> get _completedJobDurations {
+    return jobs
         .where((job) => job.state == AiAnalysisJobState.completed)
         .map((job) => job.updatedAt.difference(job.createdAt))
-        .where((duration) =>
-            duration.inMilliseconds > 0 && duration < const Duration(days: 1))
+        .where(_isValidCalibrationDuration)
         .toList();
-    if (completedDurations.isEmpty) return const Duration(seconds: 8);
-    final averageJobMs = completedDurations
-            .map((duration) => duration.inMilliseconds)
-            .reduce((a, b) => a + b) /
-        completedDurations.length;
-    final averageStageMs = averageJobMs / _pipelineStageCount;
-    final clamped = averageStageMs.clamp(1000, 10 * 60 * 1000).round();
-    return Duration(milliseconds: clamped);
+  }
+
+  bool _isValidCalibrationDuration(Duration duration) =>
+      duration.inMilliseconds > 0 && duration < const Duration(days: 1);
+
+  String _durationLabel(Duration duration) {
+    if (duration.inMinutes < 1) {
+      return '约 ${duration.inSeconds.clamp(1, 59)} 秒';
+    }
+    if (duration.inHours < 1) {
+      return '约 ${duration.inMinutes} 分钟';
+    }
+    final minutes = duration.inMinutes.remainder(60);
+    if (minutes == 0) return '约 ${duration.inHours} 小时';
+    return '约 ${duration.inHours} 小时 $minutes 分钟';
   }
 
   static final int _pipelineStageCount = AiAnalysisStage.values

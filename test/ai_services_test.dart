@@ -1419,10 +1419,57 @@ void main() {
       expect(snapshot.activeOrdinal, 1);
       expect(snapshot.remainingStageCount, 21);
       expect(snapshot.estimatedRemainingLabel, '约 2 分钟');
+      expect(snapshot.estimateSampleCount, 0);
+      expect(snapshot.averageStageDurationLabel, '约 8 秒');
       expect(snapshot.batches, hasLength(1));
       expect(snapshot.batches.single.label, '批量补建');
       expect(snapshot.batches.single.progressLabel, '0/2');
       expect(snapshot.batches.single.runnableCount, 1);
+    });
+
+    test('snapshot estimates remaining time from completed stage logs', () {
+      final date = DateTime(2026, 7, 3);
+      final pending = AiAnalysisJob(
+        id: 'pending',
+        entryId: 'pending',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date,
+        updatedAt: date,
+      );
+      final completed = AiAnalysisJob(
+        id: 'completed',
+        entryId: 'completed',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.completed,
+        currentStage: AiAnalysisStage.completed,
+        createdAt: date,
+        updatedAt: date.add(const Duration(seconds: 6)),
+        stageLogs: [
+          AiAnalysisStageLog(
+            stage: AiAnalysisStage.preparing,
+            startedAt: date,
+            message: '准备',
+          ),
+          AiAnalysisStageLog(
+            stage: AiAnalysisStage.generatingSummary,
+            startedAt: date.add(const Duration(seconds: 2)),
+            message: '摘要',
+          ),
+          AiAnalysisStageLog(
+            stage: AiAnalysisStage.embedding,
+            startedAt: date.add(const Duration(seconds: 4)),
+            message: '向量',
+          ),
+        ],
+      );
+      final snapshot = AiAnalysisQueueSnapshot(jobs: [pending, completed]);
+
+      expect(snapshot.remainingStageCount, 7);
+      expect(snapshot.estimateSampleCount, 3);
+      expect(snapshot.averageStageDurationLabel, '约 2 秒');
+      expect(snapshot.estimatedRemainingLabel, '约 14 秒');
     });
 
     test('paused queue keeps jobs visible but does not return runnable work',
