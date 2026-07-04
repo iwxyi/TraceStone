@@ -7,6 +7,8 @@ import '../models/ai_feedback.dart';
 import '../models/ai_profile_preference.dart';
 import '../models/ai_prompt_trace.dart';
 import '../models/ai_retrieval_trace.dart';
+import '../models/diary_analysis_status.dart';
+import '../models/diary_insight.dart';
 import '../models/calendar_memory.dart';
 import '../models/entry_summary.dart';
 import '../models/memory_entry.dart';
@@ -52,6 +54,7 @@ class AiDataInventoryService {
         backupPolicy: '随日记备份',
         deletePolicy: '日记永久删除时清理',
         exportPolicy: '可随洞察导出，需保留来源提示',
+        details: _insightDetails(prefs, keys),
       ),
       _section(
         keys,
@@ -273,6 +276,184 @@ class AiDataInventoryService {
       'worst=${sortedByQuality.first.id}:${sortedByQuality.first.qualityScore.toStringAsFixed(2)}',
       if (warningSummary.isNotEmpty)
         'warnings=${warningSummary.take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+    ];
+  }
+
+  List<String> _insightDetails(
+    SharedPreferences prefs,
+    Set<String> keys,
+  ) {
+    const prefix = 'diary.insights.';
+    const indexKey = 'diary.insights.index';
+    const latestKey = 'diary.insights.latest';
+    const statusPrefix = 'diary.insights.status.';
+    final objectKeys = keys
+        .where((key) =>
+            key.startsWith(prefix) &&
+            key != indexKey &&
+            key != latestKey &&
+            !key.startsWith(statusPrefix))
+        .toList(growable: false)
+      ..sort();
+    final statusKeys = keys
+        .where((key) => key.startsWith(statusPrefix))
+        .toList(growable: false)
+      ..sort();
+    if (objectKeys.isEmpty &&
+        statusKeys.isEmpty &&
+        !keys.contains(indexKey) &&
+        !keys.contains(latestKey)) {
+      return const [];
+    }
+
+    var facts = 0;
+    var signals = 0;
+    var hypotheses = 0;
+    var suggestions = 0;
+    var claimsWithoutEvidence = 0;
+    var evidenceItems = 0;
+    var relatedMemories = 0;
+    var profileCandidates = 0;
+    var relationshipCandidates = 0;
+    var contradictions = 0;
+    var stoneSuggestions = 0;
+    var memoryUpdates = 0;
+    var invalidRequired = 0;
+    var malformed = 0;
+    final emotionCounts = <String, int>{};
+    final keywordCounts = <String, int>{};
+    final peopleCounts = <String, int>{};
+
+    for (final key in objectKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformed += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformed += 1;
+          continue;
+        }
+        final insight = DiaryInsight.fromJson(decoded);
+        final keyId = key.substring(prefix.length);
+        if (insight.entryId.trim().isEmpty ||
+            keyId != insight.entryId ||
+            insight.reflection.trim().isEmpty) {
+          invalidRequired += 1;
+        }
+        facts += insight.facts.length;
+        signals += insight.signals.length;
+        hypotheses += insight.hypotheses.length;
+        suggestions += insight.suggestions.length;
+        final claims = [
+          ...insight.facts,
+          ...insight.signals,
+          ...insight.hypotheses,
+          ...insight.suggestions,
+        ];
+        claimsWithoutEvidence +=
+            claims.where((claim) => claim.evidence.isEmpty).length;
+        evidenceItems += claims.fold<int>(
+          0,
+          (total, claim) => total + claim.evidence.length,
+        );
+        relatedMemories += insight.relatedMemories.length;
+        profileCandidates += insight.profileUpdateCandidates.length;
+        relationshipCandidates += insight.relationshipUpdates.length;
+        contradictions += insight.contradictions.length;
+        if (insight.stoneTitle.trim().isNotEmpty ||
+            insight.stoneDescription.trim().isNotEmpty) {
+          stoneSuggestions += 1;
+        }
+        if (insight.memorySummary.trim().isNotEmpty ||
+            insight.memoryTags.isNotEmpty) {
+          memoryUpdates += 1;
+        }
+        if (insight.emotion.trim().isNotEmpty) {
+          emotionCounts.update(insight.emotion, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
+        for (final keyword in insight.keywords) {
+          keywordCounts.update(keyword, (value) => value + 1,
+              ifAbsent: () => 1);
+        }
+        for (final person in insight.people) {
+          peopleCounts.update(person, (value) => value + 1, ifAbsent: () => 1);
+        }
+      } on Object {
+        malformed += 1;
+      }
+    }
+
+    final statusCounts = <DiaryAnalysisState, int>{
+      for (final state in DiaryAnalysisState.values) state: 0,
+    };
+    var malformedStatuses = 0;
+    var invalidStatuses = 0;
+    for (final key in statusKeys) {
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) {
+        malformedStatuses += 1;
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          malformedStatuses += 1;
+          continue;
+        }
+        final status = DiaryAnalysisStatus.fromJson(decoded);
+        statusCounts.update(status.state, (value) => value + 1);
+        final keyId = key.substring(statusPrefix.length);
+        if (status.entryId.trim().isEmpty || keyId != status.entryId) {
+          invalidStatuses += 1;
+        }
+      } on Object {
+        malformedStatuses += 1;
+      }
+    }
+
+    final indexed = _safeGetInventoryStringList(prefs, indexKey) ?? const [];
+    final objectIds =
+        objectKeys.map((key) => key.substring(prefix.length)).toSet();
+    final staleIndex = indexed.where((id) => !objectIds.contains(id)).length;
+    final latest = _safeGetString(prefs, latestKey);
+    final latestMissing = latest != null &&
+        latest.trim().isNotEmpty &&
+        !objectIds.contains(latest);
+    return [
+      'objects=${objectKeys.length}',
+      'indexed=${indexed.length}',
+      'statuses=${statusKeys.length}',
+      if (latest != null) 'latestSet=${latest.trim().isNotEmpty}',
+      'facts=$facts',
+      'signals=$signals',
+      'hypotheses=$hypotheses',
+      'suggestions=$suggestions',
+      'evidenceItems=$evidenceItems',
+      'claimsWithoutEvidence=$claimsWithoutEvidence',
+      'relatedMemories=$relatedMemories',
+      'profileCandidates=$profileCandidates',
+      'relationshipCandidates=$relationshipCandidates',
+      'contradictions=$contradictions',
+      'stoneSuggestions=$stoneSuggestions',
+      'memoryUpdates=$memoryUpdates',
+      if (invalidRequired > 0) 'invalidRequired=$invalidRequired',
+      if (malformed > 0) 'malformed=$malformed',
+      if (invalidStatuses > 0) 'invalidStatuses=$invalidStatuses',
+      if (malformedStatuses > 0) 'malformedStatuses=$malformedStatuses',
+      if (staleIndex > 0) 'staleIndex=$staleIndex',
+      if (latestMissing) 'latestMissing=true',
+      if (statusKeys.isNotEmpty)
+        'statusStates=${DiaryAnalysisState.values.where((state) => (statusCounts[state] ?? 0) > 0).map((state) => '${state.name}:${statusCounts[state]}').join(',')}',
+      if (emotionCounts.isNotEmpty)
+        'topEmotions=${_topStringCounts(emotionCounts).take(4).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (keywordCounts.isNotEmpty)
+        'topKeywords=${_topStringCounts(keywordCounts).take(5).map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      if (peopleCounts.isNotEmpty)
+        'topPeople=${_topStringCounts(peopleCounts).take(5).map((entry) => '${entry.key}:${entry.value}').join(',')}',
     ];
   }
 

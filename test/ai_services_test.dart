@@ -694,7 +694,105 @@ void main() {
         'ai.embeddings.summary:entry-1': '{}',
         'ai.embeddings.entryIndex.entry-1': <String>['summary:entry-1'],
         'ai.embeddings.typeIndex.summary': <String>['summary:entry-1'],
-        'diary.insights.entry-1': '{}',
+        'diary.insights.index': <String>['entry-1'],
+        'diary.insights.latest': 'entry-1',
+        'diary.insights.status.entry-1': jsonEncode(
+          DiaryAnalysisStatus(
+            entryId: 'entry-1',
+            state: DiaryAnalysisState.completed,
+            updatedAt: DateTime(2026, 7, 3),
+            message: '已完成今日洞察',
+          ).toJson(),
+        ),
+        'diary.insights.entry-1': jsonEncode(
+          DiaryInsight(
+            entryId: 'entry-1',
+            entryDate: DateTime(2026, 7, 3),
+            generatedAt: DateTime(2026, 7, 3),
+            reflection: '今天的饭后散步帮助你从压力里恢复。',
+            relatedMemories: const [
+              RelatedMemoryInsight(
+                title: '饭后散步',
+                reason: '相同恢复策略',
+                entryId: 'memory-1',
+              ),
+            ],
+            emotion: '平静',
+            keywords: const ['散步', '恢复'],
+            people: const ['小王'],
+            stoneTitle: '饭后散步',
+            stoneDescription: '继续用轻量散步恢复状态。',
+            memorySummary: '饭后散步有助于恢复状态。',
+            memoryTags: const ['恢复'],
+            facts: const [
+              InsightClaim(
+                text: '今天记录了饭后散步。',
+                confidence: 0.9,
+                evidence: [
+                  InsightEvidence(
+                    type: 'current_entry',
+                    id: 'entry-1',
+                    quote: '饭后散步',
+                  ),
+                ],
+              ),
+            ],
+            signals: const [
+              InsightClaim(
+                text: '散步与情绪恢复相关。',
+                confidence: 0.7,
+              ),
+            ],
+            hypotheses: const [
+              InsightClaim(
+                text: '短时间活动比强行休息更适合今天。',
+                confidence: 0.62,
+                evidence: [
+                  InsightEvidence(
+                    type: 'memory',
+                    id: 'memory-1',
+                    summary: '饭后散步有助于恢复状态。',
+                  ),
+                ],
+              ),
+            ],
+            suggestions: const [
+              InsightClaim(
+                text: '保留 10 分钟低门槛散步。',
+                confidence: 0.78,
+                evidence: [
+                  InsightEvidence(
+                    type: 'current_entry',
+                    id: 'entry-1',
+                    relevance: '延续今日有效行动',
+                  ),
+                ],
+              ),
+            ],
+            profileUpdateCandidates: const [
+              ProfileUpdateCandidate(
+                field: '恢复方式',
+                value: '饭后散步',
+                confidence: 0.72,
+              ),
+            ],
+            relationshipUpdates: const [
+              RelationshipUpdateCandidate(
+                personName: '小王',
+                summary: '一起散步带来支持感',
+                confidence: 0.68,
+              ),
+            ],
+            contradictions: const [
+              InsightContradiction(
+                oldMemoryId: 'memory:old',
+                newEvidence: '今天散步后状态变好',
+                interpretation: '过去认为散步无效的记忆需要核对',
+                confidence: 0.61,
+              ),
+            ],
+          ).toJson(),
+        ),
         'memory.entries.memory-1': jsonEncode(
           MemoryEntry(
             id: 'memory-1',
@@ -902,6 +1000,29 @@ void main() {
       expect(embeddingSection.details, contains('objects=1'));
       expect(embeddingSection.details, contains('entryIndexes=1'));
       expect(embeddingSection.details, contains('typeIndexes=1'));
+      expect(counts['今日洞察'], 4);
+      final insightSection =
+          inventory.sections.firstWhere((section) => section.label == '今日洞察');
+      expect(insightSection.details, contains('objects=1'));
+      expect(insightSection.details, contains('indexed=1'));
+      expect(insightSection.details, contains('statuses=1'));
+      expect(insightSection.details, contains('latestSet=true'));
+      expect(insightSection.details, contains('facts=1'));
+      expect(insightSection.details, contains('signals=1'));
+      expect(insightSection.details, contains('hypotheses=1'));
+      expect(insightSection.details, contains('suggestions=1'));
+      expect(insightSection.details, contains('evidenceItems=3'));
+      expect(insightSection.details, contains('claimsWithoutEvidence=1'));
+      expect(insightSection.details, contains('relatedMemories=1'));
+      expect(insightSection.details, contains('profileCandidates=1'));
+      expect(insightSection.details, contains('relationshipCandidates=1'));
+      expect(insightSection.details, contains('contradictions=1'));
+      expect(insightSection.details, contains('stoneSuggestions=1'));
+      expect(insightSection.details, contains('memoryUpdates=1'));
+      expect(insightSection.details, contains('statusStates=completed:1'));
+      expect(insightSection.details, contains('topEmotions=平静:1'));
+      expect(insightSection.details, contains('topKeywords=恢复:1,散步:1'));
+      expect(insightSection.details, contains('topPeople=小王:1'));
       final memorySection =
           inventory.sections.firstWhere((section) => section.label == '长期记忆');
       expect(memorySection.details, contains('objects=1'));
@@ -1015,13 +1136,15 @@ void main() {
       expect(stoneSection.details, contains('sourcedTasks=1'));
       expect(stoneSection.details, contains('sourcedCheckIns=1'));
       expect(stoneSection.details, contains('topTags=恢复:1,运动:1'));
-      expect(inventory.totalCount, 19);
+      expect(inventory.totalCount, 22);
       expect(inventory.highSensitivitySectionCount, greaterThanOrEqualTo(6));
       expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
       expect(inventory.toDebugText(), contains('warnings=摘要过短:1,缺少关键点:1'));
+      expect(inventory.toDebugText(), contains('claimsWithoutEvidence=1'));
+      expect(inventory.toDebugText(), contains('statusStates=completed:1'));
       expect(inventory.toDebugText(), contains('averageConfidence=0.30'));
       expect(inventory.toDebugText(), contains('topPeople=小王:1'));
       expect(inventory.toDebugText(), contains('feedbackValues=inaccurate:1'));
