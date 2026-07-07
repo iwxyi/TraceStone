@@ -1,5 +1,50 @@
 enum PeriodSummaryType { month, year }
 
+enum PeriodSummaryState {
+  idle,
+  generating,
+  completed,
+  failed,
+}
+
+class PeriodSummaryStatus {
+  const PeriodSummaryStatus({
+    required this.id,
+    required this.state,
+    required this.updatedAt,
+    this.message,
+  });
+
+  final String id;
+  final PeriodSummaryState state;
+  final DateTime updatedAt;
+  final String? message;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'state': state.name,
+        'updatedAt': updatedAt.toIso8601String(),
+        'message': message,
+      };
+
+  static PeriodSummaryStatus fromJson(Map<String, dynamic> json) {
+    final stateName = json['state'] is String
+        ? json['state'] as String
+        : PeriodSummaryState.idle.name;
+    return PeriodSummaryStatus(
+      id: json['id'] is String ? json['id'] as String : '',
+      state: PeriodSummaryState.values.firstWhere(
+        (item) => item.name == stateName,
+        orElse: () => PeriodSummaryState.idle,
+      ),
+      updatedAt: json['updatedAt'] is String
+          ? DateTime.tryParse(json['updatedAt'] as String) ?? DateTime.now()
+          : DateTime.now(),
+      message: json['message'] is String ? json['message'] as String : null,
+    );
+  }
+}
+
 class PeriodSummary {
   const PeriodSummary({
     required this.id,
@@ -15,6 +60,9 @@ class PeriodSummary {
     required this.generator,
     this.relationshipHighlights = const [],
     this.stoneHighlights = const [],
+    this.growthHighlights = const [],
+    this.notableChanges = const [],
+    this.outlook = '',
     this.contextDebugSummary = '',
     this.contextSourceLines = const [],
   });
@@ -32,6 +80,9 @@ class PeriodSummary {
   final String generator;
   final List<String> relationshipHighlights;
   final List<String> stoneHighlights;
+  final List<String> growthHighlights;
+  final List<String> notableChanges;
+  final String outlook;
   final String contextDebugSummary;
   final List<String> contextSourceLines;
 
@@ -49,6 +100,9 @@ class PeriodSummary {
         'generator': generator,
         'relationshipHighlights': relationshipHighlights,
         'stoneHighlights': stoneHighlights,
+        'growthHighlights': growthHighlights,
+        'notableChanges': notableChanges,
+        'outlook': outlook,
         'contextDebugSummary': contextDebugSummary,
         'contextSourceLines': contextSourceLines,
       };
@@ -82,6 +136,9 @@ class PeriodSummary {
           json['generator'] is String ? json['generator'] as String : 'unknown',
       relationshipHighlights: _stringList(json['relationshipHighlights']),
       stoneHighlights: _stringList(json['stoneHighlights']),
+      growthHighlights: _stringList(json['growthHighlights']),
+      notableChanges: _stringList(json['notableChanges']),
+      outlook: json['outlook'] is String ? json['outlook'] as String : '',
       contextDebugSummary: json['contextDebugSummary'] is String
           ? json['contextDebugSummary'] as String
           : '',

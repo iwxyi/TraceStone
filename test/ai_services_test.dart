@@ -5285,6 +5285,75 @@ void main() {
       expect(summary.contextDebugSummary, contains('sources='));
     });
 
+    test('builds AI month summary with status and prompt trace', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const periodRepository = PeriodSummaryRepository();
+      final client = _PeriodSummaryAiClientService();
+      final entry = _entry(
+        id: 'ai-month-entry',
+        date: DateTime(2026, 7, 6),
+        content: '这个月开始规律散步，也更能觉察焦虑。',
+      );
+      await diaryRepository.saveEntry(entry);
+
+      final summary = await PeriodSummaryService(client: client)
+          .buildMonthSummary(DateTime(2026, 7), [entry]);
+      final status =
+          await periodRepository.getStatus(PeriodSummaryRepository.monthId(
+        DateTime(2026, 7),
+      ));
+      final trace = await const AiPromptTraceRepository()
+          .getTrace(PeriodSummaryRepository.monthId(DateTime(2026, 7)));
+
+      expect(summary.generator, 'ai-month-summary-v1');
+      expect(summary.brief, contains('这个月'));
+      expect(summary.growthHighlights, contains('规律散步让恢复更稳定'));
+      expect(summary.notableChanges, contains('焦虑从被动承受转向主动觉察'));
+      expect(summary.outlook, contains('下个月'));
+      expect(status?.state, PeriodSummaryState.completed);
+      expect(trace?.scenario, 'periodSummary');
+      expect(client.lastUserPrompt, contains('月度定位'));
+      expect(client.lastUserPrompt, contains('ai-month-entry'));
+      expect(client.lastUserPrompt, contains('稳定画像'));
+    });
+
+    test('year summary prompt includes existing month summaries', () async {
+      SharedPreferences.setMockInitialValues({});
+      const periodRepository = PeriodSummaryRepository();
+      final client = _PeriodSummaryAiClientService();
+      await periodRepository.saveSummary(PeriodSummary(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 7),
+        endDate: DateTime(2026, 7, 31, 23, 59, 59),
+        generatedAt: DateTime(2026, 8, 1),
+        entryCount: 3,
+        brief: '七月开始把散步作为恢复节奏。',
+        themes: const ['散步', '恢复'],
+        emotions: const ['平稳'],
+        representativeEntryIds: const ['year-entry'],
+        generator: 'ai-month-summary-v1',
+        growthHighlights: const ['能主动安排恢复时间'],
+        notableChanges: const ['从临时调整变成固定节奏'],
+      ));
+      final entry = _entry(
+        id: 'year-entry',
+        date: DateTime(2026, 7, 6),
+        content: '年度里的关键变化。',
+      );
+
+      final summary = await PeriodSummaryService(client: client)
+          .buildYearSummary(2026, [entry]);
+
+      expect(summary.generator, 'ai-year-summary-v1');
+      expect(client.lastUserPrompt, contains('年度定位'));
+      expect(client.lastUserPrompt, contains('已生成月度总结'));
+      expect(client.lastUserPrompt, contains('七月开始把散步作为恢复节奏'));
+      expect(summary.contextSourceLines.join('\n'),
+          contains('period_summary:month:2026-07'));
+    });
+
     test('period summary stores context source lines for developer tracing',
         () async {
       SharedPreferences.setMockInitialValues({});
@@ -7381,6 +7450,35 @@ class _CapturingAiClientService extends AiClientService {
           ],
         }
       ],
+    });
+  }
+}
+
+class _PeriodSummaryAiClientService extends AiClientService {
+  String? lastSystemPrompt;
+  String? lastUserPrompt;
+
+  @override
+  Future<String> completeJson({
+    required String systemPrompt,
+    required String userPrompt,
+    required int maxTokens,
+  }) async {
+    lastSystemPrompt = systemPrompt;
+    lastUserPrompt = userPrompt;
+    final isYear = userPrompt.contains('年度定位');
+    return jsonEncode({
+      'brief': isYear
+          ? '这一年更像是把恢复节奏慢慢固定下来，散步从偶尔补救变成能主动安排的生活线索。'
+          : '这个月的主线是从焦虑后的被动恢复，慢慢转向主动安排散步和觉察状态。',
+      'themes': ['散步', '恢复', '自我觉察'],
+      'emotions': ['平稳', '焦虑'],
+      'growth_highlights': ['规律散步让恢复更稳定'],
+      'notable_changes': ['焦虑从被动承受转向主动觉察'],
+      'relationship_highlights': ['重要关系互动更平和'],
+      'stone_highlights': ['散步行动开始形成节奏'],
+      'outlook': isYear ? '下一年继续保留可持续的小节奏。' : '下个月继续保留散步这个低门槛恢复入口。',
+      'representative_entry_ids': ['ai-month-entry', 'year-entry'],
     });
   }
 }

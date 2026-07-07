@@ -11,6 +11,7 @@ const _knownSourceTypes = {
   'stone',
   'calendar',
   'period_entry',
+  'period_summary',
 };
 
 String formatAiSourceId(String sourceType, String sourceId) {

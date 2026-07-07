@@ -8,6 +8,7 @@ class PeriodSummaryRepository {
   const PeriodSummaryRepository();
 
   static const _prefix = 'ai.periodSummaries.';
+  static const _statusPrefix = 'ai.periodSummaryStatuses.';
 
   Future<void> saveSummary(PeriodSummary summary) async {
     final prefs = await SharedPreferences.getInstance();
@@ -18,6 +19,29 @@ class PeriodSummaryRepository {
   Future<PeriodSummary?> getSummary(String id) async {
     final prefs = await SharedPreferences.getInstance();
     return _getSummary(prefs, '$_prefix$id');
+  }
+
+  Future<void> saveStatus(PeriodSummaryStatus status) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        '$_statusPrefix${status.id}', jsonEncode(status.toJson()));
+  }
+
+  Future<PeriodSummaryStatus?> getStatus(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = _safeGetString(prefs, '$_statusPrefix$id');
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await prefs.remove('$_statusPrefix$id');
+        return null;
+      }
+      return PeriodSummaryStatus.fromJson(decoded);
+    } on Object {
+      await prefs.remove('$_statusPrefix$id');
+      return null;
+    }
   }
 
   Future<List<PeriodSummary>> listSummaries() async {
@@ -56,6 +80,7 @@ class PeriodSummaryRepository {
   Future<void> deleteSummary(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$id');
+    await prefs.remove('$_statusPrefix$id');
   }
 
   Future<void> deleteForEntry(String entryId) async {
@@ -68,6 +93,7 @@ class PeriodSummaryRepository {
       if (summary == null) continue;
       if (_summaryReferencesEntry(summary, value)) {
         await prefs.remove(key);
+        await prefs.remove('$_statusPrefix${summary.id}');
       }
     }
   }

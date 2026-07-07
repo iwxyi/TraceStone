@@ -1813,6 +1813,28 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                           child: Text(line),
                         ),
                     ],
+                    if (summary.growthHighlights.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text('成长线索',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 6),
+                      for (final line in summary.growthHighlights.take(4))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(line),
+                        ),
+                    ],
+                    if (summary.notableChanges.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text('值得注意的变化',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 6),
+                      for (final line in summary.notableChanges.take(4))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(line),
+                        ),
+                    ],
                     if (summary.stoneHighlights.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text('塑石进展',
@@ -1823,6 +1845,13 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(line),
                         ),
+                    ],
+                    if (summary.outlook.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text('接下来',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 6),
+                      Text(summary.outlook),
                     ],
                     if (developerMode &&
                         (summary.contextDebugSummary.isNotEmpty ||
