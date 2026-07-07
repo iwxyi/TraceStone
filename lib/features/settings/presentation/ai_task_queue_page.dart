@@ -1,0 +1,379 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../../../data/models/ai_analysis_job.dart';
+import '../../../data/models/period_summary.dart';
+import '../../../data/repositories/ai_analysis_queue_bus.dart';
+import '../../../data/repositories/ai_analysis_queue_repository.dart';
+import '../../../data/repositories/period_summary_repository.dart';
+import '../../../data/services/ai_analysis_queue_runner.dart';
+
+class AiTaskQueuePage extends StatefulWidget {
+  const AiTaskQueuePage({super.key});
+
+  @override
+  State<AiTaskQueuePage> createState() => _AiTaskQueuePageState();
+}
+
+class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
+  final _queueRepository = const AiAnalysisQueueRepository();
+  final _queueRunner = const AiAnalysisQueueRunner();
+  final _periodRepository = const PeriodSummaryRepository();
+
+  late Future<_AiTaskQueueData> _dataFuture = _loadData();
+
+  @override
+  void initState() {
+    super.initState();
+    AiAnalysisQueueBus.version.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    AiAnalysisQueueBus.version.removeListener(_refresh);
+    super.dispose();
+  }
+
+  Future<_AiTaskQueueData> _loadData() async {
+    final snapshot = await _queueRepository.snapshot();
+    final summaries = await _periodRepository.listSummaries();
+    final statuses = await _periodRepository.listStatuses();
+    final statusById = {for (final status in statuses) status.id: status};
+    final periodItems = <_PeriodTaskItem>[];
+    for (final summary in summaries.take(8)) {
+      periodItems.add(_PeriodTaskItem(
+        id: summary.id,
+        summary: summary,
+        status: statusById[summary.id],
+      ));
+    }
+    final existingIds = periodItems.map((item) => item.id).toSet();
+    for (final status in statuses) {
+      if (existingIds.contains(status.id)) continue;
+      periodItems.add(_PeriodTaskItem(id: status.id, status: status));
+      if (periodItems.length >= 8) break;
+    }
+    return _AiTaskQueueData(snapshot: snapshot, periodItems: periodItems);
+  }
+
+  void _refresh() {
+    if (!mounted) return;
+    setState(() => _dataFuture = _loadData());
+  }
+
+  Future<void> _refreshAsync() async {
+    setState(() => _dataFuture = _loadData());
+    await _dataFuture;
+  }
+
+  Future<void> _continueQueue() async {
+    await _queueRepository.setPaused(false);
+    await _queueRunner.processUntilIdle(maxJobs: 5);
+    await _refreshAsync();
+  }
+
+  Future<void> _togglePaused(bool paused) async {
+    await _queueRepository.setPaused(paused);
+    if (!paused) {
+      unawaited(_queueRunner.processUntilIdle(maxJobs: 5));
+    }
+    await _refreshAsync();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('AI 任务队列')),
+      body: RefreshIndicator(
+        onRefresh: _refreshAsync,
+        child: FutureBuilder<_AiTaskQueueData>(
+          future: _dataFuture,
+          builder: (context, snapshot) {
+            final data = snapshot.data;
+            if (data == null) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            return ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                _DiaryQueueSection(
+                  snapshot: data.snapshot,
+                  onContinue: _continueQueue,
+                  onPauseChanged: _togglePaused,
+                ),
+                const SizedBox(height: 16),
+                _PeriodQueueSection(items: data.periodItems),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _AiTaskQueueData {
+  const _AiTaskQueueData({
+    required this.snapshot,
+    required this.periodItems,
+  });
+
+  final AiAnalysisQueueSnapshot snapshot;
+  final List<_PeriodTaskItem> periodItems;
+}
+
+class _PeriodTaskItem {
+  const _PeriodTaskItem({required this.id, this.summary, this.status});
+
+  final String id;
+  final PeriodSummary? summary;
+  final PeriodSummaryStatus? status;
+}
+
+class _DiaryQueueSection extends StatelessWidget {
+  const _DiaryQueueSection({
+    required this.snapshot,
+    required this.onContinue,
+    required this.onPauseChanged,
+  });
+
+  final AiAnalysisQueueSnapshot snapshot;
+  final VoidCallback onContinue;
+  final Future<void> Function(bool paused) onPauseChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final current = snapshot.currentJob;
+    final activeCount = snapshot.runnableCount +
+        (current?.state == AiAnalysisJobState.running ? 1 : 0);
+    final totalVisible = snapshot.jobs
+        .where((job) =>
+            job.canRun ||
+            job.state == AiAnalysisJobState.running ||
+            job.state == AiAnalysisJobState.completed)
+        .length;
+    final progress = totalVisible == 0
+        ? 0.0
+        : (snapshot.completedCount / totalVisible).clamp(0.0, 1.0).toDouble();
+
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.auto_awesome_motion_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('日记 AI 分析', style: theme.textTheme.titleMedium),
+                ),
+                TextButton(
+                  onPressed: () => onPauseChanged(!snapshot.isPaused),
+                  child: Text(snapshot.isPaused ? '继续' : '暂停'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            LinearProgressIndicator(value: progress, minHeight: 4),
+            const SizedBox(height: 10),
+            if (current == null && !snapshot.hasVisibleWork)
+              Text('没有正在等待的日记分析任务。', style: theme.textTheme.bodyMedium)
+            else ...[
+              Text(
+                snapshot.isPaused
+                    ? '队列已暂停'
+                    : current == null
+                        ? '等待继续'
+                        : current.stageLabel,
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _CountChip(label: '运行/待处理', count: activeCount),
+                  _CountChip(label: '待恢复', count: snapshot.incompleteCount),
+                  _CountChip(label: '失败', count: snapshot.failedCount),
+                  _CountChip(label: '已完成', count: snapshot.completedCount),
+                ],
+              ),
+              if (snapshot.estimatedRemainingLabel.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('预计剩余 ${snapshot.estimatedRemainingLabel}',
+                    style: theme.textTheme.bodySmall),
+              ],
+              if (snapshot.batches.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Text('批次进度', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 8),
+                for (final batch in snapshot.batches.take(4))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _BatchLine(batch: batch),
+                  ),
+              ],
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: snapshot.runnableCount > 0 ? onContinue : null,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('继续处理队列'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PeriodQueueSection extends StatelessWidget {
+  const _PeriodQueueSection({required this.items});
+
+  final List<_PeriodTaskItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.insights_outlined),
+                const SizedBox(width: 10),
+                Text('周期总结', style: theme.textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (items.isEmpty)
+              Text('还没有生成过月度或年度总结。', style: theme.textTheme.bodyMedium)
+            else
+              for (final item in items)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _PeriodTaskTile(item: item),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PeriodTaskTile extends StatelessWidget {
+  const _PeriodTaskTile({required this.item});
+
+  final _PeriodTaskItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final summary = item.summary;
+    final status = item.status;
+    final periodType = summary?.type ??
+        (item.id.startsWith('year:')
+            ? PeriodSummaryType.year
+            : PeriodSummaryType.month);
+    final label = summary == null
+        ? _periodLabelFromId(item.id)
+        : periodType == PeriodSummaryType.month
+            ? '${summary.startDate.year}年${summary.startDate.month}月'
+            : '${summary.startDate.year}年';
+    final state = status?.state ?? PeriodSummaryState.completed;
+    return Row(
+      children: [
+        Icon(_periodStateIcon(state), size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                  '$label ${periodType == PeriodSummaryType.month ? '月度总结' : '年度总结'}'),
+              const SizedBox(height: 2),
+              Text(
+                status?.message ?? (summary == null ? '等待生成' : '已生成'),
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+        Text((summary?.generator.startsWith('ai-') ?? false) ? 'AI' : '本地',
+            style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+
+  String _periodLabelFromId(String id) {
+    if (id.startsWith('year:')) {
+      return '${id.substring('year:'.length)}年';
+    }
+    if (id.startsWith('month:')) {
+      final value = id.substring('month:'.length);
+      final parts = value.split('-');
+      if (parts.length == 2) {
+        final month = int.tryParse(parts[1]) ?? parts[1];
+        return '${parts[0]}年$month月';
+      }
+    }
+    return id;
+  }
+}
+
+class _BatchLine extends StatelessWidget {
+  const _BatchLine({required this.batch});
+
+  final AiAnalysisBatchSnapshot batch;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(batch.label)),
+            Text(batch.progressLabel, style: theme.textTheme.bodySmall),
+          ],
+        ),
+        const SizedBox(height: 4),
+        LinearProgressIndicator(value: batch.progress, minHeight: 3),
+      ],
+    );
+  }
+}
+
+class _CountChip extends StatelessWidget {
+  const _CountChip({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(label: Text('$label $count'));
+  }
+}
+
+IconData _periodStateIcon(PeriodSummaryState state) {
+  switch (state) {
+    case PeriodSummaryState.generating:
+      return Icons.autorenew;
+    case PeriodSummaryState.completed:
+      return Icons.check_circle_outline;
+    case PeriodSummaryState.failed:
+      return Icons.error_outline;
+    case PeriodSummaryState.idle:
+      return Icons.schedule;
+  }
+}

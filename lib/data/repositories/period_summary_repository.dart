@@ -44,6 +44,29 @@ class PeriodSummaryRepository {
     }
   }
 
+  Future<List<PeriodSummaryStatus>> listStatuses() async {
+    final prefs = await SharedPreferences.getInstance();
+    final statuses = <PeriodSummaryStatus>[];
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(_statusPrefix)) continue;
+      final raw = _safeGetString(prefs, key);
+      if (raw == null) continue;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          await prefs.remove(key);
+          continue;
+        }
+        final status = PeriodSummaryStatus.fromJson(decoded);
+        if (status.id.isNotEmpty) statuses.add(status);
+      } on Object {
+        await prefs.remove(key);
+      }
+    }
+    statuses.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return statuses;
+  }
+
   Future<List<PeriodSummary>> listSummaries() async {
     final prefs = await SharedPreferences.getInstance();
     final summaries = <PeriodSummary>[];

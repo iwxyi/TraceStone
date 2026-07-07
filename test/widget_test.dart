@@ -15,6 +15,7 @@ import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
+import 'package:trace_stone/data/models/period_summary.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
 import 'package:trace_stone/data/repositories/ai_embedding_repository.dart';
@@ -26,6 +27,7 @@ import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
 import 'package:trace_stone/data/repositories/memory_repository.dart';
+import 'package:trace_stone/data/repositories/period_summary_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
@@ -305,6 +307,82 @@ void main() {
     expect(find.text('记忆整理已暂停'), findsOneWidget);
     expect(find.textContaining('已暂停，继续后会从当前队列位置整理'), findsOneWidget);
     expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
+  });
+
+  testWidgets('profile page exposes AI assets and task queue', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI 任务队列'), findsOneWidget);
+    expect(find.text('AI 记忆'), findsOneWidget);
+    expect(find.text('纪念日'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('自定义 AI'), findsOneWidget);
+    expect(find.text('AI 记忆'), findsNothing);
+    expect(find.text('纪念日'), findsNothing);
+  });
+
+  testWidgets('AI task queue page shows diary and period progress',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const queueRepository = AiAnalysisQueueRepository();
+    const periodRepository = PeriodSummaryRepository();
+    final now = DateTime(2026, 7, 7);
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'queue-page-entry',
+      entryId: 'queue-page-entry',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.pending,
+      currentStage: AiAnalysisStage.queued,
+      createdAt: now,
+      updatedAt: now,
+    ));
+    await periodRepository.saveSummary(PeriodSummary(
+      id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      type: PeriodSummaryType.month,
+      startDate: DateTime(2026, 7),
+      endDate: DateTime(2026, 7, 31, 23, 59, 59),
+      generatedAt: now,
+      entryCount: 1,
+      brief: '七月 AI 总结',
+      themes: const ['散步'],
+      emotions: const ['平稳'],
+      representativeEntryIds: const ['queue-page-entry'],
+      generator: 'ai-month-summary-v1',
+    ));
+    await periodRepository.saveStatus(PeriodSummaryStatus(
+      id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      state: PeriodSummaryState.completed,
+      updatedAt: now,
+      message: 'AI 周期总结已生成',
+    ));
+    await periodRepository.saveStatus(PeriodSummaryStatus(
+      id: PeriodSummaryRepository.yearId(2026),
+      state: PeriodSummaryState.generating,
+      updatedAt: now.add(const Duration(minutes: 1)),
+      message: '正在生成 AI 周期总结',
+    ));
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AI 任务队列'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('日记 AI 分析'), findsOneWidget);
+    expect(find.text('运行/待处理 1'), findsOneWidget);
+    expect(find.text('周期总结'), findsOneWidget);
+    expect(find.text('2026年 年度总结'), findsOneWidget);
+    expect(find.text('正在生成 AI 周期总结'), findsOneWidget);
+    expect(find.text('2026年7月 月度总结'), findsOneWidget);
+    expect(find.text('AI 周期总结已生成'), findsOneWidget);
   });
 
   testWidgets('insight page exports insight package in developer mode',
@@ -591,6 +669,12 @@ void main() {
     await tester.pumpWidget(const TraceStoneApp());
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byTooltip('画像操作').first,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('画像操作').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('修正'));
@@ -699,6 +783,12 @@ void main() {
     expect(find.textContaining('source: current_entry:profile-conflict-entry'),
         findsOneWidget);
 
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, '采纳变化'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, '采纳变化'));
     await tester.pumpAndSettle();
 

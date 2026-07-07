@@ -252,6 +252,8 @@ class _ProfilePageState extends State<ProfilePage> {
               children: [
                 const _ProfileHeader(),
                 const SizedBox(height: 16),
+                const _ProfileAiToolsCard(),
+                const SizedBox(height: 16),
                 if (snapshot.connectionState != ConnectionState.done)
                   const Center(
                     child: Padding(
@@ -300,6 +302,46 @@ class _ProfilePageState extends State<ProfilePage> {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _ProfileAiToolsCard extends StatelessWidget {
+  const _ProfileAiToolsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.auto_awesome_motion_outlined),
+            title: const Text('AI 任务队列'),
+            subtitle: const Text('查看日记分析、月度总结和年度总结进度'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).pushNamed(AppRoutes.aiTaskQueue),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.psychology_alt_outlined),
+            title: const Text('AI 记忆'),
+            subtitle: const Text('查看、修正或删除 AI 记住的长期信息'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () =>
+                Navigator.of(context).pushNamed(AppRoutes.memoryManagement),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.event_note_outlined),
+            title: const Text('纪念日'),
+            subtitle: const Text('用于多年今日、农历节日和特殊日期关联'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () =>
+                Navigator.of(context).pushNamed(AppRoutes.calendarMemory),
+          ),
+        ],
       ),
     );
   }
