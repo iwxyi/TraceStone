@@ -61,6 +61,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   String? _analysisError;
   String? _analysisSourceSignature;
   Future<_ReadInsightData>? _insightFuture;
+  Timer? _insightPollTimer;
 
   String _entryId = const Uuid().v4();
   DateTime _createdAt = DateTime.now();
@@ -103,6 +104,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
 
   @override
   void dispose() {
+    _insightPollTimer?.cancel();
     _controller.removeListener(_onTextChanged);
     _focusNode.dispose();
     _controller.dispose();
@@ -231,7 +233,26 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   Future<_ReadInsightData> _loadReadInsightData(String entryId) async {
     final insight = await _insightRepository.getInsight(entryId);
     final status = await _insightRepository.getStatus(entryId);
-    return _ReadInsightData(insight: insight, status: status);
+    final data = _ReadInsightData(insight: insight, status: status);
+    _scheduleInsightPollIfNeeded(entryId, data);
+    return data;
+  }
+
+  void _scheduleInsightPollIfNeeded(String entryId, _ReadInsightData data) {
+    final state = data.status?.state;
+    if (state != DiaryAnalysisState.queued &&
+        state != DiaryAnalysisState.analyzing) {
+      _insightPollTimer?.cancel();
+      _insightPollTimer = null;
+      return;
+    }
+    if (_insightPollTimer?.isActive ?? false) return;
+    _insightPollTimer = Timer(const Duration(seconds: 1), () {
+      if (!mounted) return;
+      setState(() {
+        _insightFuture = _loadReadInsightData(entryId);
+      });
+    });
   }
 
   Future<void> _refreshInsight([DiaryEntry? source]) async {
@@ -245,7 +266,10 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       await _repository.saveEntry(entry);
       await _insightRepository.deleteForEntry(entry.id);
       await _analysisQueueRunner.enqueue(entry, start: false);
-      unawaited(_analysisQueueRunner.processNext());
+      setState(() {
+        _insightFuture = _loadReadInsightData(entry.id);
+      });
+      await _analysisQueueRunner.processNext();
       if (!mounted) return;
       setState(() {
         _insightFuture = _loadReadInsightData(entry.id);
@@ -2205,9 +2229,13 @@ class _ReadInsightSection extends StatelessWidget {
         if (status?.state == DiaryAnalysisState.failed) {
           return _InsightErrorBlock(message: status?.message ?? '分析失败');
         }
+        if (status?.state == DiaryAnalysisState.incomplete) {
+          return _InsightIncompleteBlock(
+            message: status?.message ?? '分析未完成，稍后可以重新分析。',
+          );
+        }
         if (status?.state == DiaryAnalysisState.queued ||
-            status?.state == DiaryAnalysisState.analyzing ||
-            status?.state == DiaryAnalysisState.incomplete) {
+            status?.state == DiaryAnalysisState.analyzing) {
           return _InsightLoadingBlock(message: status?.message);
         }
         final insight = data?.insight;
@@ -2267,6 +2295,30 @@ class _InsightLoadingBlockState extends State<_InsightLoadingBlock>
           ],
         ),
       ),
+    );
+  }
+}
+
+class _InsightIncompleteBlock extends StatelessWidget {
+  const _InsightIncompleteBlock({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('分析未完成',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 10),
+        Text(message),
+        const SizedBox(height: 8),
+        Text(
+          '可以稍后点底部刷新重新分析。',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
     );
   }
 }

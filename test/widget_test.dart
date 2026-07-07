@@ -1492,9 +1492,75 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('正在分析这篇日记'), findsOneWidget);
+    expect(find.text('分析未完成'), findsOneWidget);
     expect(find.text('本地资料已整理，等待 AI 可用后生成今日洞察'), findsOneWidget);
+    expect(find.text('可以稍后点底部刷新重新分析。'), findsOneWidget);
     expect(find.text('正在结合历史记录与相关日记生成分析。'), findsNothing);
+  });
+
+  testWidgets('diary reader refreshes AI status until insight is ready',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    const entryId = 'editor-ai-polling-status';
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: entryId,
+      date: date,
+      createdAt: date,
+      content: '今天刷新以后等待分析完成。',
+      location: '家',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+    await const InsightRepository().saveStatus(DiaryAnalysisStatus(
+      entryId: entryId,
+      state: DiaryAnalysisState.analyzing,
+      updatedAt: date,
+      message: '生成今日洞察',
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+      onGenerateRoute: (_) => MaterialPageRoute(
+        settings: const RouteSettings(arguments: entryId),
+        builder: (_) => const DiaryEditPage(),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('正在分析这篇日记'), findsOneWidget);
+    expect(find.text('生成今日洞察'), findsOneWidget);
+
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: entryId,
+      entryDate: date,
+      generatedAt: date,
+      reflection: '刷新后生成的新洞察。',
+      relatedMemories: [],
+      emotion: '平静',
+      keywords: [],
+      people: [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: [],
+    ));
+    await const InsightRepository().saveStatus(DiaryAnalysisStatus(
+      entryId: entryId,
+      state: DiaryAnalysisState.completed,
+      updatedAt: date,
+      message: '整理完成',
+    ));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      find.textContaining('刷新后生成的新洞察', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.text('正在分析这篇日记'), findsNothing);
   });
 
   testWidgets('diary editor queues AI pipeline when leaving with saved content',
