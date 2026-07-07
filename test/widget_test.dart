@@ -1533,6 +1533,40 @@ void main() {
     expect(jobs.single.state, isNot(AiAnalysisJobState.completed));
   });
 
+  testWidgets('diary editor does not requeue unchanged existing entry',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'diary.autoSave': true,
+    });
+    const queueRepository = AiAnalysisQueueRepository();
+    final date = DateTime(2026, 7, 3);
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'unchanged-existing-entry',
+      date: date,
+      createdAt: date,
+      content: '这篇日记只是打开看看，没有修改。',
+      location: '家',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+      onGenerateRoute: (_) => MaterialPageRoute(
+        settings: const RouteSettings(arguments: 'unchanged-existing-entry'),
+        builder: (_) => const DiaryEditPage(),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pump();
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(await queueRepository.listJobs(), isEmpty);
+  });
+
   testWidgets('relationships page filters and asks about a person',
       (tester) async {
     SharedPreferences.setMockInitialValues({});

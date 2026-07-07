@@ -59,6 +59,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   bool _useCustomAiFix = false;
   String _customAiFixRule = '';
   String? _analysisError;
+  String? _analysisSourceSignature;
   Future<_ReadInsightData>? _insightFuture;
 
   String _entryId = const Uuid().v4();
@@ -139,6 +140,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _hasManualLocation = false;
       _hasManualWeather = false;
       _hasUnsavedChanges = false;
+      _analysisSourceSignature = null;
       _undoStack.clear();
       _redoStack.clear();
       _lastHistoryValue = '';
@@ -178,6 +180,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _hasManualWeather = resolvedEntry.weather.trim().isNotEmpty &&
           resolvedEntry.weather != '天气';
       _hasUnsavedChanges = false;
+      _analysisSourceSignature = _entrySignature(resolvedEntry);
       _undoStack.clear();
       _redoStack.clear();
       _lastHistoryValue = resolvedEntry.content;
@@ -204,6 +207,18 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     final entry = _currentEntry();
     if (entry.content.trim().isEmpty) return;
     await _repository.saveEntry(entry);
+  }
+
+  String _entrySignature(DiaryEntry entry) {
+    return jsonEncode({
+      'date': DateTime(entry.date.year, entry.date.month, entry.date.day)
+          .toIso8601String(),
+      'content': entry.content,
+      'location': entry.location,
+      'weather': entry.weather,
+      'temperature': entry.temperature,
+      'locationDetails': entry.locationDetails,
+    });
   }
 
   Future<void> _loadOrAnalyzeInsight(DiaryEntry entry) async {
@@ -530,8 +545,15 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     final entry = _currentEntry();
     if (entry.content.trim().isNotEmpty) {
       await _repository.saveEntry(entry);
-      await _analysisQueueRunner.enqueue(entry, start: false);
-      unawaited(_analysisQueueRunner.processNext());
+      final signature = _entrySignature(entry);
+      final shouldAnalyze = !_isExistingEntry ||
+          _analysisSourceSignature == null ||
+          _analysisSourceSignature != signature;
+      if (shouldAnalyze) {
+        _analysisSourceSignature = signature;
+        await _analysisQueueRunner.enqueue(entry, start: false);
+        unawaited(_analysisQueueRunner.processNext());
+      }
     }
     if (mounted) {
       Navigator.of(context).pop(entry.content.trim().isEmpty ? true : entry);
