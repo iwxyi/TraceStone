@@ -238,6 +238,13 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     return data;
   }
 
+  void _reloadInsightStatus(String entryId) {
+    if (!mounted) return;
+    setState(() {
+      _insightFuture = _loadReadInsightData(entryId);
+    });
+  }
+
   void _scheduleInsightPollIfNeeded(String entryId, _ReadInsightData data) {
     final state = data.status?.state;
     if (state != DiaryAnalysisState.queued &&
@@ -1214,6 +1221,8 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
                       insightFuture: _insightFuture,
                       error: _analysisError,
                       onRefresh: () => _refreshInsight(),
+                      onRegenerationQueued: () =>
+                          _reloadInsightStatus(_entryId),
                     ),
             ),
             if (_isEditing && _images.isNotEmpty)
@@ -2050,6 +2059,7 @@ class _DiaryReadView extends StatelessWidget {
     required this.insightFuture,
     required this.error,
     required this.onRefresh,
+    required this.onRegenerationQueued,
   });
 
   final String text;
@@ -2057,6 +2067,7 @@ class _DiaryReadView extends StatelessWidget {
   final Future<_ReadInsightData>? insightFuture;
   final String? error;
   final VoidCallback onRefresh;
+  final VoidCallback onRegenerationQueued;
 
   @override
   Widget build(BuildContext context) {
@@ -2075,6 +2086,7 @@ class _DiaryReadView extends StatelessWidget {
               isAnalyzing: isAnalyzing,
               insightFuture: insightFuture,
               error: error,
+              onRegenerationQueued: onRegenerationQueued,
             ),
             const SizedBox(height: 24),
             _ReadEndMark(
@@ -2211,11 +2223,13 @@ class _ReadInsightSection extends StatelessWidget {
     required this.isAnalyzing,
     required this.insightFuture,
     required this.error,
+    required this.onRegenerationQueued,
   });
 
   final bool isAnalyzing;
   final Future<_ReadInsightData>? insightFuture;
   final String? error;
+  final VoidCallback onRegenerationQueued;
 
   @override
   Widget build(BuildContext context) {
@@ -2240,7 +2254,10 @@ class _ReadInsightSection extends StatelessWidget {
         }
         final insight = data?.insight;
         if (insight == null) return const _InsightEmptyBlock();
-        return _InsightResultBlock(insight: insight);
+        return _InsightResultBlock(
+          insight: insight,
+          onRegenerationQueued: onRegenerationQueued,
+        );
       },
     );
   }
@@ -2367,9 +2384,13 @@ class _ReadInsightData {
 }
 
 class _InsightResultBlock extends StatelessWidget {
-  const _InsightResultBlock({required this.insight});
+  const _InsightResultBlock({
+    required this.insight,
+    required this.onRegenerationQueued,
+  });
 
   final DiaryInsight insight;
+  final VoidCallback onRegenerationQueued;
 
   @override
   Widget build(BuildContext context) {
@@ -2401,7 +2422,11 @@ class _InsightResultBlock extends StatelessWidget {
             SimpleMarkdownText(text: insight.stoneDescription),
         ],
         const SizedBox(height: 12),
-        AiFeedbackBar(entryId: insight.entryId, compact: true),
+        AiFeedbackBar(
+          entryId: insight.entryId,
+          compact: true,
+          onRegenerationQueued: onRegenerationQueued,
+        ),
       ],
     );
   }

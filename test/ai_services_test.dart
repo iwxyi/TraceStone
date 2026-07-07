@@ -450,7 +450,7 @@ void main() {
       expect(job?.stageLogs.last.outputSummary, contains('把情绪判断错了'));
       expect(job?.stageLogs.last.outputSummary,
           contains('previousInsight=attached'));
-      expect(status?.state, DiaryAnalysisState.incomplete);
+      expect(status?.state, DiaryAnalysisState.queued);
       expect(status?.message, contains('重新整理队列'));
     });
 

@@ -528,6 +528,31 @@ void main() {
     expect(find.textContaining('写入 AI 调试记录'), findsOneWidget);
   });
 
+  testWidgets('inaccurate feedback starts regeneration feedback flow',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    var regenerationQueued = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AiFeedbackBar(
+          entryId: 'feedback-regeneration-entry',
+          onRegenerationQueued: () => regenerationQueued = true,
+        ),
+      ),
+    ));
+
+    await tester.tap(find.text('不准确'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '跳过'));
+    await tester.pumpAndSettle();
+
+    final feedback = await const AiFeedbackRepository()
+        .getFeedback('feedback-regeneration-entry');
+    expect(feedback?.value, AiFeedbackValue.inaccurate);
+    expect(regenerationQueued, isTrue);
+    expect(find.text('已标记为不准确，正在重新整理'), findsOneWidget);
+  });
+
   testWidgets('corrects profile candidate text', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);

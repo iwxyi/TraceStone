@@ -95,7 +95,7 @@ class AiFeedbackService {
     ));
     await _insightRepository.saveStatus(DiaryAnalysisStatus(
       entryId: entry.id,
-      state: DiaryAnalysisState.incomplete,
+      state: DiaryAnalysisState.queued,
       updatedAt: now,
       message: '已根据反馈加入重新整理队列',
     ));

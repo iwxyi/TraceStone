@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/models/ai_feedback.dart';
 import '../../../data/repositories/ai_feedback_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
+import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../../data/services/ai_feedback_service.dart';
 
 class AiFeedbackBar extends StatefulWidget {
@@ -10,10 +13,12 @@ class AiFeedbackBar extends StatefulWidget {
     super.key,
     required this.entryId,
     this.compact = false,
+    this.onRegenerationQueued,
   });
 
   final String entryId;
   final bool compact;
+  final VoidCallback? onRegenerationQueued;
 
   @override
   State<AiFeedbackBar> createState() => _AiFeedbackBarState();
@@ -23,6 +28,7 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
   final _repository = const AiFeedbackRepository();
   final _developerSettings = const DeveloperSettingsRepository();
   final _feedbackService = const AiFeedbackService();
+  final _queueRunner = const AiAnalysisQueueRunner();
   late Future<AiFeedback?> _feedbackFuture =
       _repository.getFeedback(widget.entryId);
 
@@ -36,10 +42,14 @@ class _AiFeedbackBarState extends State<AiFeedbackBar> {
     setState(() {
       _feedbackFuture = Future.value(feedback);
     });
+    if (value == AiFeedbackValue.inaccurate) {
+      widget.onRegenerationQueued?.call();
+      unawaited(_queueRunner.processNext());
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-            value == AiFeedbackValue.helpful ? '已记录反馈' : '已标记为不准确，将重新整理这篇洞察'),
+        content:
+            Text(value == AiFeedbackValue.helpful ? '已记录反馈' : '已标记为不准确，正在重新整理'),
       ),
     );
   }
