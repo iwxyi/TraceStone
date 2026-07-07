@@ -2529,6 +2529,88 @@ void main() {
       expect(entryEmbedding?.generatedAt, oldGeneratedAt);
     });
 
+    test('runner completes new diary pipeline with real analysis artifacts',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRunner = AiAnalysisQueueRunner();
+      const queueRepository = AiAnalysisQueueRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const insightRepository = InsightRepository();
+      const retrievalRepository = AiRetrievalTraceRepository();
+      const promptRepository = AiPromptTraceRepository();
+      const memoryRepository = MemoryRepository();
+      final entry = _entry(
+        id: 'mvp-pipeline-entry',
+        date: DateTime(2026, 7, 3),
+        content: '今天上午做产品设计。\n\n---\n\n晚上散步以后状态轻松了一些。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRunner.enqueue(entry, start: false);
+
+      await AiAnalysisQueueRunner(
+        analysisService: DiaryAnalysisService(
+          client: _PipelineAiClientService(entry.id),
+        ),
+      ).processNext();
+
+      final job = await queueRepository.getJob(entry.id);
+      final status = await insightRepository.getStatus(entry.id);
+      final summary = await summaryRepository.getSummary(entry.id);
+      final segments = await summaryRepository.listSegments(entry.id);
+      final embeddings = await embeddingRepository.listForEntry(entry.id);
+      final insight = await insightRepository.getInsight(entry.id);
+      final trace = await retrievalRepository.getTrace(entry.id);
+      final promptTrace = await promptRepository.getTrace(entry.id);
+      final memories = await memoryRepository.listMemories();
+      final memory = memories.where((item) => item.id == entry.id).single;
+
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.currentStage, AiAnalysisStage.completed);
+      expect(
+          job?.completedStages,
+          containsAll(AiAnalysisStage.values
+              .where((stage) => stage != AiAnalysisStage.queued)
+              .where((stage) => stage != AiAnalysisStage.completed)));
+      expect(job?.summaryId, entry.id);
+      expect(job?.segmentIds, segments.map((segment) => segment.id).toList());
+      expect(job?.embeddingIds, [
+        'entry:${entry.id}',
+        'summary:${entry.id}',
+        for (final segment in segments) 'segment:${segment.id}',
+      ]);
+      expect(job?.insightId, entry.id);
+      expect(job?.retrievalTraceId, entry.id);
+      expect(status?.state, DiaryAnalysisState.completed);
+      expect(status?.message, '整理完成');
+      expect(summary?.brief, contains('产品设计'));
+      expect(segments, hasLength(2));
+      expect(embeddings, hasLength(5));
+      expect(
+        embeddings.map((embedding) => embedding.sourceType),
+        containsAll([
+          AiEmbeddingSourceType.entry,
+          AiEmbeddingSourceType.summary,
+          AiEmbeddingSourceType.segment,
+          AiEmbeddingSourceType.memory,
+        ]),
+      );
+      expect(trace?.scenario, AiContextScenario.todayInsight.name);
+      expect(trace?.contextSummary, contains('sources='));
+      expect(promptTrace?.userPrompt, contains('今天日记'));
+      expect(promptTrace?.rawResponse, contains('散步后状态更轻松'));
+      expect(insight?.reflection, '散步后状态更轻松。');
+      expect(insight?.emotion, '轻松');
+      expect(insight?.keywords, contains('散步'));
+      expect(insight?.facts.single.evidence.single.id, entry.id);
+      expect(insight?.suggestions.single.text, contains('散步 10 分钟'));
+      expect(insight?.stoneTitle, '散步 10 分钟');
+      expect(insight?.memorySummary, '散步后状态更轻松。');
+      expect(memory.sourceEntryId, entry.id);
+      expect(memory.summary, '散步后状态更轻松。');
+    });
+
     test(
         'runner keeps local artifacts recoverable when insight generation fails',
         () async {
@@ -7299,6 +7381,80 @@ class _CapturingAiClientService extends AiClientService {
           ],
         }
       ],
+    });
+  }
+}
+
+class _PipelineAiClientService extends AiClientService {
+  const _PipelineAiClientService(this.entryId);
+
+  final String entryId;
+
+  @override
+  Future<String> completeJson({
+    required String systemPrompt,
+    required String userPrompt,
+    required int maxTokens,
+  }) async {
+    return jsonEncode({
+      'reflection': '散步后状态更轻松。',
+      'related_memories': [],
+      'facts': [
+        {
+          'text': '今天记录了产品设计和散步。',
+          'evidence': [
+            {'type': 'current_entry', 'id': entryId}
+          ],
+        }
+      ],
+      'signals': [
+        {
+          'text': '散步后状态更轻松。',
+          'evidence': [
+            {'type': 'current_entry', 'id': entryId}
+          ],
+        }
+      ],
+      'hypotheses': [
+        {
+          'text': '散步可能帮助从工作状态中恢复。',
+          'confidence': 0.62,
+          'evidence': [
+            {'type': 'current_entry', 'id': entryId}
+          ],
+        }
+      ],
+      'suggestions': [
+        {
+          'text': '明天晚饭后散步 10 分钟。',
+          'evidence': [
+            {'type': 'current_entry', 'id': entryId}
+          ],
+        }
+      ],
+      'emotion': '轻松',
+      'keywords': ['产品设计', '散步'],
+      'people': [],
+      'stone_suggestion': {
+        'title': '散步 10 分钟',
+        'description': '晚饭后出门走一小圈。',
+      },
+      'memory_update': {
+        'summary': '散步后状态更轻松。',
+        'tags': ['散步', '恢复'],
+      },
+      'profile_update_candidates': [
+        {
+          'field': 'self_regulation',
+          'value': '散步可能帮助用户从工作状态恢复',
+          'confidence': 0.58,
+          'evidence': [
+            {'type': 'current_entry', 'id': entryId}
+          ],
+        }
+      ],
+      'relationship_updates': [],
+      'contradictions': [],
     });
   }
 }
