@@ -14,6 +14,7 @@ import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
+import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/period_summary_service.dart';
 import '../../ai_insight/presentation/ai_feedback_bar.dart';
 
@@ -896,7 +897,8 @@ class _YearListState extends State<_YearList> {
         ),
         const SizedBox(height: 16),
         _PeriodSummaryCard(
-          future: const PeriodSummaryService()
+          summaryKey: PeriodSummaryRepository.yearId(widget.selectedYear),
+          load: () => const PeriodSummaryService()
               .buildYearSummary(widget.selectedYear, widget.entries),
         ),
         const SizedBox(height: 16),
@@ -1556,7 +1558,8 @@ class _MonthCalendar extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _PeriodSummaryCard(
-          future: const PeriodSummaryService()
+          summaryKey: PeriodSummaryRepository.monthId(selectedMonth),
+          load: () => const PeriodSummaryService()
               .buildMonthSummary(selectedMonth, entries),
         ),
         const SizedBox(height: 16),
@@ -1665,20 +1668,64 @@ class _MonthDayCell extends StatelessWidget {
   }
 }
 
-class _PeriodSummaryCard extends StatelessWidget {
+class _PeriodSummaryCard extends StatefulWidget {
   const _PeriodSummaryCard({
-    required this.future,
+    required this.summaryKey,
+    required this.load,
     DeveloperSettingsRepository? developerSettings,
   }) : _developerSettings =
             developerSettings ?? const DeveloperSettingsRepository();
 
-  final Future<PeriodSummary> future;
+  final String summaryKey;
+  final Future<PeriodSummary> Function() load;
   final DeveloperSettingsRepository _developerSettings;
+
+  @override
+  State<_PeriodSummaryCard> createState() => _PeriodSummaryCardState();
+}
+
+class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
+  late Future<PeriodSummary> _future;
+  bool _isRegenerating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PeriodSummaryCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.summaryKey != widget.summaryKey) {
+      _future = widget.load();
+      _isRegenerating = false;
+    }
+  }
+
+  Future<void> _regenerate() async {
+    setState(() {
+      _isRegenerating = true;
+      _future = widget.load();
+    });
+    try {
+      final summary = await _future;
+      if (!mounted) return;
+      final title = summary.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已重新生成$title')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isRegenerating = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<PeriodSummary>(
-      future: future,
+      future: _future,
       builder: (context, snapshot) {
         final summary = snapshot.data;
         if (summary == null) {
@@ -1702,7 +1749,7 @@ class _PeriodSummaryCard extends StatelessWidget {
         }
         final title = summary.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
         return FutureBuilder<bool>(
-          future: _developerSettings.isDeveloperModeEnabled(),
+          future: widget._developerSettings.isDeveloperModeEnabled(),
           builder: (context, developerSnapshot) {
             final developerMode = developerSnapshot.data ?? false;
             return Card(
@@ -1721,6 +1768,19 @@ class _PeriodSummaryCard extends StatelessWidget {
                         const Spacer(),
                         Text('${summary.entryCount}篇',
                             style: Theme.of(context).textTheme.bodySmall),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: '重新生成$title',
+                          icon: _isRegenerating
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.refresh_outlined),
+                          onPressed: _isRegenerating ? null : _regenerate,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 12),

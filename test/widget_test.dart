@@ -110,6 +110,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('月度总结'), findsOneWidget);
+    expect(find.byTooltip('重新生成月度总结'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byTooltip('重新生成月度总结'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('重新生成月度总结'));
+    await tester.pumpAndSettle();
+    expect(find.text('已重新生成月度总结'), findsOneWidget);
     expect(find.text('开发者来源'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('开发者来源'),
