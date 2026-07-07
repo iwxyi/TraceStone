@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/widgets/simple_markdown_text.dart';
+import '../../../data/models/diary_analysis_status.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/diary_repository.dart';
@@ -58,7 +59,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   bool _useCustomAiFix = false;
   String _customAiFixRule = '';
   String? _analysisError;
-  Future<DiaryInsight?>? _insightFuture;
+  Future<_ReadInsightData>? _insightFuture;
 
   String _entryId = const Uuid().v4();
   DateTime _createdAt = DateTime.now();
@@ -208,8 +209,14 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   Future<void> _loadOrAnalyzeInsight(DiaryEntry entry) async {
     setState(() {
       _analysisError = null;
-      _insightFuture = _insightRepository.getInsight(entry.id);
+      _insightFuture = _loadReadInsightData(entry.id);
     });
+  }
+
+  Future<_ReadInsightData> _loadReadInsightData(String entryId) async {
+    final insight = await _insightRepository.getInsight(entryId);
+    final status = await _insightRepository.getStatus(entryId);
+    return _ReadInsightData(insight: insight, status: status);
   }
 
   Future<void> _refreshInsight([DiaryEntry? source]) async {
@@ -226,7 +233,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       unawaited(_analysisQueueRunner.processNext());
       if (!mounted) return;
       setState(() {
-        _insightFuture = _insightRepository.getInsight(entry.id);
+        _insightFuture = _loadReadInsightData(entry.id);
       });
     } on Object catch (error) {
       if (!mounted) return;
@@ -2001,7 +2008,7 @@ class _DiaryReadView extends StatelessWidget {
 
   final String text;
   final bool isAnalyzing;
-  final Future<DiaryInsight?>? insightFuture;
+  final Future<_ReadInsightData>? insightFuture;
   final String? error;
   final VoidCallback onRefresh;
 
@@ -2161,18 +2168,28 @@ class _ReadInsightSection extends StatelessWidget {
   });
 
   final bool isAnalyzing;
-  final Future<DiaryInsight?>? insightFuture;
+  final Future<_ReadInsightData>? insightFuture;
   final String? error;
 
   @override
   Widget build(BuildContext context) {
     if (isAnalyzing) return const _InsightLoadingBlock();
     if (error != null) return _InsightErrorBlock(message: error!);
-    return FutureBuilder<DiaryInsight?>(
+    return FutureBuilder<_ReadInsightData>(
       future: insightFuture,
       builder: (context, snapshot) {
-        final insight = snapshot.data;
-        if (insight == null) return const _InsightLoadingBlock();
+        final data = snapshot.data;
+        final status = data?.status;
+        if (status?.state == DiaryAnalysisState.failed) {
+          return _InsightErrorBlock(message: status?.message ?? '分析失败');
+        }
+        if (status?.state == DiaryAnalysisState.queued ||
+            status?.state == DiaryAnalysisState.analyzing ||
+            status?.state == DiaryAnalysisState.incomplete) {
+          return _InsightLoadingBlock(message: status?.message);
+        }
+        final insight = data?.insight;
+        if (insight == null) return const _InsightEmptyBlock();
         return _InsightResultBlock(insight: insight);
       },
     );
@@ -2180,7 +2197,9 @@ class _ReadInsightSection extends StatelessWidget {
 }
 
 class _InsightLoadingBlock extends StatefulWidget {
-  const _InsightLoadingBlock();
+  const _InsightLoadingBlock({this.message});
+
+  final String? message;
 
   @override
   State<_InsightLoadingBlock> createState() => _InsightLoadingBlockState();
@@ -2205,10 +2224,10 @@ class _InsightLoadingBlockState extends State<_InsightLoadingBlock>
       animation: _controller,
       builder: (context, _) => Opacity(
         opacity: 0.45 + _controller.value * 0.35,
-        child: const Column(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            const Row(
               children: [
                 SizedBox(
                   width: 16,
@@ -2221,11 +2240,28 @@ class _InsightLoadingBlockState extends State<_InsightLoadingBlock>
                         TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
               ],
             ),
-            SizedBox(height: 10),
-            Text('正在结合历史记录与相关日记生成分析。'),
+            const SizedBox(height: 10),
+            Text(widget.message ?? '正在结合历史记录与相关日记生成分析。'),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _InsightEmptyBlock extends StatelessWidget {
+  const _InsightEmptyBlock();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('还没有分析结果',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+        SizedBox(height: 10),
+        Text('退出编辑页保存后，会开始结合这篇日记和历史记录生成分析。'),
+      ],
     );
   }
 }
@@ -2247,6 +2283,13 @@ class _InsightErrorBlock extends StatelessWidget {
       ],
     );
   }
+}
+
+class _ReadInsightData {
+  const _ReadInsightData({required this.insight, required this.status});
+
+  final DiaryInsight? insight;
+  final DiaryAnalysisStatus? status;
 }
 
 class _InsightResultBlock extends StatelessWidget {

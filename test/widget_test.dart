@@ -10,6 +10,7 @@ import 'package:trace_stone/data/models/ai_embedding.dart';
 import 'package:trace_stone/data/models/ai_feedback.dart';
 import 'package:trace_stone/data/models/ai_profile_preference.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
+import 'package:trace_stone/data/models/diary_analysis_status.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
@@ -1459,6 +1460,41 @@ void main() {
 
     expect(find.text('日记'), findsWidgets);
     expect(find.textContaining('已有日记内容'), findsOneWidget);
+  });
+
+  testWidgets('diary reader explains persisted AI waiting status',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'editor-ai-waiting-status',
+      date: date,
+      createdAt: date,
+      content: '今天保存后等待 AI 继续分析。',
+      location: '家',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+    await const InsightRepository().saveStatus(DiaryAnalysisStatus(
+      entryId: 'editor-ai-waiting-status',
+      state: DiaryAnalysisState.incomplete,
+      updatedAt: date,
+      message: '本地资料已整理，等待 AI 可用后生成今日洞察',
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+      onGenerateRoute: (_) => MaterialPageRoute(
+        settings: const RouteSettings(arguments: 'editor-ai-waiting-status'),
+        builder: (_) => const DiaryEditPage(),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('正在分析这篇日记'), findsOneWidget);
+    expect(find.text('本地资料已整理，等待 AI 可用后生成今日洞察'), findsOneWidget);
+    expect(find.text('正在结合历史记录与相关日记生成分析。'), findsNothing);
   });
 
   testWidgets('diary editor queues AI pipeline when leaving with saved content',
