@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/app/trace_stone_app.dart';
+import 'package:trace_stone/core/routing/app_routes.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
 import 'package:trace_stone/data/models/ai_embedding.dart';
 import 'package:trace_stone/data/models/ai_feedback.dart';
@@ -383,6 +384,26 @@ void main() {
     expect(find.text('正在生成 AI 周期总结'), findsOneWidget);
     expect(find.text('2026年7月 月度总结'), findsOneWidget);
     expect(find.text('AI 周期总结已生成'), findsOneWidget);
+  });
+
+  testWidgets('unknown named route does not fall back to today page',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(MaterialApp(
+      onGenerateRoute: AppRoutes.onGenerateRoute,
+      home: Builder(
+        builder: (context) => TextButton(
+          onPressed: () => Navigator.of(context).pushNamed('/missing-route'),
+          child: const Text('打开缺失页面'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('打开缺失页面'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('页面不存在'), findsOneWidget);
+    expect(find.text('没有找到页面：/missing-route'), findsOneWidget);
   });
 
   testWidgets('insight page exports insight package in developer mode',

@@ -46,24 +46,49 @@ class AppRoutes {
         builder: (_) => const DiaryEditPage(),
       );
     }
-    final builder = routes[settings.name] ?? routes[home]!;
+    final builder = routes[settings.name];
+    if (builder == null) {
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => _UnknownRoutePage(routeName: settings.name),
+      );
+    }
     return MaterialPageRoute(settings: settings, builder: builder);
   }
 
-  static final routes = <String, WidgetBuilder>{
-    home: (_) => const DiaryHomePage(),
-    insight: (_) => const InsightPage(),
-    shapingStone: (_) => const ShapingStonePage(),
-    companion: (_) => const CompanionPage(),
-    review: (_) => const ReviewPage(),
-    search: (_) => const SearchPage(),
-    relationships: (_) => const RelationshipsPage(),
-    settings: (_) => const SettingsPage(),
-    customAi: (_) => const CustomAiPage(),
-    calendarMemory: (_) => const CalendarMemoryPage(),
-    memoryManagement: (_) => const MemoryManagementPage(),
-    aiTaskQueue: (_) => const AiTaskQueuePage(),
-    aiDebug: (_) => const AiDebugPage(),
-    recycleBin: (_) => const RecycleBinPage(),
-  };
+  static Map<String, WidgetBuilder> get routes => {
+        home: (_) => const DiaryHomePage(),
+        insight: (_) => const InsightPage(),
+        shapingStone: (_) => const ShapingStonePage(),
+        companion: (_) => const CompanionPage(),
+        review: (_) => const ReviewPage(),
+        search: (_) => const SearchPage(),
+        relationships: (_) => const RelationshipsPage(),
+        settings: (_) => const SettingsPage(),
+        customAi: (_) => const CustomAiPage(),
+        calendarMemory: (_) => const CalendarMemoryPage(),
+        memoryManagement: (_) => const MemoryManagementPage(),
+        aiTaskQueue: (_) => const AiTaskQueuePage(),
+        aiDebug: (_) => const AiDebugPage(),
+        recycleBin: (_) => const RecycleBinPage(),
+      };
+}
+
+class _UnknownRoutePage extends StatelessWidget {
+  const _UnknownRoutePage({required this.routeName});
+
+  final String? routeName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('页面不存在')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text('没有找到页面：${routeName ?? 'unknown'}'),
+        ),
+      ),
+    );
+  }
 }
