@@ -221,6 +221,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     });
     try {
       await _repository.saveEntry(entry);
+      await _insightRepository.deleteForEntry(entry.id);
       await _analysisQueueRunner.enqueue(entry, start: false);
       unawaited(_analysisQueueRunner.processNext());
       if (!mounted) return;

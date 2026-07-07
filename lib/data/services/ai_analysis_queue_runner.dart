@@ -169,6 +169,8 @@ class AiAnalysisQueueRunner {
       await _queueRepository.enqueueEntry(entry);
       return;
     }
+    await _insightRepository.deleteForEntry(entry.id);
+    await _retrievalTraceRepository.deleteForEntry(entry.id);
 
     await _saveStage(
       job,

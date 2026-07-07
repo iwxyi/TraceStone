@@ -2928,6 +2928,45 @@ void main() {
           AiAnalysisJobState.pending);
     });
 
+    test('manual analysis rerun replaces stale insight output', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const insightRepository = InsightRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final date = DateTime(2026, 7, 3);
+      final entry = _entry(
+        id: 'manual-rerun-entry',
+        date: date,
+        content: '今天重新分析这篇日记。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await insightRepository.saveInsight(DiaryInsight(
+        entryId: entry.id,
+        entryDate: date,
+        generatedAt: date,
+        reflection: '旧洞察',
+        relatedMemories: const [],
+        emotion: '',
+        keywords: const [],
+        people: const [],
+        stoneTitle: '',
+        stoneDescription: '',
+        memorySummary: '',
+        memoryTags: const [],
+      ));
+      await queueRepository.enqueueEntry(entry);
+
+      await AiAnalysisQueueRunner(
+        analysisService: const _FakeDiaryAnalysisService(),
+      ).processNext();
+
+      final insight = await insightRepository.getInsight(entry.id);
+      final job = await queueRepository.getJob(entry.id);
+
+      expect(insight?.reflection, '本地测试洞察');
+      expect(job?.state, AiAnalysisJobState.completed);
+    });
+
     test('defers insight generation when custom AI is unavailable', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
