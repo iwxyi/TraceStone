@@ -1661,7 +1661,7 @@ void main() {
       const MaterialApp(home: CustomAiPage()),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(SwitchListTile));
+    await tester.tap(find.widgetWithText(SwitchListTile, '使用官方 AI'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('自定义 AI 会把当前日记'), findsOneWidget);
@@ -1689,6 +1689,7 @@ void main() {
 
     expect(find.text('已保存 AI 设置'), findsOneWidget);
     final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('ai.embeddingUseChatConfig'), isTrue);
     expect(prefs.getString('ai.embeddingModel'), 'text-embedding-3-small');
   });
 
@@ -1700,6 +1701,10 @@ void main() {
       'ai.baseUrl': <String>['https://bad.example'],
       'ai.apiKey': <String>['bad-key'],
       'ai.model': <String>['bad-model'],
+      'ai.embeddingUseChatConfig': <String>['bad'],
+      'ai.embeddingPlatform': <String>['OpenAI'],
+      'ai.embeddingBaseUrl': <String>['https://bad.example'],
+      'ai.embeddingApiKey': <String>['bad-key'],
       'ai.embeddingModel': <String>['bad-embedding-model'],
       'ai.customPrivacyAccepted': <String>['bad'],
     });

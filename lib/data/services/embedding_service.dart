@@ -17,6 +17,10 @@ class EmbeddingService {
   static const _platformKey = 'ai.platform';
   static const _baseUrlKey = 'ai.baseUrl';
   static const _apiKeyKey = 'ai.apiKey';
+  static const _embeddingUseChatConfigKey = 'ai.embeddingUseChatConfig';
+  static const _embeddingPlatformKey = 'ai.embeddingPlatform';
+  static const _embeddingBaseUrlKey = 'ai.embeddingBaseUrl';
+  static const _embeddingApiKeyKey = 'ai.embeddingApiKey';
   static const _embeddingModelKey = 'ai.embeddingModel';
   static const _defaultEmbeddingModel = 'text-embedding-3-small';
 
@@ -55,9 +59,21 @@ class EmbeddingService {
     if (useOfficial) {
       throw const AiClientException('当前未开启自定义 AI', retryable: false);
     }
-    final platform = _safeGetString(prefs, _platformKey) ?? 'OpenAI';
-    final baseUrl = (_safeGetString(prefs, _baseUrlKey) ?? '').trim();
-    final apiKey = (_safeGetString(prefs, _apiKeyKey) ?? '').trim();
+    final useChatConfig =
+        _safeGetBool(prefs, _embeddingUseChatConfigKey) ?? true;
+    final platform = useChatConfig
+        ? _safeGetString(prefs, _platformKey) ?? 'OpenAI'
+        : _safeGetString(prefs, _embeddingPlatformKey) ?? 'OpenAI';
+    final baseUrlValue = useChatConfig
+        ? _safeGetString(prefs, _baseUrlKey)
+        : _safeGetString(prefs, _embeddingBaseUrlKey) ??
+            _safeGetString(prefs, _baseUrlKey);
+    final apiKeyValue = useChatConfig
+        ? _safeGetString(prefs, _apiKeyKey)
+        : _safeGetString(prefs, _embeddingApiKeyKey) ??
+            _safeGetString(prefs, _apiKeyKey);
+    final baseUrl = (baseUrlValue ?? '').trim();
+    final apiKey = (apiKeyValue ?? '').trim();
     final model =
         (_safeGetString(prefs, _embeddingModelKey) ?? _defaultEmbeddingModel)
             .trim();

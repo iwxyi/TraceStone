@@ -48,6 +48,10 @@ class _CustomAiPageState extends State<CustomAiPage> {
   static const _baseUrlKey = 'ai.baseUrl';
   static const _apiKeyKey = 'ai.apiKey';
   static const _modelKey = 'ai.model';
+  static const _embeddingUseChatConfigKey = 'ai.embeddingUseChatConfig';
+  static const _embeddingPlatformKey = 'ai.embeddingPlatform';
+  static const _embeddingBaseUrlKey = 'ai.embeddingBaseUrl';
+  static const _embeddingApiKeyKey = 'ai.embeddingApiKey';
   static const _embeddingModelKey = 'ai.embeddingModel';
   static const _privacyAcceptedKey = 'ai.customPrivacyAccepted';
 
@@ -55,15 +59,20 @@ class _CustomAiPageState extends State<CustomAiPage> {
       TextEditingController(text: 'https://api.openai.com/v1');
   final _apiKeyController = TextEditingController();
   final _modelController = TextEditingController();
+  final _embeddingBaseUrlController =
+      TextEditingController(text: 'https://api.openai.com/v1');
+  final _embeddingApiKeyController = TextEditingController();
   final _embeddingModelController =
       TextEditingController(text: 'text-embedding-3-small');
 
   bool _useOfficialAi = true;
+  bool _embeddingUseChatConfig = true;
   bool _isLoadingModels = false;
   bool _isTestingConfig = false;
   bool _modelsFetchedOnline = false;
   bool _privacyAccepted = false;
   String _selectedPlatform = 'OpenAI';
+  String _selectedEmbeddingPlatform = 'OpenAI';
   String? _modelFetchHint;
   String? _lastFetchUrl;
   Timer? _modelFetchDebounce;
@@ -110,6 +119,8 @@ class _CustomAiPageState extends State<CustomAiPage> {
     _baseUrlController.dispose();
     _apiKeyController.dispose();
     _modelController.dispose();
+    _embeddingBaseUrlController.dispose();
+    _embeddingApiKeyController.dispose();
     _embeddingModelController.dispose();
     super.dispose();
   }
@@ -125,9 +136,21 @@ class _CustomAiPageState extends State<CustomAiPage> {
       _apiKeyController.text = _safeGetString(prefs, _apiKeyKey) ?? '';
       _modelController.text = _safeGetString(prefs, _modelKey) ??
           (_defaultModels[_selectedPlatform] ?? '');
+      _embeddingUseChatConfig =
+          _safeGetBool(prefs, _embeddingUseChatConfigKey) ?? true;
+      _selectedEmbeddingPlatform =
+          _safeGetString(prefs, _embeddingPlatformKey) ?? 'OpenAI';
+      _embeddingBaseUrlController.text =
+          _safeGetString(prefs, _embeddingBaseUrlKey) ??
+              _platforms
+                  .firstWhere((item) => item.$1 == _selectedEmbeddingPlatform,
+                      orElse: () => _platforms.first)
+                  .$2;
+      _embeddingApiKeyController.text =
+          _safeGetString(prefs, _embeddingApiKeyKey) ?? '';
       _embeddingModelController.text =
           _safeGetString(prefs, _embeddingModelKey) ??
-              (_defaultEmbeddingModels[_selectedPlatform] ??
+              (_defaultEmbeddingModels[_selectedEmbeddingPlatform] ??
                   'text-embedding-3-small');
       _privacyAccepted = _safeGetBool(prefs, _privacyAcceptedKey) ?? false;
     });
@@ -166,6 +189,12 @@ class _CustomAiPageState extends State<CustomAiPage> {
     await prefs.setString(_baseUrlKey, _baseUrlController.text.trim());
     await prefs.setString(_apiKeyKey, _apiKeyController.text.trim());
     await prefs.setString(_modelKey, _modelController.text.trim());
+    await prefs.setBool(_embeddingUseChatConfigKey, _embeddingUseChatConfig);
+    await prefs.setString(_embeddingPlatformKey, _selectedEmbeddingPlatform);
+    await prefs.setString(
+        _embeddingBaseUrlKey, _embeddingBaseUrlController.text.trim());
+    await prefs.setString(
+        _embeddingApiKeyKey, _embeddingApiKeyController.text.trim());
     await prefs.setString(
         _embeddingModelKey, _embeddingModelController.text.trim());
     await prefs.setBool(_privacyAcceptedKey, _privacyAccepted);
@@ -242,10 +271,15 @@ class _CustomAiPageState extends State<CustomAiPage> {
       final response = await http.post(uri, headers: headers, body: body);
       if (!mounted) return;
       final ok = response.statusCode >= 200 && response.statusCode < 300;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(ok ? '模型配置可用' : '模型配置不可用：${response.statusCode}')),
-      );
+      final embeddingResult = await _testEmbeddingConfiguration();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok
+            ? embeddingResult == null
+                ? '模型配置可用，向量配置可用'
+                : '模型配置可用；向量不可用，将回退本地：$embeddingResult'
+            : '模型配置不可用：${response.statusCode}'),
+      ));
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -270,6 +304,61 @@ class _CustomAiPageState extends State<CustomAiPage> {
           _defaultEmbeddingModels[value] ?? 'text-embedding-3-small';
     });
     _fetchModels();
+  }
+
+  void _handleEmbeddingPlatformChanged(String? value) {
+    if (value == null) return;
+    final preset = _platforms.firstWhere((item) => item.$1 == value);
+    setState(() {
+      _selectedEmbeddingPlatform = preset.$1;
+      _embeddingBaseUrlController.text = preset.$2;
+      _embeddingModelController.text =
+          _defaultEmbeddingModels[value] ?? 'text-embedding-3-small';
+    });
+  }
+
+  Future<String?> _testEmbeddingConfiguration() async {
+    final platform = _embeddingUseChatConfig
+        ? _selectedPlatform
+        : _selectedEmbeddingPlatform;
+    final baseUrl = (_embeddingUseChatConfig
+            ? _baseUrlController.text
+            : _embeddingBaseUrlController.text)
+        .trim();
+    final apiKey = (_embeddingUseChatConfig
+            ? _apiKeyController.text
+            : _embeddingApiKeyController.text)
+        .trim();
+    final model = _embeddingModelController.text.trim();
+    if (platform == 'Claude' || baseUrl.contains('anthropic')) {
+      return '当前平台不支持 OpenAI embeddings';
+    }
+    if (baseUrl.isEmpty || apiKey.isEmpty || model.isEmpty) {
+      return '向量接口、秘钥或模型为空';
+    }
+    try {
+      final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
+      final response = await http.post(
+        Uri.parse('$normalized/embeddings'),
+        headers: {
+          'Authorization': 'Bearer $apiKey',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'model': model,
+          'input': 'TraceStone embedding test',
+        }),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return '${response.statusCode}';
+      }
+      final data = jsonDecode(response.body);
+      final items = data is Map<String, dynamic> ? data['data'] : null;
+      if (items is! List || items.isEmpty) return '响应为空';
+      return null;
+    } on Object catch (error) {
+      return error.toString();
+    }
   }
 
   void _scheduleModelFetch() {
@@ -474,6 +563,40 @@ class _CustomAiPageState extends State<CustomAiPage> {
                         ),
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                       ),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('向量复用当前 AI 配置'),
+                        subtitle: const Text('同一服务同时支持聊天和 embeddings 时开启'),
+                        value: _embeddingUseChatConfig,
+                        onChanged: (value) =>
+                            setState(() => _embeddingUseChatConfig = value),
+                      ),
+                      if (!_embeddingUseChatConfig) ...[
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedEmbeddingPlatform,
+                          decoration: const InputDecoration(labelText: '向量平台'),
+                          items: [
+                            for (final item in _platforms)
+                              DropdownMenuItem(
+                                  value: item.$1, child: Text(item.$1)),
+                          ],
+                          onChanged: _handleEmbeddingPlatformChanged,
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _embeddingBaseUrlController,
+                          decoration:
+                              const InputDecoration(labelText: '向量接口 URL'),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _embeddingApiKeyController,
+                          decoration: const InputDecoration(labelText: '向量秘钥'),
+                          obscureText: true,
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       TextField(
                         controller: _embeddingModelController,

@@ -4669,6 +4669,24 @@ void main() {
       expect(result.dimensions, EmbeddingService.dimensions);
     });
 
+    test('falls back to local embeddings when independent provider unsupported',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.useOfficial': false,
+        'ai.embeddingUseChatConfig': false,
+        'ai.embeddingPlatform': 'Claude',
+        'ai.embeddingBaseUrl': 'https://api.anthropic.com/v1',
+        'ai.embeddingApiKey': 'test-key',
+        'ai.embeddingModel': 'text-embedding-3-small',
+      });
+      const service = EmbeddingService();
+
+      final result = await service.embedForAi('今天跑步 状态很好');
+
+      expect(result.modelId, EmbeddingService.modelId);
+      expect(result.modelVersion, EmbeddingService.modelVersion);
+    });
+
     test('reads malformed embedding json with safe defaults', () async {
       SharedPreferences.setMockInitialValues({
         'ai.embeddings.typeIndex.memory': <String>['memory:bad-vector'],
