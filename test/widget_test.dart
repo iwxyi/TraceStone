@@ -1672,6 +1672,10 @@ void main() {
     );
     await tester.enterText(find.widgetWithText(TextField, '秘钥'), 'test-key');
     await tester.enterText(find.widgetWithText(TextField, '模型'), 'test-model');
+    await tester.enterText(
+      find.widgetWithText(TextField, '向量模型'),
+      'text-embedding-3-small',
+    );
     await tester.drag(find.byType(ListView), const Offset(0, -320));
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存设置'));
@@ -1684,6 +1688,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('已保存 AI 设置'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('ai.embeddingModel'), 'text-embedding-3-small');
   });
 
   testWidgets('custom ai settings ignore invalid stored preference types',
@@ -1694,6 +1700,7 @@ void main() {
       'ai.baseUrl': <String>['https://bad.example'],
       'ai.apiKey': <String>['bad-key'],
       'ai.model': <String>['bad-model'],
+      'ai.embeddingModel': <String>['bad-embedding-model'],
       'ai.customPrivacyAccepted': <String>['bad'],
     });
 
@@ -1705,6 +1712,7 @@ void main() {
     expect(find.text('自定义 AI'), findsOneWidget);
     expect(find.text('使用官方 AI'), findsOneWidget);
     expect(find.text('gpt-4.1-mini'), findsOneWidget);
+    expect(find.text('text-embedding-3-small'), findsOneWidget);
   });
 
   testWidgets('diary editor ignores invalid stored preference types',

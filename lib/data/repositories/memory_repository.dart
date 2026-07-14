@@ -172,7 +172,7 @@ class MemoryRepository {
     AiEmbeddingResult? queryEmbedding;
     Map<String, AiEmbedding> memoryEmbeddings = const {};
     try {
-      queryEmbedding = _embeddingService.embed(
+      queryEmbedding = await _embeddingService.embedForAi(
         '${entry.content} ${entry.location} ${entry.weather}',
       );
       memoryEmbeddings = {
@@ -432,7 +432,7 @@ class MemoryRepository {
       ...memory.people,
       ...memory.tags,
     ].join('\n');
-    final result = _embeddingService.embed(text);
+    final result = await _embeddingService.embedForAi(text);
     final existing = await _embeddingRepository.getBySource(
       sourceType: AiEmbeddingSourceType.memory,
       sourceId: memory.id,

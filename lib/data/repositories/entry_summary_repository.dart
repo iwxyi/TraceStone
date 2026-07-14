@@ -193,7 +193,7 @@ class EntrySummaryRepository {
     const textBuilder = AiEmbeddingTextBuilder();
     const embeddingRepository = AiEmbeddingRepository();
     final text = textBuilder.summaryText(summary);
-    final result = embeddingService.embed(text);
+    final result = await embeddingService.embedForAi(text);
     await embeddingRepository.saveEmbedding(AiEmbedding(
       id: '${AiEmbeddingSourceType.summary.name}:${summary.entryId}',
       sourceType: AiEmbeddingSourceType.summary,

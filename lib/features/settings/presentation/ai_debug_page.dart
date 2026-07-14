@@ -1590,8 +1590,8 @@ class _JobCard extends StatelessWidget {
     const textBuilder = AiEmbeddingTextBuilder();
     const embeddingService = EmbeddingService();
     const embeddingRepository = AiEmbeddingRepository();
-    final result =
-        embeddingService.embed(textBuilder.entryText(entry, summary));
+    final result = await embeddingService
+        .embedForAi(textBuilder.entryText(entry, summary));
     await embeddingRepository.saveEmbedding(AiEmbedding(
       id: '${AiEmbeddingSourceType.entry.name}:${entry.id}',
       sourceType: AiEmbeddingSourceType.entry,

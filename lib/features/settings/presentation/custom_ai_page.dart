@@ -48,12 +48,15 @@ class _CustomAiPageState extends State<CustomAiPage> {
   static const _baseUrlKey = 'ai.baseUrl';
   static const _apiKeyKey = 'ai.apiKey';
   static const _modelKey = 'ai.model';
+  static const _embeddingModelKey = 'ai.embeddingModel';
   static const _privacyAcceptedKey = 'ai.customPrivacyAccepted';
 
   final _baseUrlController =
       TextEditingController(text: 'https://api.openai.com/v1');
   final _apiKeyController = TextEditingController();
   final _modelController = TextEditingController();
+  final _embeddingModelController =
+      TextEditingController(text: 'text-embedding-3-small');
 
   bool _useOfficialAi = true;
   bool _isLoadingModels = false;
@@ -80,6 +83,12 @@ class _CustomAiPageState extends State<CustomAiPage> {
     'OpenRouter': 'openai/gpt-4.1-mini',
   };
 
+  static const _defaultEmbeddingModels = {
+    'OpenAI': 'text-embedding-3-small',
+    'DeepSeek': 'text-embedding-3-small',
+    'OpenRouter': 'openai/text-embedding-3-small',
+  };
+
   bool get _canAutoFetch =>
       !_useOfficialAi &&
       _apiKeyController.text.trim().isNotEmpty &&
@@ -101,6 +110,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
     _baseUrlController.dispose();
     _apiKeyController.dispose();
     _modelController.dispose();
+    _embeddingModelController.dispose();
     super.dispose();
   }
 
@@ -115,6 +125,10 @@ class _CustomAiPageState extends State<CustomAiPage> {
       _apiKeyController.text = _safeGetString(prefs, _apiKeyKey) ?? '';
       _modelController.text = _safeGetString(prefs, _modelKey) ??
           (_defaultModels[_selectedPlatform] ?? '');
+      _embeddingModelController.text =
+          _safeGetString(prefs, _embeddingModelKey) ??
+              (_defaultEmbeddingModels[_selectedPlatform] ??
+                  'text-embedding-3-small');
       _privacyAccepted = _safeGetBool(prefs, _privacyAcceptedKey) ?? false;
     });
     if (_canAutoFetch) {
@@ -152,6 +166,8 @@ class _CustomAiPageState extends State<CustomAiPage> {
     await prefs.setString(_baseUrlKey, _baseUrlController.text.trim());
     await prefs.setString(_apiKeyKey, _apiKeyController.text.trim());
     await prefs.setString(_modelKey, _modelController.text.trim());
+    await prefs.setString(
+        _embeddingModelKey, _embeddingModelController.text.trim());
     await prefs.setBool(_privacyAcceptedKey, _privacyAccepted);
     if (!_useOfficialAi &&
         _baseUrlController.text.trim().isNotEmpty &&
@@ -250,6 +266,8 @@ class _CustomAiPageState extends State<CustomAiPage> {
       _modelFetchHint = null;
       _lastFetchUrl = null;
       _modelController.text = _defaultModels[value] ?? '';
+      _embeddingModelController.text =
+          _defaultEmbeddingModels[value] ?? 'text-embedding-3-small';
     });
     _fetchModels();
   }
@@ -453,6 +471,15 @@ class _CustomAiPageState extends State<CustomAiPage> {
                               ),
                             ),
                           ),
+                        ),
+                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _embeddingModelController,
+                        decoration: const InputDecoration(
+                          labelText: '向量模型',
+                          helperText: '用于历史相似度检索，OpenAI 兼容接口默认可用',
                         ),
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                       ),

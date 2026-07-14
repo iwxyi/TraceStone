@@ -1,6 +1,11 @@
+import 'dart:convert';
 import 'dart:math';
 
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/ai_embedding.dart';
+import 'ai_client_service.dart';
 
 class EmbeddingService {
   const EmbeddingService();
@@ -8,6 +13,20 @@ class EmbeddingService {
   static const modelId = 'local-hashing-embedding';
   static const modelVersion = 'v1';
   static const dimensions = 128;
+  static const _useOfficialKey = 'ai.useOfficial';
+  static const _platformKey = 'ai.platform';
+  static const _baseUrlKey = 'ai.baseUrl';
+  static const _apiKeyKey = 'ai.apiKey';
+  static const _embeddingModelKey = 'ai.embeddingModel';
+  static const _defaultEmbeddingModel = 'text-embedding-3-small';
+
+  Future<AiEmbeddingResult> embedForAi(String text) async {
+    try {
+      return await _embedRemote(text);
+    } on Object {
+      return embed(text);
+    }
+  }
 
   AiEmbeddingResult embed(String text) {
     final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -28,6 +47,92 @@ class EmbeddingService {
       vector: vector,
       textHash: _hash(normalized).toRadixString(16),
     );
+  }
+
+  Future<AiEmbeddingResult> _embedRemote(String text) async {
+    final prefs = await SharedPreferences.getInstance();
+    final useOfficial = _safeGetBool(prefs, _useOfficialKey) ?? true;
+    if (useOfficial) {
+      throw const AiClientException('当前未开启自定义 AI', retryable: false);
+    }
+    final platform = _safeGetString(prefs, _platformKey) ?? 'OpenAI';
+    final baseUrl = (_safeGetString(prefs, _baseUrlKey) ?? '').trim();
+    final apiKey = (_safeGetString(prefs, _apiKeyKey) ?? '').trim();
+    final model =
+        (_safeGetString(prefs, _embeddingModelKey) ?? _defaultEmbeddingModel)
+            .trim();
+    if (platform == 'Claude' || baseUrl.contains('anthropic')) {
+      throw const AiClientException('当前平台不支持 OpenAI embeddings');
+    }
+    if (baseUrl.isEmpty || apiKey.isEmpty || model.isEmpty) {
+      throw const AiClientException('请先完成自定义 AI 向量配置', retryable: false);
+    }
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final uri =
+        Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/embeddings');
+    final response = await http.post(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': model,
+        'input': normalized,
+      }),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AiClientException('向量请求失败：${response.statusCode}');
+    }
+    final data = jsonDecode(response.body);
+    if (data is! Map<String, dynamic>) {
+      throw const AiClientException('向量响应格式异常');
+    }
+    final items = data['data'];
+    if (items is! List || items.isEmpty) {
+      throw const AiClientException('向量响应为空');
+    }
+    final first = items.first;
+    if (first is! Map<String, dynamic>) {
+      throw const AiClientException('向量响应格式异常');
+    }
+    final rawVector = first['embedding'];
+    if (rawVector is! List || rawVector.isEmpty) {
+      throw const AiClientException('向量结果为空');
+    }
+    final vector = rawVector
+        .map((value) => value is num ? value.toDouble() : null)
+        .whereType<double>()
+        .toList();
+    if (vector.isEmpty) {
+      throw const AiClientException('向量结果为空');
+    }
+    _normalize(vector);
+    return AiEmbeddingResult(
+      modelId: model,
+      modelVersion: 'remote',
+      dimensions: vector.length,
+      vector: vector,
+      textHash: _hash(normalized).toRadixString(16),
+    );
+  }
+
+  bool? _safeGetBool(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is bool ? value : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  String? _safeGetString(SharedPreferences prefs, String key) {
+    try {
+      final value = prefs.get(key);
+      return value is String ? value : null;
+    } on Object {
+      return null;
+    }
   }
 
   double cosineSimilarity(List<double> a, List<double> b) {

@@ -4657,6 +4657,18 @@ void main() {
       expect(service.cosineSimilarity(empty.vector, diary.vector), 0);
     });
 
+    test('falls back to local embeddings when custom AI is unavailable',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const service = EmbeddingService();
+
+      final result = await service.embedForAi('今天跑步 状态很好');
+
+      expect(result.modelId, EmbeddingService.modelId);
+      expect(result.modelVersion, EmbeddingService.modelVersion);
+      expect(result.dimensions, EmbeddingService.dimensions);
+    });
+
     test('reads malformed embedding json with safe defaults', () async {
       SharedPreferences.setMockInitialValues({
         'ai.embeddings.typeIndex.memory': <String>['memory:bad-vector'],

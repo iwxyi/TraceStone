@@ -81,7 +81,7 @@ class AiSearchService {
     final AiEmbeddingResult queryEmbedding;
     final List<AiEmbedding> embeddings;
     try {
-      queryEmbedding = _embeddingService.embed(query);
+      queryEmbedding = await _embeddingService.embedForAi(query);
       final profileSources = await _profileSearchSources();
       final stoneSources = await _stoneSearchSources();
       await _ensureProfileEmbeddings(profileSources);
@@ -346,7 +346,7 @@ class AiSearchService {
     required String entryId,
     required String text,
   }) async {
-    final result = _embeddingService.embed(text);
+    final result = await _embeddingService.embedForAi(text);
     final existing = await _embeddingRepository.getBySource(
       sourceType: sourceType,
       sourceId: sourceId,

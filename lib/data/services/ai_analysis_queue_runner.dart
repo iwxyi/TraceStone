@@ -848,14 +848,14 @@ class AiAnalysisQueueRunner {
     );
     if (entryEmbedding == null || summaryEmbedding == null) return false;
     if (entryEmbedding.textHash !=
-        _embeddingService
-            .embed(_embeddingTextBuilder.entryText(entry, summary))
+        (await _embeddingService
+                .embedForAi(_embeddingTextBuilder.entryText(entry, summary)))
             .textHash) {
       return false;
     }
     if (summaryEmbedding.textHash !=
-        _embeddingService
-            .embed(_embeddingTextBuilder.summaryText(summary))
+        (await _embeddingService
+                .embedForAi(_embeddingTextBuilder.summaryText(summary)))
             .textHash) {
       return false;
     }
@@ -866,8 +866,8 @@ class AiAnalysisQueueRunner {
       );
       if (embedding == null) return false;
       if (embedding.textHash !=
-          _embeddingService
-              .embed(_embeddingTextBuilder.segmentText(segment))
+          (await _embeddingService
+                  .embedForAi(_embeddingTextBuilder.segmentText(segment)))
               .textHash) {
         return false;
       }
@@ -889,7 +889,7 @@ class AiAnalysisQueueRunner {
     required String sourceId,
     required String text,
   }) async {
-    final result = _embeddingService.embed(text);
+    final result = await _embeddingService.embedForAi(text);
     await _embeddingRepository.saveEmbedding(AiEmbedding(
       id: '${sourceType.name}:$sourceId',
       sourceType: sourceType,

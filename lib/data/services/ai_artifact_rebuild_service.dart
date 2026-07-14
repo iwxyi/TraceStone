@@ -264,7 +264,7 @@ class AiArtifactRebuildService {
     required String sourceId,
     required String text,
   }) async {
-    final result = _embeddingService.embed(text);
+    final result = await _embeddingService.embedForAi(text);
     final id = '${sourceType.name}:$sourceId';
     await _embeddingRepository.saveEmbedding(AiEmbedding(
       id: id,
