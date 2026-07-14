@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ai_analysis_job.dart';
 import '../models/diary_entry.dart';
+import 'period_summary_repository.dart';
 import 'ai_analysis_queue_bus.dart';
 
 class AiAnalysisQueueRepository {
@@ -26,6 +27,73 @@ class AiAnalysisQueueRepository {
       id: entry.id,
       entryId: entry.id,
       pipelineVersion: entry.updatedAt.microsecondsSinceEpoch,
+      state: AiAnalysisJobState.pending,
+      currentStage: AiAnalysisStage.queued,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      batchId: batchId ?? existing?.batchId,
+      batchLabel: batchLabel ?? existing?.batchLabel,
+    );
+    await prefs.setString('$_prefix${job.id}', jsonEncode(job.toJson()));
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    if (!index.contains(job.id)) {
+      index.add(job.id);
+      await prefs.setStringList(_indexKey, index);
+    }
+    AiAnalysisQueueBus.bump();
+    return job;
+  }
+
+  Future<AiAnalysisJob> enqueueMonthSummary(
+    DateTime month, {
+    int? pipelineVersion,
+    String? batchId,
+    String? batchLabel,
+  }) {
+    final target = DateTime(month.year, month.month);
+    return _enqueuePeriodSummary(
+      id: PeriodSummaryRepository.monthId(target),
+      type: AiAnalysisJobType.monthSummary,
+      targetId: PeriodSummaryRepository.monthId(target),
+      pipelineVersion: pipelineVersion ?? DateTime.now().microsecondsSinceEpoch,
+      batchId: batchId,
+      batchLabel: batchLabel,
+    );
+  }
+
+  Future<AiAnalysisJob> enqueueYearSummary(
+    int year, {
+    int? pipelineVersion,
+    String? batchId,
+    String? batchLabel,
+  }) {
+    return _enqueuePeriodSummary(
+      id: PeriodSummaryRepository.yearId(year),
+      type: AiAnalysisJobType.yearSummary,
+      targetId: PeriodSummaryRepository.yearId(year),
+      pipelineVersion: pipelineVersion ?? DateTime.now().microsecondsSinceEpoch,
+      batchId: batchId,
+      batchLabel: batchLabel,
+    );
+  }
+
+  Future<AiAnalysisJob> _enqueuePeriodSummary({
+    required String id,
+    required AiAnalysisJobType type,
+    required String targetId,
+    required int pipelineVersion,
+    String? batchId,
+    String? batchLabel,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final existing = await getJob(id);
+    final job = AiAnalysisJob(
+      id: id,
+      entryId: targetId,
+      type: type,
+      targetId: targetId,
+      pipelineVersion: pipelineVersion,
       state: AiAnalysisJobState.pending,
       currentStage: AiAnalysisStage.queued,
       createdAt: existing?.createdAt ?? now,

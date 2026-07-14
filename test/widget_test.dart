@@ -386,6 +386,20 @@ void main() {
     expect(find.text('AI 周期总结已生成'), findsOneWidget);
   });
 
+  testWidgets('AI task queue page shows queued period jobs', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await const AiAnalysisQueueRepository().enqueueYearSummary(2026);
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AI 任务队列'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('周期总结'), findsOneWidget);
+    expect(find.text('2026年 年度总结'), findsOneWidget);
+  });
+
   testWidgets('unknown named route does not fall back to today page',
       (tester) async {
     SharedPreferences.setMockInitialValues({});

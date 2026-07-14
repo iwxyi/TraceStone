@@ -5,17 +5,20 @@ import '../models/diary_entry.dart';
 import '../models/diary_insight.dart';
 import '../models/diary_segment.dart';
 import '../models/entry_summary.dart';
+import '../models/period_summary.dart';
 import '../repositories/ai_analysis_queue_repository.dart';
 import '../repositories/ai_embedding_repository.dart';
 import '../repositories/ai_retrieval_trace_repository.dart';
 import '../repositories/diary_repository.dart';
 import '../repositories/entry_summary_repository.dart';
 import '../repositories/insight_repository.dart';
+import '../repositories/period_summary_repository.dart';
 import 'diary_analysis_service.dart';
 import 'embedding_service.dart';
 import 'entry_summary_service.dart';
 import 'ai_client_service.dart';
 import 'ai_embedding_text_builder.dart';
+import 'period_summary_service.dart';
 
 class AiAnalysisQueueRunner {
   const AiAnalysisQueueRunner({
@@ -29,6 +32,8 @@ class AiAnalysisQueueRunner {
     EmbeddingService? embeddingService,
     EntrySummaryService? summaryService,
     AiEmbeddingTextBuilder? embeddingTextBuilder,
+    PeriodSummaryRepository? periodSummaryRepository,
+    PeriodSummaryService? periodSummaryService,
   })  : _queueRepository = queueRepository ?? const AiAnalysisQueueRepository(),
         _embeddingRepository =
             embeddingRepository ?? const AiEmbeddingRepository(),
@@ -42,7 +47,11 @@ class AiAnalysisQueueRunner {
         _embeddingService = embeddingService ?? const EmbeddingService(),
         _summaryService = summaryService ?? const EntrySummaryService(),
         _embeddingTextBuilder =
-            embeddingTextBuilder ?? const AiEmbeddingTextBuilder();
+            embeddingTextBuilder ?? const AiEmbeddingTextBuilder(),
+        _periodSummaryRepository =
+            periodSummaryRepository ?? const PeriodSummaryRepository(),
+        _periodSummaryService =
+            periodSummaryService ?? const PeriodSummaryService();
 
   static bool _isRunning = false;
 
@@ -56,6 +65,8 @@ class AiAnalysisQueueRunner {
   final EmbeddingService _embeddingService;
   final EntrySummaryService _summaryService;
   final AiEmbeddingTextBuilder _embeddingTextBuilder;
+  final PeriodSummaryRepository _periodSummaryRepository;
+  final PeriodSummaryService _periodSummaryService;
 
   Future<void> enqueue(DiaryEntry entry, {bool start = true}) async {
     if (entry.content.trim().isEmpty) return;
@@ -147,6 +158,17 @@ class AiAnalysisQueueRunner {
     for (final job in jobs) {
       if (job.state != AiAnalysisJobState.incomplete) continue;
       if (job.lastError != '上次整理被中断，已等待继续') continue;
+      if (job.type != AiAnalysisJobType.diary) {
+        final status = await _periodSummaryRepository.getStatus(job.targetId);
+        if (status?.state == PeriodSummaryState.failed) continue;
+        await _periodSummaryRepository.saveStatus(PeriodSummaryStatus(
+          id: job.targetId,
+          state: PeriodSummaryState.failed,
+          updatedAt: DateTime.now(),
+          message: '上次生成被系统中断，下次将继续',
+        ));
+        continue;
+      }
       final status = await _insightRepository.getStatus(job.entryId);
       if (status?.state == DiaryAnalysisState.incomplete) continue;
       await _insightRepository.saveStatus(DiaryAnalysisStatus(
@@ -159,6 +181,11 @@ class AiAnalysisQueueRunner {
   }
 
   Future<void> _runJob(AiAnalysisJob job) async {
+    if (job.type == AiAnalysisJobType.monthSummary ||
+        job.type == AiAnalysisJobType.yearSummary) {
+      await _runPeriodSummaryJob(job);
+      return;
+    }
     final now = DateTime.now();
     final entry = await _diaryRepository.getEntryById(job.entryId);
     if (entry == null) {
@@ -449,6 +476,178 @@ class AiAnalysisQueueRunner {
     } on Object catch (error) {
       await _handleUnexpectedStageError(job, error, now);
     }
+  }
+
+  Future<void> _runPeriodSummaryJob(AiAnalysisJob job) async {
+    final now = DateTime.now();
+    final entries = await _diaryRepository.listEntries();
+    final period = _periodFromJob(job);
+    if (period == null) {
+      await _failJob(job, '周期任务目标无效：${job.targetId}');
+      return;
+    }
+    await _savePeriodStage(
+      job,
+      state: AiAnalysisJobState.running,
+      stage: AiAnalysisStage.preparing,
+      message: '准备周期资料',
+      inputSummary: 'target=${job.targetId}',
+      outputSummary: _periodEntrySummary(job.type, period, entries),
+      clearLastError: true,
+    );
+    var completedStages = _markCompleted(
+      job.completedStages,
+      AiAnalysisStage.preparing,
+    );
+    try {
+      if (job.type == AiAnalysisJobType.yearSummary) {
+        await _ensureMonthlySummariesForYear(job, period.year, entries);
+      }
+      await _savePeriodStage(
+        job,
+        state: AiAnalysisJobState.running,
+        stage: AiAnalysisStage.generatingSummary,
+        message:
+            job.type == AiAnalysisJobType.monthSummary ? '生成月度总结' : '生成年度总结',
+        completedStages: completedStages,
+        inputSummary: 'target=${job.targetId}',
+        clearLastError: true,
+      );
+      final summary = job.type == AiAnalysisJobType.monthSummary
+          ? await _periodSummaryService.buildMonthSummary(period, entries)
+          : await _periodSummaryService.buildYearSummary(period.year, entries);
+      completedStages = _markCompleted(
+        completedStages,
+        AiAnalysisStage.generatingSummary,
+      );
+      await _savePeriodStage(
+        job,
+        state: AiAnalysisJobState.completed,
+        stage: AiAnalysisStage.completed,
+        message:
+            job.type == AiAnalysisJobType.monthSummary ? '月度总结已生成' : '年度总结已生成',
+        completedStages: completedStages,
+        outputSummary: [
+          'summary=${summary.id}',
+          'entries=${summary.entryCount}',
+          'generator=${summary.generator}',
+        ].join(' '),
+        clearLastError: true,
+      );
+    } on Object catch (error) {
+      await _handlePeriodSummaryError(job, error, now);
+    }
+  }
+
+  Future<void> _ensureMonthlySummariesForYear(
+    AiAnalysisJob job,
+    int year,
+    List<DiaryEntry> entries,
+  ) async {
+    final months = entries
+        .where((entry) => entry.date.year == year)
+        .map((entry) => DateTime(entry.date.year, entry.date.month))
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.compareTo(b));
+    for (final month in months) {
+      final id = PeriodSummaryRepository.monthId(month);
+      final existing = await _periodSummaryRepository.getSummary(id);
+      if (existing != null && existing.generator.startsWith('ai-')) continue;
+      await _savePeriodStage(
+        job,
+        state: AiAnalysisJobState.running,
+        stage: AiAnalysisStage.generatingSummary,
+        message: '补齐${month.month}月月度总结',
+        inputSummary: 'year=$year month=${month.month}',
+        outputSummary: 'beforeYearSummary=true',
+        clearLastError: true,
+      );
+      await _periodSummaryService.buildMonthSummary(month, entries);
+    }
+  }
+
+  Future<void> _handlePeriodSummaryError(
+    AiAnalysisJob job,
+    Object error,
+    DateTime now,
+  ) async {
+    final latest = await _queueRepository.getJob(job.id) ?? job;
+    final nextRetry = latest.retryCount + 1;
+    final nextState = nextRetry < 3
+        ? AiAnalysisJobState.incomplete
+        : AiAnalysisJobState.failed;
+    await _queueRepository.saveJob(latest.copyWith(
+      state: nextState,
+      updatedAt: now,
+      retryCount: nextRetry,
+      lastError: error.toString(),
+      stageLogs: _appendStageLog(
+        latest.stageLogs,
+        AiAnalysisStageLog(
+          stage: latest.currentStage,
+          startedAt: DateTime.now(),
+          message: nextState == AiAnalysisJobState.incomplete
+              ? '周期总结中断，等待继续'
+              : '周期总结失败',
+          inputSummary: 'target=${job.targetId}',
+          error: error.toString(),
+          retryCount: nextRetry,
+        ),
+      ),
+    ));
+    await _periodSummaryRepository.saveStatus(PeriodSummaryStatus(
+      id: job.targetId,
+      state: PeriodSummaryState.failed,
+      updatedAt: now,
+      message: error.toString(),
+    ));
+  }
+
+  Future<void> _savePeriodStage(
+    AiAnalysisJob job, {
+    required AiAnalysisJobState state,
+    required AiAnalysisStage stage,
+    required String message,
+    List<AiAnalysisStage>? completedStages,
+    bool clearLastError = false,
+    String? inputSummary,
+    String? outputSummary,
+  }) async {
+    final latest = await _queueRepository.getJob(job.id) ?? job;
+    final logs = _appendStageLog(
+      latest.stageLogs,
+      AiAnalysisStageLog(
+        stage: stage,
+        startedAt: DateTime.now(),
+        message: message,
+        inputSummary: inputSummary ?? 'target=${job.targetId}',
+        outputSummary: outputSummary ??
+            [
+              if (completedStages != null)
+                'completed=${completedStages.map((item) => item.name).join(',')}',
+              'state=${state.name}',
+            ].join(' '),
+        retryCount: latest.retryCount,
+      ),
+    );
+    await _queueRepository.saveJob(latest.copyWith(
+      state: state,
+      currentStage: stage,
+      updatedAt: DateTime.now(),
+      completedStages: completedStages,
+      stageLogs: logs,
+      retryCount: latest.retryCount,
+      clearLastError: clearLastError,
+    ));
+    await _periodSummaryRepository.saveStatus(PeriodSummaryStatus(
+      id: job.targetId,
+      state: state == AiAnalysisJobState.completed
+          ? PeriodSummaryState.completed
+          : PeriodSummaryState.generating,
+      updatedAt: DateTime.now(),
+      message: message,
+    ));
   }
 
   Future<void> _handleUnexpectedStageError(
@@ -755,6 +954,46 @@ class AiAnalysisQueueRunner {
   String _dateLabel(DateTime date) =>
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
+  DateTime? _periodFromJob(AiAnalysisJob job) {
+    if (job.type == AiAnalysisJobType.yearSummary) {
+      final value = job.targetId.startsWith('year:')
+          ? job.targetId.substring('year:'.length)
+          : job.targetId;
+      final year = int.tryParse(value);
+      return year == null ? null : DateTime(year);
+    }
+    if (job.type == AiAnalysisJobType.monthSummary) {
+      final value = job.targetId.startsWith('month:')
+          ? job.targetId.substring('month:'.length)
+          : job.targetId;
+      final parts = value.split('-');
+      if (parts.length != 2) return null;
+      final year = int.tryParse(parts[0]);
+      final month = int.tryParse(parts[1]);
+      if (year == null || month == null) return null;
+      return DateTime(year, month);
+    }
+    return null;
+  }
+
+  String _periodEntrySummary(
+    AiAnalysisJobType type,
+    DateTime period,
+    List<DiaryEntry> entries,
+  ) {
+    final scoped = type == AiAnalysisJobType.yearSummary
+        ? entries.where((entry) => entry.date.year == period.year)
+        : entries.where((entry) =>
+            entry.date.year == period.year && entry.date.month == period.month);
+    return [
+      'target=${type.name}',
+      if (type == AiAnalysisJobType.yearSummary) 'year=${period.year}',
+      if (type == AiAnalysisJobType.monthSummary)
+        'month=${period.year}-${period.month.toString().padLeft(2, '0')}',
+      'entries=${scoped.length}',
+    ].join(' ');
+  }
+
   String _dateTimeLabel(DateTime date) {
     final day = _dateLabel(date);
     final hour = date.hour.toString().padLeft(2, '0');
@@ -853,6 +1092,15 @@ class AiAnalysisQueueRunner {
         ),
       ),
     ));
+    if (job.type != AiAnalysisJobType.diary) {
+      await _periodSummaryRepository.saveStatus(PeriodSummaryStatus(
+        id: job.targetId,
+        state: PeriodSummaryState.failed,
+        updatedAt: DateTime.now(),
+        message: message,
+      ));
+      return;
+    }
     await _insightRepository.saveStatus(DiaryAnalysisStatus(
       entryId: job.entryId,
       state: DiaryAnalysisState.failed,

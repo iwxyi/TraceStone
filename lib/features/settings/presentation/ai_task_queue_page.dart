@@ -40,18 +40,36 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
     final summaries = await _periodRepository.listSummaries();
     final statuses = await _periodRepository.listStatuses();
     final statusById = {for (final status in statuses) status.id: status};
+    final periodJobs = snapshot.jobs
+        .where((job) =>
+            job.type == AiAnalysisJobType.monthSummary ||
+            job.type == AiAnalysisJobType.yearSummary)
+        .toList();
+    final jobById = {for (final job in periodJobs) job.targetId: job};
     final periodItems = <_PeriodTaskItem>[];
     for (final summary in summaries.take(8)) {
       periodItems.add(_PeriodTaskItem(
         id: summary.id,
         summary: summary,
         status: statusById[summary.id],
+        job: jobById[summary.id],
       ));
     }
     final existingIds = periodItems.map((item) => item.id).toSet();
     for (final status in statuses) {
       if (existingIds.contains(status.id)) continue;
-      periodItems.add(_PeriodTaskItem(id: status.id, status: status));
+      periodItems.add(_PeriodTaskItem(
+        id: status.id,
+        status: status,
+        job: jobById[status.id],
+      ));
+      existingIds.add(status.id);
+      if (periodItems.length >= 8) break;
+    }
+    for (final job in periodJobs) {
+      if (existingIds.contains(job.targetId)) continue;
+      periodItems.add(_PeriodTaskItem(id: job.targetId, job: job));
+      existingIds.add(job.targetId);
       if (periodItems.length >= 8) break;
     }
     return _AiTaskQueueData(snapshot: snapshot, periodItems: periodItems);
@@ -103,7 +121,10 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
                   onPauseChanged: _togglePaused,
                 ),
                 const SizedBox(height: 16),
-                _PeriodQueueSection(items: data.periodItems),
+                _PeriodQueueSection(
+                  items: data.periodItems,
+                  onContinue: _continueQueue,
+                ),
               ],
             );
           },
@@ -124,11 +145,13 @@ class _AiTaskQueueData {
 }
 
 class _PeriodTaskItem {
-  const _PeriodTaskItem({required this.id, this.summary, this.status});
+  const _PeriodTaskItem(
+      {required this.id, this.summary, this.status, this.job});
 
   final String id;
   final PeriodSummary? summary;
   final PeriodSummaryStatus? status;
+  final AiAnalysisJob? job;
 }
 
 class _DiaryQueueSection extends StatelessWidget {
@@ -145,18 +168,32 @@ class _DiaryQueueSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final current = snapshot.currentJob;
-    final activeCount = snapshot.runnableCount +
-        (current?.state == AiAnalysisJobState.running ? 1 : 0);
-    final totalVisible = snapshot.jobs
+    final diaryJobs = snapshot.jobs
+        .where((job) => job.type == AiAnalysisJobType.diary)
+        .toList(growable: false);
+    final current = snapshot.currentJob?.type == AiAnalysisJobType.diary
+        ? snapshot.currentJob
+        : null;
+    final runnableCount = diaryJobs.where((job) => job.canRun).length;
+    final activeCount =
+        runnableCount + (current?.state == AiAnalysisJobState.running ? 1 : 0);
+    final totalVisible = diaryJobs
         .where((job) =>
             job.canRun ||
             job.state == AiAnalysisJobState.running ||
             job.state == AiAnalysisJobState.completed)
         .length;
+    final completedCount = diaryJobs
+        .where((job) => job.state == AiAnalysisJobState.completed)
+        .length;
+    final incompleteCount = diaryJobs
+        .where((job) => job.state == AiAnalysisJobState.incomplete)
+        .length;
+    final failedCount =
+        diaryJobs.where((job) => job.state == AiAnalysisJobState.failed).length;
     final progress = totalVisible == 0
         ? 0.0
-        : (snapshot.completedCount / totalVisible).clamp(0.0, 1.0).toDouble();
+        : (completedCount / totalVisible).clamp(0.0, 1.0).toDouble();
 
     return Card(
       elevation: 0,
@@ -181,7 +218,10 @@ class _DiaryQueueSection extends StatelessWidget {
             const SizedBox(height: 12),
             LinearProgressIndicator(value: progress, minHeight: 4),
             const SizedBox(height: 10),
-            if (current == null && !snapshot.hasVisibleWork)
+            if (current == null &&
+                runnableCount == 0 &&
+                incompleteCount == 0 &&
+                failedCount == 0)
               Text('没有正在等待的日记分析任务。', style: theme.textTheme.bodyMedium)
             else ...[
               Text(
@@ -197,9 +237,9 @@ class _DiaryQueueSection extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   _CountChip(label: '运行/待处理', count: activeCount),
-                  _CountChip(label: '待恢复', count: snapshot.incompleteCount),
-                  _CountChip(label: '失败', count: snapshot.failedCount),
-                  _CountChip(label: '已完成', count: snapshot.completedCount),
+                  _CountChip(label: '待恢复', count: incompleteCount),
+                  _CountChip(label: '失败', count: failedCount),
+                  _CountChip(label: '已完成', count: completedCount),
                 ],
               ),
               if (snapshot.estimatedRemainingLabel.isNotEmpty) ...[
@@ -232,13 +272,16 @@ class _DiaryQueueSection extends StatelessWidget {
 }
 
 class _PeriodQueueSection extends StatelessWidget {
-  const _PeriodQueueSection({required this.items});
+  const _PeriodQueueSection({required this.items, required this.onContinue});
 
   final List<_PeriodTaskItem> items;
+  final VoidCallback onContinue;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hasRunnableJobs = items.any((item) =>
+        item.job != null && item.job!.state != AiAnalysisJobState.completed);
     return Card(
       elevation: 0,
       child: Padding(
@@ -262,6 +305,14 @@ class _PeriodQueueSection extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 10),
                   child: _PeriodTaskTile(item: item),
                 ),
+            if (hasRunnableJobs) ...[
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: onContinue,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('继续处理周期任务'),
+              ),
+            ],
           ],
         ),
       ),
@@ -279,6 +330,7 @@ class _PeriodTaskTile extends StatelessWidget {
     final theme = Theme.of(context);
     final summary = item.summary;
     final status = item.status;
+    final job = item.job;
     final periodType = summary?.type ??
         (item.id.startsWith('year:')
             ? PeriodSummaryType.year
@@ -288,7 +340,14 @@ class _PeriodTaskTile extends StatelessWidget {
         : periodType == PeriodSummaryType.month
             ? '${summary.startDate.year}年${summary.startDate.month}月'
             : '${summary.startDate.year}年';
-    final state = status?.state ?? PeriodSummaryState.completed;
+    final state = status?.state ??
+        (job == null
+            ? PeriodSummaryState.completed
+            : job.state == AiAnalysisJobState.completed
+                ? PeriodSummaryState.completed
+                : job.state == AiAnalysisJobState.failed
+                    ? PeriodSummaryState.failed
+                    : PeriodSummaryState.generating);
     return Row(
       children: [
         Icon(_periodStateIcon(state), size: 20),
@@ -304,10 +363,14 @@ class _PeriodTaskTile extends StatelessWidget {
                 status?.message ?? (summary == null ? '等待生成' : '已生成'),
                 style: theme.textTheme.bodySmall,
               ),
+              if (job != null) ...[
+                const SizedBox(height: 2),
+                Text(job.stageLabel, style: theme.textTheme.bodySmall),
+              ],
             ],
           ),
         ),
-        Text((summary?.generator.startsWith('ai-') ?? false) ? 'AI' : '本地',
+        Text((summary?.generator.startsWith('ai-') ?? false) ? 'AI' : '队列',
             style: theme.textTheme.bodySmall),
       ],
     );

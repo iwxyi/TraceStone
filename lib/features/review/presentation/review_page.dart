@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -7,15 +8,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/widgets/simple_markdown_text.dart';
+import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/models/period_summary.dart';
+import '../../../data/repositories/ai_analysis_queue_bus.dart';
+import '../../../data/repositories/ai_analysis_queue_repository.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/period_summary_repository.dart';
-import '../../../data/services/period_summary_service.dart';
+import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../ai_insight/presentation/ai_feedback_bar.dart';
 
 class ReviewPage extends StatefulWidget {
@@ -898,8 +902,9 @@ class _YearListState extends State<_YearList> {
         const SizedBox(height: 16),
         _PeriodSummaryCard(
           summaryKey: PeriodSummaryRepository.yearId(widget.selectedYear),
-          load: () => const PeriodSummaryService()
-              .buildYearSummary(widget.selectedYear, widget.entries),
+          type: PeriodSummaryType.year,
+          period: DateTime(widget.selectedYear),
+          entries: widget.entries,
         ),
         const SizedBox(height: 16),
         LayoutBuilder(
@@ -1559,8 +1564,9 @@ class _MonthCalendar extends StatelessWidget {
         const SizedBox(height: 16),
         _PeriodSummaryCard(
           summaryKey: PeriodSummaryRepository.monthId(selectedMonth),
-          load: () => const PeriodSummaryService()
-              .buildMonthSummary(selectedMonth, entries),
+          type: PeriodSummaryType.month,
+          period: selectedMonth,
+          entries: entries,
         ),
         const SizedBox(height: 16),
         if (dayEntries.isEmpty)
@@ -1671,13 +1677,17 @@ class _MonthDayCell extends StatelessWidget {
 class _PeriodSummaryCard extends StatefulWidget {
   const _PeriodSummaryCard({
     required this.summaryKey,
-    required this.load,
+    required this.type,
+    required this.period,
+    required this.entries,
     DeveloperSettingsRepository? developerSettings,
   }) : _developerSettings =
             developerSettings ?? const DeveloperSettingsRepository();
 
   final String summaryKey;
-  final Future<PeriodSummary> Function() load;
+  final PeriodSummaryType type;
+  final DateTime period;
+  final List<DiaryEntry> entries;
   final DeveloperSettingsRepository _developerSettings;
 
   @override
@@ -1685,33 +1695,76 @@ class _PeriodSummaryCard extends StatefulWidget {
 }
 
 class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
-  late Future<PeriodSummary> _future;
+  final _repository = const PeriodSummaryRepository();
+  final _queueRepository = const AiAnalysisQueueRepository();
+  final _runner = const AiAnalysisQueueRunner();
+  late Future<_PeriodSummaryCardData> _future;
   bool _isRegenerating = false;
+  bool _autoQueued = false;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.load();
+    _future = _load();
+    AiAnalysisQueueBus.version.addListener(_refreshFromQueue);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_enqueueIfMissing());
+    });
+  }
+
+  @override
+  void dispose() {
+    AiAnalysisQueueBus.version.removeListener(_refreshFromQueue);
+    super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant _PeriodSummaryCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.summaryKey != widget.summaryKey) {
-      _future = widget.load();
+      _future = _load();
       _isRegenerating = false;
+      _autoQueued = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_enqueueIfMissing());
+      });
     }
+  }
+
+  Future<_PeriodSummaryCardData> _load() async {
+    final summary = await _repository.getSummary(widget.summaryKey);
+    final status = await _repository.getStatus(widget.summaryKey);
+    final job = await _queueRepository.getJob(widget.summaryKey);
+    return _PeriodSummaryCardData(
+      summary: summary,
+      status: status,
+      job: job,
+    );
+  }
+
+  void _refreshFromQueue() {
+    if (!mounted) return;
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  Future<void> _enqueueIfMissing() async {
+    if (_autoQueued) return;
+    final data = await _load();
+    if (data.summary != null || data.isActive) return;
+    _autoQueued = true;
+    await _enqueue(regenerate: false);
   }
 
   Future<void> _regenerate() async {
     setState(() {
       _isRegenerating = true;
-      _future = widget.load();
     });
     try {
-      final summary = await _future;
+      await _enqueue(regenerate: true);
       if (!mounted) return;
-      final title = summary.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
+      final title = widget.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已重新生成$title')),
       );
@@ -1722,26 +1775,80 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
     }
   }
 
+  Future<void> _enqueue({required bool regenerate}) async {
+    final version = _periodVersion(widget.entries, widget.type, widget.period);
+    if (widget.type == PeriodSummaryType.month) {
+      await _queueRepository.enqueueMonthSummary(
+        widget.period,
+        pipelineVersion:
+            regenerate ? DateTime.now().microsecondsSinceEpoch : version,
+      );
+    } else {
+      await _queueRepository.enqueueYearSummary(
+        widget.period.year,
+        pipelineVersion:
+            regenerate ? DateTime.now().microsecondsSinceEpoch : version,
+      );
+    }
+    setState(() {
+      _future = _load();
+    });
+    await _runner.processUntilIdle(
+        maxJobs: widget.type == PeriodSummaryType.year ? 14 : 1);
+    if (mounted) {
+      setState(() {
+        _future = _load();
+      });
+    }
+  }
+
+  int _periodVersion(
+    List<DiaryEntry> entries,
+    PeriodSummaryType type,
+    DateTime period,
+  ) {
+    final scoped = type == PeriodSummaryType.year
+        ? entries.where((entry) => entry.date.year == period.year)
+        : entries.where((entry) =>
+            entry.date.year == period.year && entry.date.month == period.month);
+    var version = 0;
+    for (final entry in scoped) {
+      final value = entry.updatedAt.microsecondsSinceEpoch;
+      if (value > version) version = value;
+    }
+    return version == 0 ? DateTime.now().microsecondsSinceEpoch : version;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<PeriodSummary>(
+    return FutureBuilder<_PeriodSummaryCardData>(
       future: _future,
       builder: (context, snapshot) {
-        final summary = snapshot.data;
+        final data = snapshot.data;
+        final summary = data?.summary;
         if (summary == null) {
-          return const Card(
+          final title =
+              widget.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
+          final message = data?.status?.message ??
+              (data?.isActive ?? false ? '已加入 AI 任务队列' : '等待生成$title');
+          return Card(
             elevation: 0,
             child: Padding(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 18,
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
-                  SizedBox(width: 10),
-                  Text('正在整理周期总结…'),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(message)),
+                  IconButton(
+                    tooltip: '重新生成$title',
+                    onPressed: _isRegenerating ? null : _regenerate,
+                    icon: const Icon(Icons.refresh_outlined),
+                  ),
                 ],
               ),
             ),
@@ -1768,6 +1875,13 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                         const Spacer(),
                         Text('${summary.entryCount}篇',
                             style: Theme.of(context).textTheme.bodySmall),
+                        if (data?.isActive ?? false) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            data?.status?.message ?? '队列中',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
                         const SizedBox(width: 4),
                         IconButton(
                           tooltip: '重新生成$title',
@@ -1868,6 +1982,24 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
       },
     );
   }
+}
+
+class _PeriodSummaryCardData {
+  const _PeriodSummaryCardData({
+    this.summary,
+    this.status,
+    this.job,
+  });
+
+  final PeriodSummary? summary;
+  final PeriodSummaryStatus? status;
+  final AiAnalysisJob? job;
+
+  bool get isActive =>
+      job != null &&
+      (job!.state == AiAnalysisJobState.pending ||
+          job!.state == AiAnalysisJobState.running ||
+          job!.state == AiAnalysisJobState.incomplete);
 }
 
 class _PeriodSummaryDebugSources extends StatelessWidget {

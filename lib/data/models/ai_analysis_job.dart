@@ -1,5 +1,7 @@
 enum AiAnalysisJobState { pending, running, incomplete, failed, completed }
 
+enum AiAnalysisJobType { diary, monthSummary, yearSummary }
+
 enum AiAnalysisStage {
   queued,
   preparing,
@@ -21,6 +23,8 @@ class AiAnalysisJob {
     required this.currentStage,
     required this.createdAt,
     required this.updatedAt,
+    this.type = AiAnalysisJobType.diary,
+    String? targetId,
     this.completedStages = const [],
     this.stageLogs = const [],
     this.summaryId,
@@ -32,7 +36,7 @@ class AiAnalysisJob {
     this.lastError,
     this.batchId,
     this.batchLabel,
-  });
+  }) : _targetId = targetId;
 
   final String id;
   final String entryId;
@@ -41,6 +45,9 @@ class AiAnalysisJob {
   final AiAnalysisStage currentStage;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final AiAnalysisJobType type;
+  String get targetId => _targetId ?? entryId;
+  final String? _targetId;
   final List<AiAnalysisStage> completedStages;
   final List<AiAnalysisStageLog> stageLogs;
   final String? summaryId;
@@ -59,6 +66,25 @@ class AiAnalysisJob {
       (state == AiAnalysisJobState.failed && retryCount < 3);
 
   String get stageLabel {
+    if (type == AiAnalysisJobType.monthSummary ||
+        type == AiAnalysisJobType.yearSummary) {
+      switch (currentStage) {
+        case AiAnalysisStage.queued:
+          return '等待生成周期总结';
+        case AiAnalysisStage.preparing:
+          return '准备周期资料';
+        case AiAnalysisStage.generatingSummary:
+          return type == AiAnalysisJobType.monthSummary ? '生成月度总结' : '生成年度总结';
+        case AiAnalysisStage.completed:
+          return '周期总结完成';
+        case AiAnalysisStage.segmenting:
+        case AiAnalysisStage.embedding:
+        case AiAnalysisStage.retrieving:
+        case AiAnalysisStage.generatingInsight:
+        case AiAnalysisStage.updatingMemory:
+          return '整理周期上下文';
+      }
+    }
     switch (currentStage) {
       case AiAnalysisStage.queued:
         return '等待整理';
@@ -96,6 +122,8 @@ class AiAnalysisJob {
     String? lastError,
     String? batchId,
     String? batchLabel,
+    AiAnalysisJobType? type,
+    String? targetId,
     bool clearLastError = false,
   }) {
     return AiAnalysisJob(
@@ -106,6 +134,8 @@ class AiAnalysisJob {
       currentStage: currentStage ?? this.currentStage,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      type: type ?? this.type,
+      targetId: targetId ?? this.targetId,
       completedStages: completedStages ?? this.completedStages,
       stageLogs: stageLogs ?? this.stageLogs,
       summaryId: summaryId ?? this.summaryId,
@@ -123,6 +153,8 @@ class AiAnalysisJob {
   Map<String, dynamic> toJson() => {
         'id': id,
         'entryId': entryId,
+        'type': type.name,
+        'targetId': targetId,
         'pipelineVersion': pipelineVersion,
         'state': state.name,
         'currentStage': currentStage.name,
@@ -149,9 +181,17 @@ class AiAnalysisJob {
     final stageName = _stringValue(json['currentStage']).isEmpty
         ? AiAnalysisStage.queued.name
         : _stringValue(json['currentStage']);
+    final typeName = _stringValue(json['type']).isEmpty
+        ? AiAnalysisJobType.diary.name
+        : _stringValue(json['type']);
     return AiAnalysisJob(
       id: _stringValue(json['id']),
       entryId: _stringValue(json['entryId']),
+      type: AiAnalysisJobType.values.firstWhere(
+        (item) => item.name == typeName,
+        orElse: () => AiAnalysisJobType.diary,
+      ),
+      targetId: _nullableString(json['targetId']),
       pipelineVersion: _intValue(json['pipelineVersion'], fallback: 1),
       state: AiAnalysisJobState.values.firstWhere(
         (item) => item.name == stateName,

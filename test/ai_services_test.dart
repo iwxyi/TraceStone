@@ -2421,6 +2421,86 @@ void main() {
       expect(status?.message, '上次整理被系统中断，下次将继续');
     });
 
+    test('runner builds queued month summary jobs', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const periodRepository = PeriodSummaryRepository();
+      final client = _PeriodSummaryAiClientService();
+      final entry = _entry(
+        id: 'queued-month-entry',
+        date: DateTime(2026, 7, 6),
+        content: '这个月开始规律散步，也更能觉察焦虑。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueMonthSummary(DateTime(2026, 7));
+
+      await AiAnalysisQueueRunner(
+        periodSummaryService: PeriodSummaryService(client: client),
+      ).processUntilIdle(maxJobs: 1);
+
+      final job = await queueRepository.getJob(
+        PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      );
+      final summary = await periodRepository.getSummary(
+        PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      );
+      final status = await periodRepository.getStatus(
+        PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      );
+
+      expect(job?.type, AiAnalysisJobType.monthSummary);
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.completedStages, contains(AiAnalysisStage.preparing));
+      expect(job?.completedStages, contains(AiAnalysisStage.generatingSummary));
+      expect(summary?.generator, 'ai-month-summary-v1');
+      expect(status?.state, PeriodSummaryState.completed);
+    });
+
+    test('runner completes missing month summaries before year summary',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const periodRepository = PeriodSummaryRepository();
+      final client = _PeriodSummaryAiClientService();
+      final july = _entry(
+        id: 'queued-year-july',
+        date: DateTime(2026, 7, 6),
+        content: '七月开始规律散步。',
+      );
+      final august = _entry(
+        id: 'queued-year-august',
+        date: DateTime(2026, 8, 6),
+        content: '八月继续调整节奏。',
+      );
+      await diaryRepository.saveEntry(july);
+      await diaryRepository.saveEntry(august);
+      await queueRepository.enqueueYearSummary(2026);
+
+      await AiAnalysisQueueRunner(
+        periodSummaryService: PeriodSummaryService(client: client),
+      ).processUntilIdle(maxJobs: 1);
+
+      final julySummary = await periodRepository.getSummary(
+        PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      );
+      final augustSummary = await periodRepository.getSummary(
+        PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+      );
+      final yearSummary = await periodRepository.getSummary(
+        PeriodSummaryRepository.yearId(2026),
+      );
+      final yearJob =
+          await queueRepository.getJob(PeriodSummaryRepository.yearId(2026));
+
+      expect(julySummary?.generator, 'ai-month-summary-v1');
+      expect(augustSummary?.generator, 'ai-month-summary-v1');
+      expect(yearSummary?.generator, 'ai-year-summary-v1');
+      expect(yearJob?.state, AiAnalysisJobState.completed);
+      expect(client.lastUserPrompt, contains('已生成月度总结'));
+    });
+
     test('runner resumes incomplete jobs without rewriting existing embeddings',
         () async {
       SharedPreferences.setMockInitialValues({});
