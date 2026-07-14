@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/diary_entry.dart';
 import '../models/period_summary.dart';
 
 class PeriodSummaryRepository {
@@ -14,6 +15,23 @@ class PeriodSummaryRepository {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         '$_prefix${summary.id}', jsonEncode(summary.toJson()));
+  }
+
+  Future<void> markEntryChanged({
+    required DiaryEntry entry,
+    required int currentMonthEntryCount,
+    required int currentYearEntryCount,
+  }) async {
+    await _markSummaryNeedsUpdate(
+      id: monthId(entry.date),
+      entryId: entry.id,
+      currentEntryCount: currentMonthEntryCount,
+    );
+    await _markSummaryNeedsUpdate(
+      id: yearId(entry.date.year),
+      entryId: entry.id,
+      currentEntryCount: currentYearEntryCount,
+    );
   }
 
   Future<PeriodSummary?> getSummary(String id) async {
@@ -115,10 +133,44 @@ class PeriodSummaryRepository {
       final summary = await _getSummary(prefs, key);
       if (summary == null) continue;
       if (_summaryReferencesEntry(summary, value)) {
-        await prefs.remove(key);
-        await prefs.remove('$_statusPrefix${summary.id}');
+        await _markSummaryNeedsUpdate(
+          id: summary.id,
+          entryId: value,
+          currentEntryCount:
+              (summary.entryCount - 1).clamp(0, summary.entryCount),
+        );
       }
     }
+  }
+
+  Future<void> _markSummaryNeedsUpdate({
+    required String id,
+    required String entryId,
+    required int currentEntryCount,
+  }) async {
+    final summary = await getSummary(id);
+    if (summary == null) return;
+    final currentStatus = await getStatus(id);
+    final changedIds = <String>{
+      ...?currentStatus?.changedEntryIds,
+      entryId,
+    }.toList()
+      ..sort();
+    final baseEntryCount = currentStatus?.baseEntryCount ??
+        (summary.coveredEntryIds.isNotEmpty
+            ? summary.coveredEntryIds.length
+            : summary.entryCount);
+    final status = PeriodSummaryStatus(
+      id: id,
+      state: currentStatus?.state ?? PeriodSummaryState.completed,
+      updatedAt: DateTime.now(),
+      message: '有 ${changedIds.length} 篇日记变化，周期总结需要更新',
+      needsUpdate: true,
+      changedEntryIds: changedIds,
+      baseEntryCount: baseEntryCount,
+      currentEntryCount: currentEntryCount,
+    );
+    await saveStatus(status);
   }
 
   static String monthId(DateTime month) =>

@@ -140,6 +140,125 @@ void main() {
     );
   });
 
+  testWidgets('review period summary keeps small stale changes manual',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'review.selectedIndex': 1,
+    });
+    final date = DateTime(2026, 7, 4);
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'review-period-small-stale',
+      date: date,
+      createdAt: date,
+      content: '七月里新增了一篇日记。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+    const periodRepository = PeriodSummaryRepository();
+    final summaryId = PeriodSummaryRepository.monthId(DateTime(2026, 7));
+    await periodRepository.saveSummary(PeriodSummary(
+      id: summaryId,
+      type: PeriodSummaryType.month,
+      startDate: DateTime(2026, 7),
+      endDate: DateTime(2026, 7, 31, 23, 59, 59),
+      generatedAt: date,
+      entryCount: 4,
+      brief: '旧的七月总结',
+      themes: const ['散步'],
+      emotions: const [],
+      representativeEntryIds: const ['old-entry-1'],
+      generator: 'ai-month-summary-v1',
+      coveredEntryIds: const [
+        'old-entry-1',
+        'old-entry-2',
+        'old-entry-3',
+        'old-entry-4',
+      ],
+    ));
+    await periodRepository.saveStatus(PeriodSummaryStatus(
+      id: summaryId,
+      state: PeriodSummaryState.completed,
+      updatedAt: date,
+      message: '有 1 篇日记变化，周期总结需要更新',
+      needsUpdate: true,
+      changedEntryIds: const ['review-period-small-stale'],
+      baseEntryCount: 4,
+      currentEntryCount: 5,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: ReviewPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('旧的七月总结'), findsOneWidget);
+    expect(find.textContaining('暂不自动更新'), findsOneWidget);
+    expect(await const AiAnalysisQueueRepository().getJob(summaryId), isNull);
+  });
+
+  testWidgets('review period summary auto updates large stale changes',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'review.selectedIndex': 1,
+    });
+    final date = DateTime(2026, 7, 4);
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'review-period-large-stale',
+      date: date,
+      createdAt: date,
+      content: '七月里变化明显，需要更新总结。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+    const periodRepository = PeriodSummaryRepository();
+    final summaryId = PeriodSummaryRepository.monthId(DateTime(2026, 7));
+    await periodRepository.saveSummary(PeriodSummary(
+      id: summaryId,
+      type: PeriodSummaryType.month,
+      startDate: DateTime(2026, 7),
+      endDate: DateTime(2026, 7, 31, 23, 59, 59),
+      generatedAt: date,
+      entryCount: 4,
+      brief: '旧的七月总结',
+      themes: const ['散步'],
+      emotions: const [],
+      representativeEntryIds: const ['old-entry-1'],
+      generator: 'ai-month-summary-v1',
+      coveredEntryIds: const [
+        'old-entry-1',
+        'old-entry-2',
+        'old-entry-3',
+        'old-entry-4',
+      ],
+    ));
+    await periodRepository.saveStatus(PeriodSummaryStatus(
+      id: summaryId,
+      state: PeriodSummaryState.completed,
+      updatedAt: date,
+      message: '有 2 篇日记变化，周期总结需要更新',
+      needsUpdate: true,
+      changedEntryIds: const [
+        'review-period-large-stale',
+        'deleted-period-entry',
+      ],
+      baseEntryCount: 4,
+      currentEntryCount: 5,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: ReviewPage()));
+    await tester.pumpAndSettle();
+
+    final job = await const AiAnalysisQueueRepository().getJob(summaryId);
+    final status = await periodRepository.getStatus(summaryId);
+    final summary = await periodRepository.getSummary(summaryId);
+
+    expect(job?.state, AiAnalysisJobState.completed);
+    expect(status?.needsUpdate, isFalse);
+    expect(summary?.brief, isNot('旧的七月总结'));
+  });
+
   testWidgets('shows profile candidates on profile tab', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);

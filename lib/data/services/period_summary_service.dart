@@ -321,6 +321,7 @@ class PeriodSummaryService {
       representativeEntryIds: representativeIds,
       generator:
           fallbackReason == null ? 'local-aggregate-v1' : 'local-fallback-v1',
+      coveredEntryIds: entries.map((entry) => entry.id).toList(),
       relationshipHighlights:
           _uniqueTake(relationshipHighlights, limit: 5).toList(),
       stoneHighlights: stoneHighlights,
@@ -368,6 +369,7 @@ class PeriodSummaryService {
       generator: type == PeriodSummaryType.month
           ? 'ai-month-summary-v1'
           : 'ai-year-summary-v1',
+      coveredEntryIds: entries.map((entry) => entry.id).toList(),
       relationshipHighlights:
           _stringList(json['relationship_highlights']).take(5).toList(),
       stoneHighlights: _stringList(json['stone_highlights']).take(5).toList(),

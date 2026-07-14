@@ -30,6 +30,10 @@ class DiaryRepository {
 
   Future<void> saveEntry(DiaryEntry entry) async {
     final prefs = await SharedPreferences.getInstance();
+    final previousRaw = _safeGetString(prefs, '$_entryPrefix${entry.id}');
+    final previous = previousRaw == null
+        ? null
+        : DiaryEntry.fromJson(jsonDecode(previousRaw) as Map<String, dynamic>);
     await prefs.setString(
         '$_entryPrefix${entry.id}', jsonEncode(entry.toJson()));
     final index = _safeGetStringList(prefs, _indexKey) ?? [];
@@ -38,6 +42,13 @@ class DiaryRepository {
       await prefs.setStringList(_indexKey, index);
     }
     await prefs.remove('$_recoveryPrefix${entry.id}');
+    if (previous == null) {
+      await _markPeriodSummaryChanged(entry);
+    } else if (previous.date.year != entry.date.year ||
+        previous.date.month != entry.date.month) {
+      await _markPeriodSummaryChanged(previous);
+      await _markPeriodSummaryChanged(entry);
+    }
     DiaryChangeBus.bump();
   }
 
@@ -109,6 +120,9 @@ class DiaryRepository {
       await prefs.setStringList(_trashIndexKey, trashIndex);
     }
     await prefs.remove('$_recoveryPrefix$id');
+    final deletedEntry =
+        DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    await _markPeriodSummaryChanged(deletedEntry);
     await _deleteAiArtifactsForEntry(id);
     DiaryChangeBus.bump();
   }
@@ -148,6 +162,7 @@ class DiaryRepository {
       await prefs.setStringList(_indexKey, index);
     }
     await _removeTrashItem(prefs, id);
+    await _markPeriodSummaryChanged(item.entry);
     await const AiAnalysisQueueRepository().enqueueEntry(item.entry);
     await const InsightRepository().saveStatus(DiaryAnalysisStatus(
       entryId: item.entry.id,
@@ -276,7 +291,22 @@ class DiaryRepository {
     await promptTraceRepository.deleteForEntry(id);
     await const EntrySummaryRepository().deleteForEntry(id);
     await retrievalTraceRepository.deleteForEntry(id);
-    await const PeriodSummaryRepository().deleteForEntry(id);
+  }
+
+  Future<void> _markPeriodSummaryChanged(DiaryEntry entry) async {
+    final entries = await listEntries();
+    final monthCount = entries
+        .where((item) =>
+            item.date.year == entry.date.year &&
+            item.date.month == entry.date.month)
+        .length;
+    final yearCount =
+        entries.where((item) => item.date.year == entry.date.year).length;
+    await const PeriodSummaryRepository().markEntryChanged(
+      entry: entry,
+      currentMonthEntryCount: monthCount,
+      currentYearEntryCount: yearCount,
+    );
   }
 
   Future<void> _pruneProfilePreferences() async {

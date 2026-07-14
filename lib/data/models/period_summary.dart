@@ -13,18 +13,39 @@ class PeriodSummaryStatus {
     required this.state,
     required this.updatedAt,
     this.message,
+    this.needsUpdate = false,
+    this.changedEntryIds = const [],
+    this.baseEntryCount = 0,
+    this.currentEntryCount = 0,
   });
 
   final String id;
   final PeriodSummaryState state;
   final DateTime updatedAt;
   final String? message;
+  final bool needsUpdate;
+  final List<String> changedEntryIds;
+  final int baseEntryCount;
+  final int currentEntryCount;
+
+  double get changeRatio {
+    final base = baseEntryCount <= 0 ? currentEntryCount : baseEntryCount;
+    if (base <= 0) return changedEntryIds.isEmpty ? 0 : 1;
+    return changedEntryIds.length / base;
+  }
+
+  bool shouldAutoUpdate({double threshold = 0.25}) =>
+      needsUpdate && changeRatio > threshold;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'state': state.name,
         'updatedAt': updatedAt.toIso8601String(),
         'message': message,
+        'needsUpdate': needsUpdate,
+        'changedEntryIds': changedEntryIds,
+        'baseEntryCount': baseEntryCount,
+        'currentEntryCount': currentEntryCount,
       };
 
   static PeriodSummaryStatus fromJson(Map<String, dynamic> json) {
@@ -41,6 +62,15 @@ class PeriodSummaryStatus {
           ? DateTime.tryParse(json['updatedAt'] as String) ?? DateTime.now()
           : DateTime.now(),
       message: json['message'] is String ? json['message'] as String : null,
+      needsUpdate:
+          json['needsUpdate'] is bool ? json['needsUpdate'] as bool : false,
+      changedEntryIds: PeriodSummary._stringList(json['changedEntryIds']),
+      baseEntryCount: json['baseEntryCount'] is num
+          ? (json['baseEntryCount'] as num).toInt()
+          : 0,
+      currentEntryCount: json['currentEntryCount'] is num
+          ? (json['currentEntryCount'] as num).toInt()
+          : 0,
     );
   }
 }
@@ -58,6 +88,7 @@ class PeriodSummary {
     required this.emotions,
     required this.representativeEntryIds,
     required this.generator,
+    this.coveredEntryIds = const [],
     this.relationshipHighlights = const [],
     this.stoneHighlights = const [],
     this.growthHighlights = const [],
@@ -78,6 +109,7 @@ class PeriodSummary {
   final List<String> emotions;
   final List<String> representativeEntryIds;
   final String generator;
+  final List<String> coveredEntryIds;
   final List<String> relationshipHighlights;
   final List<String> stoneHighlights;
   final List<String> growthHighlights;
@@ -98,6 +130,7 @@ class PeriodSummary {
         'emotions': emotions,
         'representativeEntryIds': representativeEntryIds,
         'generator': generator,
+        'coveredEntryIds': coveredEntryIds,
         'relationshipHighlights': relationshipHighlights,
         'stoneHighlights': stoneHighlights,
         'growthHighlights': growthHighlights,
@@ -134,6 +167,7 @@ class PeriodSummary {
       representativeEntryIds: _stringList(json['representativeEntryIds']),
       generator:
           json['generator'] is String ? json['generator'] as String : 'unknown',
+      coveredEntryIds: _stringList(json['coveredEntryIds']),
       relationshipHighlights: _stringList(json['relationshipHighlights']),
       stoneHighlights: _stringList(json['stoneHighlights']),
       growthHighlights: _stringList(json['growthHighlights']),

@@ -5283,7 +5283,7 @@ void main() {
           ['month:2026-07', 'month:2026-06']);
     });
 
-    test('period summary repository deletes summaries referencing an entry',
+    test('period summary repository marks summaries stale for changed entries',
         () async {
       SharedPreferences.setMockInitialValues({});
       const repository = PeriodSummaryRepository();
@@ -5300,6 +5300,7 @@ void main() {
         emotions: const [],
         representativeEntryIds: const ['deleted-entry'],
         generator: 'test',
+        coveredEntryIds: const ['deleted-entry'],
       ));
       await repository.saveSummary(PeriodSummary(
         id: 'year:2026',
@@ -5313,6 +5314,7 @@ void main() {
         emotions: const [],
         representativeEntryIds: const [],
         generator: 'test',
+        coveredEntryIds: const ['deleted-entry'],
         contextSourceLines: const [
           'period_entry:deleted-entry | 2026-07-03 | 散步',
         ],
@@ -5333,9 +5335,121 @@ void main() {
 
       await repository.deleteForEntry('deleted-entry');
 
-      expect(await repository.getSummary('month:2026-07'), isNull);
-      expect(await repository.getSummary('year:2026'), isNull);
+      expect(await repository.getSummary('month:2026-07'), isNotNull);
+      expect(await repository.getSummary('year:2026'), isNotNull);
       expect(await repository.getSummary('month:2026-08'), isNotNull);
+      expect(
+          (await repository.getStatus('month:2026-07'))?.needsUpdate, isTrue);
+      expect((await repository.getStatus('year:2026'))?.needsUpdate, isTrue);
+      expect((await repository.getStatus('month:2026-08'))?.needsUpdate,
+          isNot(isTrue));
+    });
+
+    test('diary additions mark existing period summaries stale', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const periodRepository = PeriodSummaryRepository();
+      final date = DateTime(2026, 7, 3);
+      await periodRepository.saveSummary(PeriodSummary(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 7),
+        endDate: DateTime(2026, 7, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 4,
+        brief: '七月摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: const ['old-entry-1'],
+        generator: 'ai-month-summary-v1',
+        coveredEntryIds: const [
+          'old-entry-1',
+          'old-entry-2',
+          'old-entry-3',
+          'old-entry-4',
+        ],
+      ));
+      await periodRepository.saveSummary(PeriodSummary(
+        id: PeriodSummaryRepository.yearId(2026),
+        type: PeriodSummaryType.year,
+        startDate: DateTime(2026),
+        endDate: DateTime(2026, 12, 31, 23, 59, 59),
+        generatedAt: date,
+        entryCount: 4,
+        brief: '年度摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: const ['old-entry-1'],
+        generator: 'ai-year-summary-v1',
+        coveredEntryIds: const [
+          'old-entry-1',
+          'old-entry-2',
+          'old-entry-3',
+          'old-entry-4',
+        ],
+      ));
+
+      await diaryRepository.saveEntry(_entry(
+        id: 'new-period-entry',
+        date: DateTime(2026, 7, 20),
+        content: '新增日记。',
+      ));
+
+      final monthStatus = await periodRepository.getStatus(
+        PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      );
+      final yearStatus = await periodRepository.getStatus(
+        PeriodSummaryRepository.yearId(2026),
+      );
+
+      expect(monthStatus?.needsUpdate, isTrue);
+      expect(monthStatus?.changedEntryIds, ['new-period-entry']);
+      expect(monthStatus?.baseEntryCount, 4);
+      expect(monthStatus?.currentEntryCount, 1);
+      expect(monthStatus?.shouldAutoUpdate(), isFalse);
+      expect(yearStatus?.needsUpdate, isTrue);
+    });
+
+    test('diary content edits do not mark period summaries stale', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const periodRepository = PeriodSummaryRepository();
+      final original = _entry(
+        id: 'edited-period-entry',
+        date: DateTime(2026, 7, 20),
+        content: '原始内容。',
+      );
+      await diaryRepository.saveEntry(original);
+      await periodRepository.saveSummary(PeriodSummary(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+        type: PeriodSummaryType.month,
+        startDate: DateTime(2026, 7),
+        endDate: DateTime(2026, 7, 31, 23, 59, 59),
+        generatedAt: DateTime(2026, 7, 31),
+        entryCount: 1,
+        brief: '七月摘要',
+        themes: const [],
+        emotions: const [],
+        representativeEntryIds: const ['edited-period-entry'],
+        generator: 'ai-month-summary-v1',
+        coveredEntryIds: const ['edited-period-entry'],
+      ));
+
+      await diaryRepository.saveEntry(DiaryEntry(
+        id: original.id,
+        date: original.date,
+        createdAt: original.createdAt,
+        content: '小修改。',
+        location: original.location,
+        weather: original.weather,
+        temperature: original.temperature,
+        updatedAt: original.updatedAt.add(const Duration(minutes: 1)),
+      ));
+
+      final status = await periodRepository.getStatus(
+        PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+      );
+      expect(status?.needsUpdate, isNot(isTrue));
     });
 
     test('builds month summary for scoped entries only', () async {
@@ -6517,7 +6631,7 @@ void main() {
       expect(task?.checkIns.single.sourceEntryId, isNull);
     });
 
-    test('move to trash invalidates period summaries referencing the entry',
+    test('move to trash marks period summaries referencing the entry stale',
         () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
@@ -6541,6 +6655,7 @@ void main() {
         emotions: const [],
         representativeEntryIds: [entry.id],
         generator: 'test',
+        coveredEntryIds: [entry.id],
       ));
       await periodRepository.saveSummary(PeriodSummary(
         id: 'year:2026',
@@ -6554,6 +6669,7 @@ void main() {
         emotions: const [],
         representativeEntryIds: const [],
         generator: 'test',
+        coveredEntryIds: [entry.id],
         contextSourceLines: [
           'period_entry:${entry.id} | 2026-07-03 | 这篇日记参与总结',
         ],
@@ -6561,8 +6677,12 @@ void main() {
 
       await diaryRepository.moveToTrash(entry.id);
 
-      expect(await periodRepository.getSummary('month:2026-07'), isNull);
-      expect(await periodRepository.getSummary('year:2026'), isNull);
+      expect(await periodRepository.getSummary('month:2026-07'), isNotNull);
+      expect(await periodRepository.getSummary('year:2026'), isNotNull);
+      expect((await periodRepository.getStatus('month:2026-07'))?.needsUpdate,
+          isTrue);
+      expect(
+          (await periodRepository.getStatus('year:2026'))?.needsUpdate, isTrue);
     });
 
     test('move to trash clears debug traces referencing the entry', () async {

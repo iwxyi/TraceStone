@@ -1752,7 +1752,10 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
   Future<void> _enqueueIfMissing() async {
     if (_autoQueued) return;
     final data = await _load();
-    if (data.summary != null || data.isActive) return;
+    if (data.isActive) return;
+    final shouldAutoUpdate =
+        data.summary == null || (data.status?.shouldAutoUpdate() ?? false);
+    if (!shouldAutoUpdate) return;
     _autoQueued = true;
     await _enqueue(regenerate: false);
   }
@@ -1855,6 +1858,9 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
           );
         }
         final title = summary.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
+        final updateMessage = data?.status?.needsUpdate ?? false
+            ? _updateMessage(data!.status!)
+            : '';
         return FutureBuilder<bool>(
           future: widget._developerSettings.isDeveloperModeEnabled(),
           builder: (context, developerSnapshot) {
@@ -1899,6 +1905,17 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                     ),
                     const SizedBox(height: 12),
                     Text(summary.brief),
+                    if (updateMessage.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        updateMessage,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                    ],
                     if (summary.themes.isNotEmpty ||
                         summary.emotions.isNotEmpty) ...[
                       const SizedBox(height: 12),
@@ -1981,6 +1998,14 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
         );
       },
     );
+  }
+
+  String _updateMessage(PeriodSummaryStatus status) {
+    final percent = (status.changeRatio * 100).round();
+    if (status.shouldAutoUpdate()) {
+      return '日记变化较多，正在排队更新这个总结。';
+    }
+    return '有 ${status.changedEntryIds.length} 篇日记变化，约占 $percent%，暂不自动更新。';
   }
 }
 
