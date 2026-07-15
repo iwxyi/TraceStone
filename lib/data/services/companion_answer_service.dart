@@ -25,6 +25,11 @@ const _genericNameStops = {
   '昨天',
   '去年',
   '今年',
+  '给过什',
+  '是什么',
+  '怎么样',
+  '怎么办',
+  '为什么',
 };
 
 class CompanionAnswerService {
@@ -96,43 +101,11 @@ class CompanionAnswerService {
       evidence: primaryEvidence.take(12).toList(growable: false),
       developerDetail: context.debugSummary,
     ));
-    final expansionQueries = _expansionQueries(question, context);
-    if (expansionQueries.isNotEmpty) {
-      await addStep(CompanionResearchStep(
-        title: '规划检索路径',
-        status: '准备扩展 ${expansionQueries.take(4).length} 条线索',
-        detail: expansionQueries.take(4).join('；'),
-        developerDetail: 'queries=${expansionQueries.join(' | ')}',
-      ));
-    }
-    final expandedEvidence = <CompanionResearchEvidence>[];
-    for (final query in expansionQueries.take(4)) {
-      await addStep(CompanionResearchStep(
-        title: '扩展检索',
-        status: '正在检索“$query”',
-        detail: '根据上一轮线索继续查找相关日记、摘要、片段和记忆。',
-      ));
-      final matches = await _searchService.search(query, limit: 48);
-      final evidence = matches
-          .where(_isPromptSearchMatch)
-          .map(_evidenceFromMatch)
-          .toList(growable: false);
-      final batches = _batchSummariesFor(query, evidence);
-      expandedEvidence.addAll(_representativeEvidence(evidence, batches));
-      await addStep(CompanionResearchStep(
-        title: '整理“$query”',
-        status: '找到 ${evidence.length} 条候选资料',
-        detail: evidence.length > 12
-            ? '候选资料较多，已压缩成 ${batches.length} 组摘要，并保留每组代表证据进入回答上下文。'
-            : '候选资料数量可控，直接进入回答上下文。',
-        evidence: _representativeEvidence(evidence, batches)
-            .take(8)
-            .toList(growable: false),
-        batchSummaries: batches,
-        developerDetail:
-            'query=$query matches=${matches.length} sourceTypes=${_sourceTypeSummary(matches)}',
-      ));
-    }
+    final expandedEvidence = await _runDynamicResearch(
+      question: question,
+      context: context,
+      addStep: addStep,
+    );
     await addStep(CompanionResearchStep(
       title: '生成回答',
       status: '正在基于证据组织 Markdown 回答',
@@ -482,6 +455,226 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
     );
   }
 
+  Future<List<CompanionResearchEvidence>> _runDynamicResearch({
+    required String question,
+    required AiContextPackage context,
+    required Future<void> Function(CompanionResearchStep step) addStep,
+  }) async {
+    final subquestions = _splitSubquestions(question);
+    final budget = _ResearchBudget.forQuestion(question, subquestions.length);
+    final seeds = _seedQueries(question, context);
+    final queues = [
+      for (final subquestion in subquestions)
+        _ResearchSubquestion(
+          text: subquestion,
+          queue: _ResearchQueryQueue([
+            ..._localSeedQueries(subquestion, context),
+            ..._seedQueries(subquestion, context),
+            ...seeds,
+          ]),
+        ),
+    ];
+    if (queues.isEmpty) return const [];
+
+    await addStep(CompanionResearchStep(
+      title: '规划研究路径',
+      status:
+          '拆成 ${queues.length} 个子问题，最多 ${budget.maxRounds} 轮、${budget.maxQueries} 次检索',
+      detail: queues.map((item) => item.text).join('；'),
+      developerDetail:
+          'budget(rounds=${budget.maxRounds}, queries=${budget.maxQueries}, evidence=${budget.maxEvidence}) seeds=${seeds.join(' | ')}',
+    ));
+
+    final expandedEvidence = <CompanionResearchEvidence>[];
+    final seenEvidenceKeys = <String>{};
+    var queryCount = 0;
+    for (var round = 1; round <= budget.maxRounds; round++) {
+      final active = queues.where((item) => item.queue.hasNext).toList();
+      if (active.isEmpty) break;
+      final planned = <_ResearchPlannedQuery>[];
+      final perRoundLimit =
+          budget.queriesPerRound(round).clamp(1, budget.remaining(queryCount));
+      for (final item in active) {
+        if (planned.length >= perRoundLimit) break;
+        final query = item.queue.next();
+        if (query == null) continue;
+        planned.add(_ResearchPlannedQuery(item, query));
+      }
+      if (planned.isEmpty) break;
+
+      await addStep(CompanionResearchStep(
+        title: '研究第 $round 轮',
+        status: '正在检索 ${planned.length} 条线索',
+        detail: planned.map((item) => item.query).join('；'),
+        developerDetail:
+            'round=$round remaining=${budget.remaining(queryCount)} queues=${queues.map((item) => '${item.text}:${item.queue.pendingCount}').join(',')}',
+      ));
+
+      var roundNewEvidence = 0;
+      for (final plannedQuery in planned) {
+        if (queryCount >= budget.maxQueries) break;
+        queryCount++;
+        final matches = await _searchService.search(
+          plannedQuery.query,
+          limit: budget.searchLimitFor(plannedQuery.query),
+        );
+        final evidence = matches
+            .where(_isPromptSearchMatch)
+            .map(_evidenceFromMatch)
+            .toList(growable: false);
+        final batches = _batchSummariesFor(plannedQuery.query, evidence);
+        final representatives = _representativeEvidence(evidence, batches);
+        final newEvidence = <CompanionResearchEvidence>[];
+        for (final item in representatives) {
+          final key = _evidenceKey(item);
+          if (seenEvidenceKeys.add(key)) {
+            newEvidence.add(item);
+            expandedEvidence.add(item);
+          }
+        }
+        roundNewEvidence += newEvidence.length;
+        plannedQuery.subquestion.evidenceCount += newEvidence.length;
+        final followUps = _followUpQueriesFromEvidence(
+          plannedQuery.subquestion.text,
+          plannedQuery.query,
+          evidence,
+        );
+        plannedQuery.subquestion.queue.addAll(followUps);
+
+        await addStep(CompanionResearchStep(
+          title: '整理“${plannedQuery.query}”',
+          status: '找到 ${evidence.length} 条候选，新增 ${newEvidence.length} 条证据',
+          detail: evidence.length > 12
+              ? '候选资料较多，已压缩成 ${batches.length} 组摘要，并继续追踪新线索。'
+              : '候选资料数量可控，已评估是否需要继续追踪。',
+          evidence: newEvidence.take(8).toList(growable: false),
+          batchSummaries: batches,
+          developerDetail:
+              'subquestion=${plannedQuery.subquestion.text} query=${plannedQuery.query} matches=${matches.length} followUps=${followUps.join(' | ')} sourceTypes=${_sourceTypeSummary(matches)}',
+        ));
+        if (expandedEvidence.length >= budget.maxEvidence) break;
+      }
+      if (expandedEvidence.length >= budget.maxEvidence) break;
+      if (roundNewEvidence == 0 && round >= 2) {
+        await addStep(CompanionResearchStep(
+          title: '研究收敛',
+          status: '连续扩展没有新增关键证据',
+          detail: '停止继续扩大检索，避免用低相关资料稀释回答。',
+          developerDetail: 'round=$round queryCount=$queryCount',
+        ));
+        break;
+      }
+      for (final item in queues) {
+        if (item.evidenceCount >= budget.enoughEvidencePerSubquestion) {
+          item.queue.trim(2);
+        }
+      }
+    }
+    return _dedupeEvidence(expandedEvidence)
+        .take(budget.maxEvidence)
+        .toList(growable: false);
+  }
+
+  List<String> _splitSubquestions(String question) {
+    final parts = question
+        .split(RegExp(r'[？?；;。]\s*|(?:还有|以及|另外|同时|并且)'))
+        .map((item) => item.trim())
+        .where((item) => item.length >= 2)
+        .toList(growable: false);
+    if (parts.isEmpty) return [question.trim()];
+    return parts.take(6).toList(growable: false);
+  }
+
+  List<String> _seedQueries(String question, AiContextPackage context) {
+    final queries = <String>[];
+    void add(String value) {
+      final normalized = value.trim();
+      if (normalized.length < 2) return;
+      if (queries.contains(normalized)) return;
+      queries.add(normalized);
+    }
+
+    for (final query in _expansionQueries(question, context)) {
+      add(query);
+    }
+    for (final term in _topicTerms(question).take(8)) {
+      add(term);
+    }
+    if (queries.isEmpty) add(question);
+    return queries.take(12).toList(growable: false);
+  }
+
+  List<String> _localSeedQueries(String question, AiContextPackage context) {
+    final queries = <String>[];
+    void add(String value) {
+      final normalized = value.trim();
+      if (normalized.length < 2) return;
+      if (queries.contains(normalized)) return;
+      queries.add(normalized);
+    }
+
+    if (_containsAny(question, const ['领导', '对象', '伴侣', '女朋友', '男朋友', '同事'])) {
+      for (final relationship in context.relationshipProfiles) {
+        add(relationship.personName);
+        add('${relationship.personName} ${_intentKeywords(question).take(3).join(' ')}');
+      }
+      for (final match in context.searchMatches.take(8)) {
+        for (final name in _namesFromText('${match.title} ${match.summary}')) {
+          add(name);
+          add('$name ${_intentKeywords(question).take(3).join(' ')}');
+        }
+      }
+    }
+    for (final name in _namesFromText(question)) {
+      add(name);
+      add('$name ${_intentKeywords(question).take(3).join(' ')}');
+    }
+    for (final term in _topicTerms(question).take(4)) {
+      add(term);
+    }
+    for (final relationship in context.relationshipProfiles) {
+      if (question.contains(relationship.personName) ||
+          relationship.names.any(question.contains)) {
+        add(relationship.personName);
+      }
+    }
+    return queries;
+  }
+
+  List<String> _followUpQueriesFromEvidence(
+    String subquestion,
+    String currentQuery,
+    List<CompanionResearchEvidence> evidence,
+  ) {
+    if (evidence.isEmpty) return const [];
+    final queries = <String>[];
+    void add(String value) {
+      final normalized = value.trim();
+      if (normalized.length < 2) return;
+      if (normalized == currentQuery.trim()) return;
+      if (queries.contains(normalized)) return;
+      queries.add(normalized);
+    }
+
+    final intents = _intentKeywords(subquestion);
+    for (final item in evidence.take(10)) {
+      final text = '${item.title} ${item.summary} ${item.reason}';
+      for (final name in _namesFromText(text)) {
+        add(name);
+        add('$name ${intents.take(3).join(' ')}');
+      }
+      for (final topic in _topicTerms(text).take(4)) {
+        if (_isLowValueToken(topic)) continue;
+        add('$topic ${intents.take(2).join(' ')}');
+      }
+    }
+    return queries.take(8).toList(growable: false);
+  }
+
+  String _evidenceKey(CompanionResearchEvidence item) {
+    return '${item.sourceType}:${item.sourceId}:${item.entryId}:${item.title}';
+  }
+
   List<String> _expansionQueries(String question, AiContextPackage context) {
     final queries = <String>[];
     final lower = question.toLowerCase();
@@ -696,6 +889,7 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
         final value = match.group(1)?.trim();
         if (value == null || value.length < 2) continue;
         if (_genericNameStops.contains(value)) continue;
+        if (value.endsWith('怎') || value.endsWith('什')) continue;
         names.add(value);
       }
     }
@@ -1030,4 +1224,128 @@ class _AllowedCompanionSource {
   final String sourceId;
   final String title;
   final int score;
+}
+
+class _ResearchBudget {
+  const _ResearchBudget({
+    required this.maxRounds,
+    required this.maxQueries,
+    required this.maxEvidence,
+    required this.enoughEvidencePerSubquestion,
+  });
+
+  final int maxRounds;
+  final int maxQueries;
+  final int maxEvidence;
+  final int enoughEvidencePerSubquestion;
+
+  factory _ResearchBudget.forQuestion(String question, int subquestionCount) {
+    final complexity = _complexityScore(question, subquestionCount);
+    return _ResearchBudget(
+      maxRounds: complexity >= 8
+          ? 5
+          : complexity >= 5
+              ? 4
+              : 3,
+      maxQueries: complexity >= 8
+          ? 18
+          : complexity >= 5
+              ? 12
+              : 7,
+      maxEvidence: complexity >= 8
+          ? 36
+          : complexity >= 5
+              ? 28
+              : 18,
+      enoughEvidencePerSubquestion: complexity >= 8 ? 8 : 5,
+    );
+  }
+
+  int queriesPerRound(int round) {
+    if (round <= 1) return 4;
+    if (round == 2) return 5;
+    return 3;
+  }
+
+  int remaining(int usedQueries) => (maxQueries - usedQueries).clamp(0, 999);
+
+  int searchLimitFor(String query) {
+    final length = query.trim().length;
+    if (length <= 3) return 32;
+    if (length >= 12) return 64;
+    return 48;
+  }
+
+  static int _complexityScore(String question, int subquestionCount) {
+    var score = subquestionCount;
+    for (final item in const [
+      '为什么',
+      '怎么',
+      '如何',
+      '变化',
+      '关系',
+      '建议',
+      '比较',
+      '第一次',
+      '什么时候',
+      '可能',
+      '适合',
+      '影响',
+      '周期',
+      '趋势',
+    ]) {
+      if (question.contains(item)) score++;
+    }
+    score += RegExp(r'[？?；;，,、]').allMatches(question).length.clamp(0, 4);
+    return score;
+  }
+}
+
+class _ResearchSubquestion {
+  _ResearchSubquestion({
+    required this.text,
+    required this.queue,
+  });
+
+  final String text;
+  final _ResearchQueryQueue queue;
+  int evidenceCount = 0;
+}
+
+class _ResearchPlannedQuery {
+  const _ResearchPlannedQuery(this.subquestion, this.query);
+
+  final _ResearchSubquestion subquestion;
+  final String query;
+}
+
+class _ResearchQueryQueue {
+  _ResearchQueryQueue(Iterable<String> values) {
+    addAll(values);
+  }
+
+  final List<String> _pending = [];
+  final Set<String> _seen = {};
+
+  bool get hasNext => _pending.isNotEmpty;
+  int get pendingCount => _pending.length;
+
+  void addAll(Iterable<String> values) {
+    for (final value in values) {
+      final normalized = value.trim();
+      if (normalized.length < 2) continue;
+      if (!_seen.add(normalized)) continue;
+      _pending.add(normalized);
+    }
+  }
+
+  String? next() {
+    if (_pending.isEmpty) return null;
+    return _pending.removeAt(0);
+  }
+
+  void trim(int keep) {
+    if (_pending.length <= keep) return;
+    _pending.removeRange(keep, _pending.length);
+  }
 }

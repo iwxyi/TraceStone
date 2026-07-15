@@ -4085,7 +4085,8 @@ void main() {
 
       expect(progress.map((step) => step.title), contains('理解问题'));
       expect(progress.map((step) => step.title), contains('检索基础资料'));
-      expect(progress.map((step) => step.title), contains('扩展检索'));
+      expect(progress.map((step) => step.title), contains('规划研究路径'));
+      expect(progress.map((step) => step.title), contains('研究第 1 轮'));
       expect(searchService.queries, contains('周岚'));
       expect(client.lastUserPrompt, contains('研究步骤与扩展证据'));
       expect(client.lastUserPrompt, contains('entry_summary:leader-entry'));
@@ -4212,9 +4213,102 @@ void main() {
       expect(session, isNotNull);
       expect(session?.state, AiResearchSessionState.completed);
       expect(session?.question, '我什么时候去的新加坡');
-      expect(session?.steps.map((step) => step.title), contains('规划检索路径'));
+      expect(session?.steps.map((step) => step.title), contains('规划研究路径'));
+      expect(session?.steps.map((step) => step.title), contains('研究第 1 轮'));
       expect(session?.compressedCandidateCount, greaterThan(0));
       expect(session?.answerPreview, contains('第一次明确记录新加坡'));
+    });
+
+    test('companion answer plans dynamic rounds for multiple questions',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final client = _CompanionAiClientService(jsonEncode({
+        'answer': '## 综合回答\n分别整理了新加坡、领导和小红三条线索。',
+        'follow_up': '',
+        'sources': [
+          {
+            'source_id': 'entry_summary:zhou-follow-up',
+            'title': '周岚反馈',
+            'reason': '第二轮追踪到的领导姓名',
+            'score': 11,
+          },
+          {
+            'source_id': 'entry_summary:xiaohong-follow-up',
+            'title': '小红互动',
+            'reason': '第二轮追踪到的小红线索',
+            'score': 10,
+          },
+        ],
+      }));
+      const context = AiContextPackage(
+        scenario: AiContextScenario.question,
+        query: '我什么时候去的新加坡？领导给过什么建议？我和小红怎么样？',
+        searchMatches: [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'seed-leader',
+            entryId: 'seed-leader',
+            title: '直属领导周岚',
+            summary: '直属领导周岚提醒我先讲判断。',
+            score: 8,
+            reasons: ['关键词重合：领导'],
+            matchedTokens: ['领导'],
+          ),
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'seed-xiaohong',
+            entryId: 'seed-xiaohong',
+            title: '和小红散步',
+            summary: '和小红第一次认真聊关系。',
+            score: 8,
+            reasons: ['人物匹配：小红'],
+            matchedTokens: ['小红'],
+          ),
+        ],
+      );
+      final searchService = _FakeAiSearchService({
+        '周岚': const [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'zhou-follow-up',
+            entryId: 'zhou-follow-up',
+            title: '周岚反馈',
+            summary: '周岚建议每周同步判断和风险。',
+            score: 11,
+            reasons: ['人物线索：周岚'],
+            matchedTokens: ['周岚'],
+          ),
+        ],
+        '小红': const [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'xiaohong-follow-up',
+            entryId: 'xiaohong-follow-up',
+            title: '小红互动',
+            summary: '小红说希望我更直接表达。',
+            score: 10,
+            reasons: ['人物线索：小红'],
+            matchedTokens: ['小红'],
+          ),
+        ],
+      });
+
+      final answer = await CompanionAnswerService(
+        client: client,
+        contextBuilder: _FakeQuestionContextBuilder(context),
+        searchService: searchService,
+      ).answer('我什么时候去的新加坡？领导给过什么建议？我和小红怎么样？');
+
+      final session =
+          await const AiResearchSessionRepository().getLastSession();
+      final titles = session?.steps.map((step) => step.title).toList() ?? [];
+      expect(titles, contains('规划研究路径'));
+      expect(titles, contains('研究第 1 轮'));
+      expect(searchService.queries, contains('周岚'));
+      expect(searchService.queries, contains('小红'));
+      expect(client.lastUserPrompt, contains('拆成 3 个子问题'));
+      expect(answer.sources.map((source) => source.sourceId),
+          containsAll(['zhou-follow-up', 'xiaohong-follow-up']));
     });
 
     test('question prompt respects hidden and corrected profile preferences',
