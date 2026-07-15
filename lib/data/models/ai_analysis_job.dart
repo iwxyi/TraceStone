@@ -375,14 +375,11 @@ class AiAnalysisQueueSnapshot {
         .fold(
       0,
       (total, job) {
-        final completed = job.completedStages
-            .where((stage) =>
-                stage != AiAnalysisStage.queued &&
-                stage != AiAnalysisStage.completed)
-            .toSet()
-            .length;
+        final expectedStages = _expectedStagesFor(job.type);
+        final completed =
+            job.completedStages.where(expectedStages.contains).toSet().length;
         final remaining =
-            (_pipelineStageCount - completed).clamp(1, _pipelineStageCount);
+            (expectedStages.length - completed).clamp(1, expectedStages.length);
         return total + remaining.toInt();
       },
     );
@@ -407,10 +404,10 @@ class AiAnalysisQueueSnapshot {
     final jobSamples = _completedJobDurations;
     if (jobSamples.isEmpty) return const Duration(seconds: 8);
     final averageJobMs = jobSamples
-            .map((duration) => duration.inMilliseconds)
+            .map((sample) => sample.inMilliseconds)
             .reduce((a, b) => a + b) /
         jobSamples.length;
-    final averageStageMs = averageJobMs / _pipelineStageCount;
+    final averageStageMs = averageJobMs;
     final clamped = averageStageMs.clamp(1000, 10 * 60 * 1000).round();
     return Duration(milliseconds: clamped);
   }
@@ -541,13 +538,46 @@ class AiAnalysisQueueSnapshot {
   List<Duration> get _completedJobDurations {
     return jobs
         .where((job) => job.state == AiAnalysisJobState.completed)
-        .map((job) => job.updatedAt.difference(job.createdAt))
+        .map((job) {
+          final duration = job.updatedAt.difference(job.createdAt);
+          final stageCount = _expectedStagesFor(job.type).length;
+          return Duration(
+            milliseconds: (duration.inMilliseconds / stageCount).round(),
+          );
+        })
         .where(_isValidCalibrationDuration)
         .toList();
   }
 
   bool _isValidCalibrationDuration(Duration duration) =>
       duration.inMilliseconds > 0 && duration < const Duration(days: 1);
+
+  static Set<AiAnalysisStage> _expectedStagesFor(AiAnalysisJobType type) {
+    switch (type) {
+      case AiAnalysisJobType.diary:
+        return const {
+          AiAnalysisStage.preparing,
+          AiAnalysisStage.generatingSummary,
+          AiAnalysisStage.segmenting,
+          AiAnalysisStage.embedding,
+          AiAnalysisStage.retrieving,
+          AiAnalysisStage.generatingInsight,
+          AiAnalysisStage.updatingMemory,
+        };
+      case AiAnalysisJobType.embeddingRebuild:
+        return const {
+          AiAnalysisStage.preparing,
+          AiAnalysisStage.generatingSummary,
+          AiAnalysisStage.embedding,
+        };
+      case AiAnalysisJobType.monthSummary:
+      case AiAnalysisJobType.yearSummary:
+        return const {
+          AiAnalysisStage.preparing,
+          AiAnalysisStage.generatingSummary,
+        };
+    }
+  }
 
   String _durationLabel(Duration duration) {
     if (duration.inMinutes < 1) {
@@ -560,11 +590,6 @@ class AiAnalysisQueueSnapshot {
     if (minutes == 0) return '约 ${duration.inHours} 小时';
     return '约 ${duration.inHours} 小时 $minutes 分钟';
   }
-
-  static final int _pipelineStageCount = AiAnalysisStage.values
-      .where((stage) =>
-          stage != AiAnalysisStage.queued && stage != AiAnalysisStage.completed)
-      .length;
 }
 
 class AiAnalysisStageCalibration {

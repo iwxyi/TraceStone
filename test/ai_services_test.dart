@@ -2362,6 +2362,70 @@ void main() {
       );
     });
 
+    test('snapshot estimates mixed job types with their own stages', () {
+      final date = DateTime(2026, 7, 3);
+      final diary = AiAnalysisJob(
+        id: 'diary',
+        entryId: 'diary',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date,
+        updatedAt: date,
+      );
+      final embedding = AiAnalysisJob(
+        id: 'embedding:diary',
+        entryId: 'diary',
+        type: AiAnalysisJobType.embeddingRebuild,
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date,
+        updatedAt: date,
+      );
+      final month = AiAnalysisJob(
+        id: 'month:2026-07',
+        entryId: 'month:2026-07',
+        type: AiAnalysisJobType.monthSummary,
+        targetId: 'month:2026-07',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date,
+        updatedAt: date,
+      );
+      final year = AiAnalysisJob(
+        id: 'year:2026',
+        entryId: 'year:2026',
+        type: AiAnalysisJobType.yearSummary,
+        targetId: 'year:2026',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.incomplete,
+        currentStage: AiAnalysisStage.generatingSummary,
+        completedStages: const [AiAnalysisStage.preparing],
+        createdAt: date,
+        updatedAt: date,
+      );
+      final completedMonth = AiAnalysisJob(
+        id: 'month:2026-06',
+        entryId: 'month:2026-06',
+        type: AiAnalysisJobType.monthSummary,
+        targetId: 'month:2026-06',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.completed,
+        currentStage: AiAnalysisStage.completed,
+        createdAt: date,
+        updatedAt: date.add(const Duration(seconds: 20)),
+      );
+      final snapshot = AiAnalysisQueueSnapshot(
+        jobs: [diary, embedding, month, year, completedMonth],
+      );
+
+      expect(snapshot.remainingStageCount, 13);
+      expect(snapshot.averageStageDurationLabel, '约 10 秒');
+      expect(snapshot.estimatedRemainingLabel, '约 2 分钟');
+    });
+
     test('paused queue keeps jobs visible but does not return runnable work',
         () async {
       SharedPreferences.setMockInitialValues({});

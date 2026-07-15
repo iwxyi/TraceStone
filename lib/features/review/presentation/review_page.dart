@@ -178,7 +178,7 @@ class _ReviewPageState extends State<ReviewPage> {
         builder: (context, snapshot) {
           final entries = snapshot.data ?? [];
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return _ReviewLoadingPlaceholder(selectedIndex: _selectedIndex);
           }
           if (entries.isEmpty) {
             return const Padding(
@@ -279,6 +279,176 @@ class _EmptyReviewCard extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.all(18),
         child: Text('还没有保存过日记。'),
+      ),
+    );
+  }
+}
+
+class _ReviewLoadingPlaceholder extends StatelessWidget {
+  const _ReviewLoadingPlaceholder({required this.selectedIndex});
+
+  final int selectedIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    if (selectedIndex == 2) return const _DayTimelineSkeleton();
+    return const _CalendarReviewSkeleton();
+  }
+}
+
+class _DayTimelineSkeleton extends StatelessWidget {
+  const _DayTimelineSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+      itemCount: 5,
+      itemBuilder: (context, index) {
+        return const Padding(
+          padding: EdgeInsets.only(bottom: 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SkeletonDateRail(),
+              SizedBox(width: 12),
+              Expanded(child: _SkeletonEntryCard()),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CalendarReviewSkeleton extends StatelessWidget {
+  const _CalendarReviewSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      children: [
+        const Row(
+          children: [
+            _SkeletonBlock(width: 88, height: 30),
+            Spacer(),
+            _SkeletonBlock(width: 128, height: 30),
+          ],
+        ),
+        const SizedBox(height: 18),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = (constraints.maxWidth - 6 * 8) / 7;
+            return Wrap(
+              spacing: 8,
+              runSpacing: 10,
+              children: [
+                for (var index = 0; index < 35; index++)
+                  _SkeletonBlock(width: width, height: 42),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 20),
+        const _SkeletonEntryCard(),
+        const SizedBox(height: 12),
+        const _SkeletonEntryCard(),
+      ],
+    );
+  }
+}
+
+class _SkeletonDateRail extends StatelessWidget {
+  const _SkeletonDateRail();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 42,
+      height: 104,
+      child: Column(
+        children: [
+          _SkeletonBlock(width: 34, height: 42),
+          Expanded(
+            child: _SkeletonVerticalLine(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonVerticalLine extends StatelessWidget {
+  const _SkeletonVerticalLine();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context)
+        .colorScheme
+        .surfaceContainerHighest
+        .withValues(alpha: 0.58);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          width: 1,
+          child: DecoratedBox(
+            decoration: BoxDecoration(color: color),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SkeletonEntryCard extends StatelessWidget {
+  const _SkeletonEntryCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.all(Radius.circular(10)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(14, 13, 14, 13),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SkeletonBlock(width: double.infinity, height: 18),
+            SizedBox(height: 10),
+            _SkeletonBlock(width: double.infinity, height: 12),
+            SizedBox(height: 7),
+            _SkeletonBlock(width: 180, height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock({required this.width, required this.height});
+
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context)
+        .colorScheme
+        .surfaceContainerHighest
+        .withValues(alpha: 0.58);
+    return SizedBox(
+      width: width,
+      height: height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(height <= 2 ? 0 : 7),
+        ),
       ),
     );
   }
