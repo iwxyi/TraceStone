@@ -308,11 +308,16 @@ class _AiQueueCard extends StatelessWidget {
                 : '正在整理记忆';
     final stage = job?.stageLabel ?? '等待继续';
     final waiting = snapshot.waitingCount;
+    final currentBatch = job == null ? null : snapshot.batchForJob(job.id);
     final totalActive = snapshot.runnableCount +
         (job?.state == AiAnalysisJobState.running ? 1 : 0);
-    final batchProgress = job == null || totalActive <= 0
+    final batchProgress = job == null
         ? ''
-        : '正在整理 ${snapshot.activeOrdinal}/$totalActive 篇';
+        : currentBatch != null
+            ? '正在整理 ${currentBatch.ordinalOf(job.id)}/${currentBatch.totalCount} 篇'
+            : totalActive <= 0
+                ? ''
+                : '正在整理 ${snapshot.activeOrdinal}/$totalActive 篇';
     final progress = job == null
         ? 0.0
         : (job.completedStages.length / _pipelineStageCount).clamp(0.0, 1.0);

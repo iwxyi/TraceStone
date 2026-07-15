@@ -2219,6 +2219,9 @@ void main() {
       expect(snapshot.batches.single.label, '批量补建');
       expect(snapshot.batches.single.progressLabel, '0/2');
       expect(snapshot.batches.single.runnableCount, 1);
+      expect(snapshot.batchForJob('running')?.ordinalOf('running'), 1);
+      expect(snapshot.batchForJob('pending')?.ordinalOf('pending'), 2);
+      expect(snapshot.batchForJob('missing'), isNull);
     });
 
     test('snapshot estimates remaining time from completed stage logs', () {
@@ -2466,6 +2469,37 @@ void main() {
       expect(repairedJob?.state, AiAnalysisJobState.incomplete);
       expect(status?.state, DiaryAnalysisState.incomplete);
       expect(status?.message, '上次整理被系统中断，下次将继续');
+    });
+
+    test('runner discards queued jobs for missing diary entries', () async {
+      SharedPreferences.setMockInitialValues({});
+      const queueRepository = AiAnalysisQueueRepository();
+      const insightRepository = InsightRepository();
+      final date = DateTime(2026, 7, 3);
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: 'missing-entry-job',
+        entryId: 'missing-entry-job',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date,
+        updatedAt: date,
+        batchId: 'backfill:test',
+        batchLabel: '补建缺失资料',
+      ));
+
+      await const AiAnalysisQueueRunner().processUntilIdle(maxJobs: 1);
+
+      final job = await queueRepository.getJob('missing-entry-job');
+      final status = await insightRepository.getStatus('missing-entry-job');
+      final snapshot = await queueRepository.snapshot();
+
+      expect(job, isNull);
+      expect(status?.state, DiaryAnalysisState.completed);
+      expect(status?.message, contains('已从整理队列移除'));
+      expect(snapshot.failedCount, 0);
+      expect(snapshot.runnableCount, 0);
+      expect(snapshot.hasVisibleWork, isFalse);
     });
 
     test('runner builds queued month summary jobs', () async {

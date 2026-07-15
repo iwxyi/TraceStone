@@ -383,30 +383,62 @@ void main() {
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     const queueRepository = AiAnalysisQueueRepository();
-    final date = DateTime(2026, 7, 3);
+    const diaryRepository = DiaryRepository();
+    await queueRepository.setPaused(true);
+    final date = DateTime.now();
+    for (final id in [
+      'queued-home-entry',
+      'queued-home-entry-2',
+      'queued-home-entry-3',
+    ]) {
+      await diaryRepository.saveEntry(DiaryEntry(
+        id: id,
+        date: date,
+        createdAt: date,
+        updatedAt: date,
+        content: '补建测试日记 $id',
+        location: '未选择地点',
+        weather: '晴',
+        temperature: '26',
+      ));
+    }
     await queueRepository.saveJob(AiAnalysisJob(
       id: 'queued-home-entry',
       entryId: 'queued-home-entry',
       pipelineVersion: 1,
-      state: AiAnalysisJobState.incomplete,
+      state: AiAnalysisJobState.running,
       currentStage: AiAnalysisStage.embedding,
       createdAt: date,
       updatedAt: date,
+      batchId: 'backfill:home',
+      batchLabel: '补建缺失资料',
       completedStages: const [
         AiAnalysisStage.preparing,
         AiAnalysisStage.segmenting,
       ],
       lastError: '上次整理被中断，等待继续',
     ));
+    for (final id in ['queued-home-entry-2', 'queued-home-entry-3']) {
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: id,
+        entryId: id,
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date.add(const Duration(seconds: 1)),
+        updatedAt: date.add(const Duration(seconds: 1)),
+        batchId: 'backfill:home',
+        batchLabel: '补建缺失资料',
+      ));
+    }
 
     await tester.pumpWidget(const MaterialApp(home: TodayPage()));
     await tester.pump();
 
-    expect(find.text('继续整理记忆'), findsOneWidget);
-    expect(find.textContaining('正在整理 1/1 篇'), findsOneWidget);
+    expect(find.text('记忆整理已暂停'), findsOneWidget);
+    expect(find.textContaining('正在整理 1/3 篇'), findsOneWidget);
     expect(find.textContaining('已完成 2/7 个阶段'), findsOneWidget);
-    expect(find.textContaining('预计剩余 约 40 秒'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, '暂停'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
   });
 
   testWidgets('today queue card shows paused state', (tester) async {
@@ -456,8 +488,19 @@ void main() {
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     const queueRepository = AiAnalysisQueueRepository();
+    const diaryRepository = DiaryRepository();
     const periodRepository = PeriodSummaryRepository();
     final now = DateTime(2026, 7, 7);
+    await diaryRepository.saveEntry(DiaryEntry(
+      id: 'queue-page-entry',
+      date: now,
+      createdAt: now,
+      updatedAt: now,
+      content: '任务队列测试日记',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
     await queueRepository.saveJob(AiAnalysisJob(
       id: 'queue-page-entry',
       entryId: 'queue-page-entry',

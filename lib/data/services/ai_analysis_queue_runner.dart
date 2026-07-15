@@ -236,7 +236,7 @@ class AiAnalysisQueueRunner {
     final now = DateTime.now();
     final entry = await _diaryRepository.getEntryById(job.entryId);
     if (entry == null) {
-      await _failJob(job, '日记不存在，无法整理');
+      await _discardMissingEntryJob(job, '日记不存在，已从整理队列移除');
       return;
     }
     if (entry.updatedAt.microsecondsSinceEpoch != job.pipelineVersion) {
@@ -528,7 +528,7 @@ class AiAnalysisQueueRunner {
   Future<void> _runEmbeddingRebuildJob(AiAnalysisJob job) async {
     final entry = await _diaryRepository.getEntryById(job.entryId);
     if (entry == null) {
-      await _failJob(job, '日记不存在，无法重建历史相似度');
+      await _discardMissingEntryJob(job, '日记不存在，已从历史相似度队列移除');
       return;
     }
     if (entry.updatedAt.microsecondsSinceEpoch != job.pipelineVersion) {
@@ -1262,6 +1262,19 @@ class AiAnalysisQueueRunner {
     await _insightRepository.saveStatus(DiaryAnalysisStatus(
       entryId: job.entryId,
       state: DiaryAnalysisState.failed,
+      updatedAt: DateTime.now(),
+      message: message,
+    ));
+  }
+
+  Future<void> _discardMissingEntryJob(
+    AiAnalysisJob job,
+    String message,
+  ) async {
+    await _queueRepository.deleteJob(job.id);
+    await _insightRepository.saveStatus(DiaryAnalysisStatus(
+      entryId: job.entryId,
+      state: DiaryAnalysisState.completed,
       updatedAt: DateTime.now(),
       message: message,
     ));

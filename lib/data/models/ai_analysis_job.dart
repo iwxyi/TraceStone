@@ -496,6 +496,13 @@ class AiAnalysisQueueSnapshot {
     return result;
   }
 
+  AiAnalysisBatchSnapshot? batchForJob(String jobId) {
+    for (final batch in batches) {
+      if (batch.jobs.any((job) => job.id == jobId)) return batch;
+    }
+    return null;
+  }
+
   List<Duration> get _completedStageDurations {
     return _completedStageDurationSamples
         .map((sample) => sample.duration)
@@ -617,4 +624,9 @@ class AiAnalysisBatchSnapshot {
   }
 
   String get progressLabel => '$completedCount/$totalCount';
+
+  int ordinalOf(String jobId) {
+    final index = jobs.indexWhere((job) => job.id == jobId);
+    return index < 0 ? 1 : index + 1;
+  }
 }
