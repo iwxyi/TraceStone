@@ -238,7 +238,11 @@ class MemoryRepository {
       var semanticSimilarity = 0.0;
       var semanticScore = 0;
       final memoryEmbedding = memoryEmbeddings[memory.id];
-      if (queryEmbedding != null && memoryEmbedding != null) {
+      if (queryEmbedding != null &&
+          memoryEmbedding != null &&
+          memoryEmbedding.modelId == queryEmbedding.modelId &&
+          memoryEmbedding.modelVersion == queryEmbedding.modelVersion &&
+          memoryEmbedding.dimensions == queryEmbedding.dimensions) {
         final similarity = _embeddingService.cosineSimilarity(
           queryEmbedding.vector,
           memoryEmbedding.vector,

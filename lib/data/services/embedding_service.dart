@@ -22,12 +22,61 @@ class EmbeddingService {
   static const _embeddingBaseUrlKey = 'ai.embeddingBaseUrl';
   static const _embeddingApiKeyKey = 'ai.embeddingApiKey';
   static const _embeddingModelKey = 'ai.embeddingModel';
+  static const _embeddingRemoteAvailableKey = 'ai.embeddingRemoteAvailable';
   static const _defaultEmbeddingModel = 'text-embedding-3-small';
+
+  Future<EmbeddingModelSignature> currentTargetSignature() async {
+    final prefs = await SharedPreferences.getInstance();
+    final useOfficial = _safeGetBool(prefs, _useOfficialKey) ?? true;
+    if (useOfficial) return localSignature;
+    final remoteAvailable = _safeGetBool(prefs, _embeddingRemoteAvailableKey);
+    if (remoteAvailable == false) return localSignature;
+    final useChatConfig =
+        _safeGetBool(prefs, _embeddingUseChatConfigKey) ?? true;
+    final platform = useChatConfig
+        ? _safeGetString(prefs, _platformKey) ?? 'OpenAI'
+        : _safeGetString(prefs, _embeddingPlatformKey) ?? 'OpenAI';
+    final baseUrlValue = useChatConfig
+        ? _safeGetString(prefs, _baseUrlKey)
+        : _safeGetString(prefs, _embeddingBaseUrlKey) ??
+            _safeGetString(prefs, _baseUrlKey);
+    final apiKeyValue = useChatConfig
+        ? _safeGetString(prefs, _apiKeyKey)
+        : _safeGetString(prefs, _embeddingApiKeyKey) ??
+            _safeGetString(prefs, _apiKeyKey);
+    final baseUrl = (baseUrlValue ?? '').trim();
+    final apiKey = (apiKeyValue ?? '').trim();
+    final model =
+        (_safeGetString(prefs, _embeddingModelKey) ?? _defaultEmbeddingModel)
+            .trim();
+    if (platform == 'Claude' ||
+        baseUrl.contains('anthropic') ||
+        baseUrl.isEmpty ||
+        apiKey.isEmpty ||
+        model.isEmpty) {
+      return localSignature;
+    }
+    return EmbeddingModelSignature(
+      modelId: model,
+      modelVersion: 'remote',
+    );
+  }
+
+  static const localSignature = EmbeddingModelSignature(
+    modelId: modelId,
+    modelVersion: modelVersion,
+    dimensions: dimensions,
+  );
 
   Future<AiEmbeddingResult> embedForAi(String text) async {
     try {
-      return await _embedRemote(text);
+      final result = await _embedRemote(text);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_embeddingRemoteAvailableKey, true);
+      return result;
     } on Object {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_embeddingRemoteAvailableKey, false);
       return embed(text);
     }
   }
@@ -204,4 +253,26 @@ class EmbeddingService {
     }
     return hash;
   }
+}
+
+class EmbeddingModelSignature {
+  const EmbeddingModelSignature({
+    required this.modelId,
+    required this.modelVersion,
+    this.dimensions,
+  });
+
+  final String modelId;
+  final String modelVersion;
+  final int? dimensions;
+
+  bool matches(AiEmbedding embedding) {
+    return embedding.modelId == modelId &&
+        embedding.modelVersion == modelVersion &&
+        (dimensions == null || embedding.dimensions == dimensions);
+  }
+
+  String get label => dimensions == null
+      ? '$modelId/$modelVersion'
+      : '$modelId/$modelVersion/${dimensions}d';
 }

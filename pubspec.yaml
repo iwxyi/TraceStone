@@ -45,3 +45,4 @@ flutter:
     - assets/images/
     - assets/animations/
     - assets/fonts/
+    - assets/dev/

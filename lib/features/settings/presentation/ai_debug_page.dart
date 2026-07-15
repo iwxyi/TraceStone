@@ -25,6 +25,7 @@ import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../../data/services/ai_artifact_rebuild_service.dart';
 import '../../../data/services/ai_data_inventory_service.dart';
 import '../../../data/services/ai_embedding_text_builder.dart';
+import '../../../data/services/dev_seed_data_service.dart';
 import '../../../data/services/embedding_service.dart';
 import '../../../data/utils/ai_source_formatter.dart';
 
@@ -695,6 +696,7 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
       const AiDataInventoryService().buildInventory();
   bool _repairingEmbeddingIndexes = false;
   bool _rebuildingOutdatedEmbeddings = false;
+  bool _importingSeedData = false;
   _InventoryFilter _filter = _InventoryFilter.all;
 
   void _reload() {
@@ -782,6 +784,19 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                             )
                           : const Icon(Icons.hub_outlined),
                       label: const Text('重建旧向量'),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('import-dev-diary-seed-data'),
+                      onPressed:
+                          _importingSeedData ? null : _importDevDiarySeedData,
+                      icon: _importingSeedData
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.dataset_outlined),
+                      label: const Text('导入测试日记'),
                     ),
                   ],
                 ),
@@ -954,6 +969,51 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
       if (mounted) {
         setState(() {
           _rebuildingOutdatedEmbeddings = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _importDevDiarySeedData() async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('导入开发者测试日记？'),
+        content: const Text(
+          '这会写入一批固定 ID 的测试日记，并加入 AI 分析队列。重复导入会更新同一批测试日记，不会无限追加。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('导入'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    setState(() {
+      _importingSeedData = true;
+    });
+    try {
+      final result = await DevSeedDataService().importDiaryDataset();
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已导入测试日记：${result.summary}')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入测试日记失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _importingSeedData = false;
         });
       }
     }

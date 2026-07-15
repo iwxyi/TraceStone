@@ -14,6 +14,7 @@ import 'package:trace_stone/data/models/ai_profile_preference.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
 import 'package:trace_stone/data/models/calendar_memory.dart';
+import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
 import 'package:trace_stone/data/models/ai_context_package.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
@@ -1501,6 +1502,50 @@ void main() {
       expect(currentEmbeddings.single.textHash,
           const EmbeddingService().embed(currentEntry.content).textHash);
       expect(job?.stageLogs.last.message, '开发者重建多级向量');
+    });
+
+    test('queues outdated embeddings as resumable rebuild jobs', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const runner = AiAnalysisQueueRunner();
+      final entry = _entry(
+        id: 'queued-stale-embedding',
+        date: DateTime(2026, 7, 5),
+        content: '这篇日记需要通过任务队列重建历史相似度。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await embeddingRepository.saveEmbedding(AiEmbedding(
+        id: 'entry:${entry.id}',
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: entry.id,
+        entryId: entry.id,
+        modelId: 'legacy-hashing-embedding',
+        modelVersion: 'v0',
+        dimensions: 64,
+        vector: List<double>.filled(64, 0),
+        generatedAt: DateTime(2026, 7, 1),
+        textHash: 'stale',
+      ));
+
+      final enqueued = await runner.enqueueOutdatedEmbeddingRebuild();
+      var job = await queueRepository.getJob('embedding:${entry.id}');
+
+      expect(enqueued, 1);
+      expect(job?.type, AiAnalysisJobType.embeddingRebuild);
+      expect(job?.batchLabel, contains('重建历史相似度'));
+
+      await runner.processUntilIdle(maxJobs: 3);
+      job = await queueRepository.getJob('embedding:${entry.id}');
+      final embeddings = await embeddingRepository.listForEntry(entry.id);
+
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.stageLogs.last.message, '历史相似度已更新');
+      expect(embeddings.map((embedding) => embedding.modelId).toSet(),
+          {EmbeddingService.modelId});
+      expect(embeddings.map((embedding) => embedding.dimensions).toSet(),
+          {EmbeddingService.dimensions});
     });
 
     test('rebuilds today insight and records the debug action', () async {
@@ -3979,6 +4024,133 @@ void main() {
       expect(trace?.contextSummary, contains('sourceFiltered=1'));
       expect(trace?.rawResponse, contains('hallucinated'));
       expect(trace?.rawResponsePreview, contains('hallucinated'));
+    });
+
+    test('companion answer records multi step research evidence', () async {
+      SharedPreferences.setMockInitialValues({});
+      final client = _CompanionAiClientService(jsonEncode({
+        'answer': '## 结论\n可以先围绕周岚的反馈复盘。',
+        'follow_up': '你想先看升职建议还是沟通方式？',
+        'sources': [
+          {
+            'source_id': 'entry_summary:leader-entry',
+            'title': '和周岚聊升职',
+            'reason': '扩展检索找到的领导反馈',
+            'score': 9,
+          },
+        ],
+      }));
+      const context = AiContextPackage(
+        scenario: AiContextScenario.question,
+        query: '我的领导给过什么升职建议',
+        searchMatches: [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'seed-entry',
+            entryId: 'seed-entry',
+            title: '直属领导周岚',
+            summary: '直属领导周岚提醒我要先讲判断。',
+            score: 7,
+            reasons: ['关键词重合：领导'],
+            matchedTokens: ['领导'],
+          ),
+        ],
+      );
+      final searchService = _FakeAiSearchService({
+        '周岚': const [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'leader-entry',
+            entryId: 'leader-entry',
+            title: '和周岚聊升职',
+            summary: '周岚建议每周主动同步项目判断。',
+            score: 9,
+            reasons: ['人物线索：周岚'],
+            matchedTokens: ['周岚'],
+          ),
+        ],
+      });
+      final progress = <CompanionResearchStep>[];
+
+      final answer = await CompanionAnswerService(
+        client: client,
+        contextBuilder: _FakeQuestionContextBuilder(context),
+        searchService: searchService,
+      ).answer(
+        '我的领导给过什么升职建议',
+        onProgress: progress.add,
+      );
+
+      expect(progress.map((step) => step.title), contains('理解问题'));
+      expect(progress.map((step) => step.title), contains('检索基础资料'));
+      expect(progress.map((step) => step.title), contains('扩展检索'));
+      expect(searchService.queries, contains('周岚'));
+      expect(client.lastUserPrompt, contains('研究步骤与扩展证据'));
+      expect(client.lastUserPrompt, contains('entry_summary:leader-entry'));
+      expect(answer.researchSteps, isNotEmpty);
+      expect(answer.sources.single.sourceId, 'leader-entry');
+      expect(answer.answer, contains('## 结论'));
+    });
+
+    test('companion answer compresses large research result sets', () async {
+      SharedPreferences.setMockInitialValues({});
+      final client = _CompanionAiClientService(jsonEncode({
+        'answer': '## 汇总\n周岚相关资料较多，先按升职反馈归纳。',
+        'follow_up': '',
+        'sources': [
+          {
+            'source_id': 'entry_summary:leader-entry-0',
+            'title': '周岚升职建议 0',
+            'reason': '批次代表证据',
+            'score': 12,
+          },
+        ],
+      }));
+      const context = AiContextPackage(
+        scenario: AiContextScenario.question,
+        query: '领导给过我哪些升职建议',
+        searchMatches: [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'seed-entry',
+            entryId: 'seed-entry',
+            title: '直属领导周岚',
+            summary: '直属领导周岚反复提到升职需要业务判断。',
+            score: 7,
+            reasons: ['关键词重合：领导'],
+            matchedTokens: ['领导'],
+          ),
+        ],
+      );
+      final manyMatches = List<AiSearchMatch>.generate(
+        20,
+        (index) => AiSearchMatch(
+          sourceType: 'entry_summary',
+          sourceId: 'leader-entry-$index',
+          entryId: 'leader-entry-$index',
+          title: '周岚升职建议 $index',
+          summary: index.isEven ? '周岚建议先讲判断，再讲进度。' : '周岚建议把项目风险提前同步。',
+          score: 12 - (index % 5),
+          reasons: const ['人物线索：周岚', '主题匹配：升职'],
+          matchedTokens: const ['周岚', '升职'],
+        ),
+      );
+      final searchService = _FakeAiSearchService({'周岚': manyMatches});
+
+      final answer = await CompanionAnswerService(
+        client: client,
+        contextBuilder: _FakeQuestionContextBuilder(context),
+        searchService: searchService,
+      ).answer('领导给过我哪些升职建议');
+
+      final compactStep = answer.researchSteps
+          .firstWhere((step) => step.title.startsWith('整理'));
+      expect(compactStep.batchSummaries, isNotEmpty);
+      expect(compactStep.detail, contains('已压缩成'));
+      expect(compactStep.evidence.length, lessThan(manyMatches.length));
+      expect(client.lastUserPrompt, contains('批次摘要'));
+      expect(client.lastUserPrompt, contains('entry_summary:leader-entry-0'));
+      expect(answer.sources.single.sourceId, 'leader-entry-0');
     });
 
     test('question prompt respects hidden and corrected profile preferences',
@@ -7890,4 +8062,21 @@ class _FakeQuestionContextBuilder extends AiContextBuilder {
 
   @override
   Future<AiContextPackage> buildForQuestion(String question) async => package;
+}
+
+class _FakeAiSearchService extends AiSearchService {
+  _FakeAiSearchService(this.responses);
+
+  final Map<String, List<AiSearchMatch>> responses;
+  final List<String> queries = [];
+
+  @override
+  Future<List<AiSearchMatch>> search(String query, {int limit = 12}) async {
+    queries.add(query);
+    return responses.entries
+        .where((entry) => query.contains(entry.key))
+        .expand((entry) => entry.value)
+        .take(limit)
+        .toList(growable: false);
+  }
 }

@@ -44,6 +44,38 @@ class AiAnalysisQueueRepository {
     return job;
   }
 
+  Future<AiAnalysisJob> enqueueEmbeddingRebuildEntry(
+    DiaryEntry entry, {
+    String? batchId,
+    String? batchLabel,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final id = 'embedding:${entry.id}';
+    final existing = await getJob(id);
+    final job = AiAnalysisJob(
+      id: id,
+      entryId: entry.id,
+      type: AiAnalysisJobType.embeddingRebuild,
+      targetId: entry.id,
+      pipelineVersion: entry.updatedAt.microsecondsSinceEpoch,
+      state: AiAnalysisJobState.pending,
+      currentStage: AiAnalysisStage.queued,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      batchId: batchId ?? existing?.batchId,
+      batchLabel: batchLabel ?? existing?.batchLabel,
+    );
+    await prefs.setString('$_prefix${job.id}', jsonEncode(job.toJson()));
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    if (!index.contains(job.id)) {
+      index.add(job.id);
+      await prefs.setStringList(_indexKey, index);
+    }
+    AiAnalysisQueueBus.bump();
+    return job;
+  }
+
   Future<AiAnalysisJob> enqueueMonthSummary(
     DateTime month, {
     int? pipelineVersion,

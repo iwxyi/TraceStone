@@ -1,6 +1,6 @@
 enum AiAnalysisJobState { pending, running, incomplete, failed, completed }
 
-enum AiAnalysisJobType { diary, monthSummary, yearSummary }
+enum AiAnalysisJobType { diary, embeddingRebuild, monthSummary, yearSummary }
 
 enum AiAnalysisStage {
   queued,
@@ -66,6 +66,24 @@ class AiAnalysisJob {
       (state == AiAnalysisJobState.failed && retryCount < 3);
 
   String get stageLabel {
+    if (type == AiAnalysisJobType.embeddingRebuild) {
+      switch (currentStage) {
+        case AiAnalysisStage.queued:
+          return '等待重建历史相似度';
+        case AiAnalysisStage.preparing:
+        case AiAnalysisStage.generatingSummary:
+        case AiAnalysisStage.segmenting:
+          return '准备索引资料';
+        case AiAnalysisStage.embedding:
+          return '重建历史相似度';
+        case AiAnalysisStage.completed:
+          return '历史相似度已更新';
+        case AiAnalysisStage.retrieving:
+        case AiAnalysisStage.generatingInsight:
+        case AiAnalysisStage.updatingMemory:
+          return '整理索引上下文';
+      }
+    }
     if (type == AiAnalysisJobType.monthSummary ||
         type == AiAnalysisJobType.yearSummary) {
       switch (currentStage) {

@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../data/repositories/ai_embedding_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/embedding_service.dart';
+import 'ai_task_queue_page.dart';
 
 class CustomAiPage extends StatefulWidget {
   const CustomAiPage({super.key});
@@ -53,6 +56,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
   static const _embeddingBaseUrlKey = 'ai.embeddingBaseUrl';
   static const _embeddingApiKeyKey = 'ai.embeddingApiKey';
   static const _embeddingModelKey = 'ai.embeddingModel';
+  static const _embeddingRemoteAvailableKey = 'ai.embeddingRemoteAvailable';
   static const _privacyAcceptedKey = 'ai.customPrivacyAccepted';
 
   final _baseUrlController =
@@ -184,6 +188,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
       _privacyAccepted = true;
     }
     final prefs = await SharedPreferences.getInstance();
+    final previousEmbeddingSettings = _storedEmbeddingSettings(prefs);
     await prefs.setBool(_useOfficialKey, _useOfficialAi);
     await prefs.setString(_platformKey, _selectedPlatform);
     await prefs.setString(_baseUrlKey, _baseUrlController.text.trim());
@@ -198,6 +203,11 @@ class _CustomAiPageState extends State<CustomAiPage> {
     await prefs.setString(
         _embeddingModelKey, _embeddingModelController.text.trim());
     await prefs.setBool(_privacyAcceptedKey, _privacyAccepted);
+    final embeddingSettingsChanged =
+        previousEmbeddingSettings != _currentEmbeddingSettings();
+    if (embeddingSettingsChanged) {
+      await prefs.remove(_embeddingRemoteAvailableKey);
+    }
     if (!_useOfficialAi &&
         _baseUrlController.text.trim().isNotEmpty &&
         _apiKeyController.text.trim().isNotEmpty &&
@@ -207,6 +217,76 @@ class _CustomAiPageState extends State<CustomAiPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('已保存 AI 设置')));
+    if (embeddingSettingsChanged) {
+      await _showEmbeddingRebuildPrompt();
+    }
+  }
+
+  String _storedEmbeddingSettings(SharedPreferences prefs) {
+    final useChat = _safeGetBool(prefs, _embeddingUseChatConfigKey) ?? true;
+    return [
+      useChat,
+      if (useChat) ...[
+        _safeGetString(prefs, _platformKey) ?? 'OpenAI',
+        _safeGetString(prefs, _baseUrlKey) ?? '',
+        _safeGetString(prefs, _apiKeyKey) ?? '',
+      ],
+      _safeGetString(prefs, _embeddingPlatformKey) ?? 'OpenAI',
+      _safeGetString(prefs, _embeddingBaseUrlKey) ?? '',
+      _safeGetString(prefs, _embeddingApiKeyKey) ?? '',
+      _safeGetString(prefs, _embeddingModelKey) ?? 'text-embedding-3-small',
+    ].join('\n');
+  }
+
+  String _currentEmbeddingSettings() {
+    return [
+      _embeddingUseChatConfig,
+      if (_embeddingUseChatConfig) ...[
+        _selectedPlatform,
+        _baseUrlController.text.trim(),
+        _apiKeyController.text.trim(),
+      ],
+      _selectedEmbeddingPlatform,
+      _embeddingBaseUrlController.text.trim(),
+      _embeddingApiKeyController.text.trim(),
+      _embeddingModelController.text.trim(),
+    ].join('\n');
+  }
+
+  Future<void> _showEmbeddingRebuildPrompt() async {
+    final signature = await const EmbeddingService().currentTargetSignature();
+    final outdatedEntryIds =
+        await const AiEmbeddingRepository().listOutdatedEntryIds(
+      modelId: signature.modelId,
+      modelVersion: signature.modelVersion,
+      dimensions: signature.dimensions,
+    );
+    if (!mounted || outdatedEntryIds.isEmpty) return;
+    final goQueue = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('需要重建历史相似度？'),
+        content: Text(
+          '相似度配置已变化，${outdatedEntryIds.length} 篇日记的历史相似度索引需要重建。'
+          '不重建也能继续使用，但历史关联会先跳过旧模型索引。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('稍后手动重建'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('去任务队列'),
+          ),
+        ],
+      ),
+    );
+    if (goQueue == true && mounted) {
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (context) => const AiTaskQueuePage(),
+      ));
+    }
   }
 
   Future<bool?> _confirmCustomAiPrivacy() {
@@ -276,9 +356,9 @@ class _CustomAiPageState extends State<CustomAiPage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(ok
             ? embeddingResult == null
-                ? '模型配置可用，向量配置可用'
-                : '模型配置可用；向量不可用，将回退本地：$embeddingResult'
-            : '模型配置不可用：${response.statusCode}'),
+                ? '模型配置可用，历史相似度可用'
+                : '模型配置可用；历史相似度将使用本地模式'
+            : '模型配置不可用：${_friendlyHttpStatus(response.statusCode)}'),
       ));
     } on Object catch (error) {
       if (!mounted) return;
@@ -306,6 +386,13 @@ class _CustomAiPageState extends State<CustomAiPage> {
     _fetchModels();
   }
 
+  String _friendlyHttpStatus(int statusCode) {
+    if (statusCode == 401 || statusCode == 403) return '秘钥无效或无权限';
+    if (statusCode == 404 || statusCode == 405) return '接口地址或模型不匹配';
+    if (statusCode >= 500) return '服务暂时不可用';
+    return '请求未通过';
+  }
+
   void _handleEmbeddingPlatformChanged(String? value) {
     if (value == null) return;
     final preset = _platforms.firstWhere((item) => item.$1 == value);
@@ -331,10 +418,14 @@ class _CustomAiPageState extends State<CustomAiPage> {
         .trim();
     final model = _embeddingModelController.text.trim();
     if (platform == 'Claude' || baseUrl.contains('anthropic')) {
-      return '当前平台不支持 OpenAI embeddings';
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_embeddingRemoteAvailableKey, false);
+      return '当前服务没有提供历史相似度接口';
     }
     if (baseUrl.isEmpty || apiKey.isEmpty || model.isEmpty) {
-      return '向量接口、秘钥或模型为空';
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_embeddingRemoteAvailableKey, false);
+      return '历史相似度配置未完成';
     }
     try {
       final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
@@ -350,14 +441,26 @@ class _CustomAiPageState extends State<CustomAiPage> {
         }),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return '${response.statusCode}';
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_embeddingRemoteAvailableKey, false);
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          return '历史相似度服务认证失败';
+        }
+        if (response.statusCode == 404 || response.statusCode == 405) {
+          return '当前服务没有提供历史相似度接口';
+        }
+        return '历史相似度服务暂不可用';
       }
       final data = jsonDecode(response.body);
       final items = data is Map<String, dynamic> ? data['data'] : null;
-      if (items is! List || items.isEmpty) return '响应为空';
+      if (items is! List || items.isEmpty) return '历史相似度响应为空';
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_embeddingRemoteAvailableKey, true);
       return null;
-    } on Object catch (error) {
-      return error.toString();
+    } on Object {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_embeddingRemoteAvailableKey, false);
+      return '历史相似度服务暂不可用';
     }
   }
 
@@ -564,47 +667,65 @@ class _CustomAiPageState extends State<CustomAiPage> {
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                       ),
                       const SizedBox(height: 12),
-                      SwitchListTile(
+                      ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('向量复用当前 AI 配置'),
-                        subtitle: const Text('同一服务同时支持聊天和 embeddings 时开启'),
-                        value: _embeddingUseChatConfig,
-                        onChanged: (value) =>
-                            setState(() => _embeddingUseChatConfig = value),
+                        leading: const Icon(Icons.manage_search_outlined),
+                        title: const Text('历史相似度'),
+                        subtitle: const Text(
+                          '自动尝试使用当前 AI 服务；不支持时会使用本地相似度。',
+                        ),
                       ),
-                      if (!_embeddingUseChatConfig) ...[
-                        const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          initialValue: _selectedEmbeddingPlatform,
-                          decoration: const InputDecoration(labelText: '向量平台'),
-                          items: [
-                            for (final item in _platforms)
-                              DropdownMenuItem(
-                                  value: item.$1, child: Text(item.$1)),
+                      ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        childrenPadding: EdgeInsets.zero,
+                        title: const Text('高级相似度设置'),
+                        subtitle: const Text('不了解时保持默认即可'),
+                        children: [
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('使用独立相似度服务'),
+                            subtitle: const Text('只有聊天服务和相似度服务分开时才需要开启'),
+                            value: !_embeddingUseChatConfig,
+                            onChanged: (value) => setState(
+                                () => _embeddingUseChatConfig = !value),
+                          ),
+                          if (!_embeddingUseChatConfig) ...[
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              initialValue: _selectedEmbeddingPlatform,
+                              decoration:
+                                  const InputDecoration(labelText: '相似度平台'),
+                              items: [
+                                for (final item in _platforms)
+                                  DropdownMenuItem(
+                                      value: item.$1, child: Text(item.$1)),
+                              ],
+                              onChanged: _handleEmbeddingPlatformChanged,
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _embeddingBaseUrlController,
+                              decoration:
+                                  const InputDecoration(labelText: '接口 URL'),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _embeddingApiKeyController,
+                              decoration:
+                                  const InputDecoration(labelText: '秘钥'),
+                              obscureText: true,
+                            ),
                           ],
-                          onChanged: _handleEmbeddingPlatformChanged,
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _embeddingBaseUrlController,
-                          decoration:
-                              const InputDecoration(labelText: '向量接口 URL'),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _embeddingApiKeyController,
-                          decoration: const InputDecoration(labelText: '向量秘钥'),
-                          obscureText: true,
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _embeddingModelController,
-                        decoration: const InputDecoration(
-                          labelText: '向量模型',
-                          helperText: '用于历史相似度检索，OpenAI 兼容接口默认可用',
-                        ),
-                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '相似度模型会自动选择；不可用时自动回退本地相似度。',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                       ),
                       if (_lastFetchUrl != null) ...[
                         const SizedBox(height: 8),

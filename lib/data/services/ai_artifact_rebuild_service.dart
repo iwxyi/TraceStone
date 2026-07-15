@@ -160,10 +160,11 @@ class AiArtifactRebuildService {
   }
 
   Future<AiArtifactBulkRebuildResult> rebuildOutdatedEmbeddings() async {
+    final signature = await _embeddingService.currentTargetSignature();
     final entryIds = await _embeddingRepository.listOutdatedEntryIds(
-      modelId: EmbeddingService.modelId,
-      modelVersion: EmbeddingService.modelVersion,
-      dimensions: EmbeddingService.dimensions,
+      modelId: signature.modelId,
+      modelVersion: signature.modelVersion,
+      dimensions: signature.dimensions,
     );
     final rebuiltEntryIds = <String>[];
     final embeddingIds = <String>[];

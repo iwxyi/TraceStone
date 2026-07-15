@@ -519,6 +519,46 @@ void main() {
     expect(find.text('2026年 年度总结'), findsOneWidget);
   });
 
+  testWidgets('AI task queue page shows embedding rebuild progress',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const diaryRepository = DiaryRepository();
+    const embeddingRepository = AiEmbeddingRepository();
+    final entry = DiaryEntry(
+      id: 'queue-stale-embedding',
+      date: DateTime(2026, 7, 8),
+      createdAt: DateTime(2026, 7, 8),
+      updatedAt: DateTime(2026, 7, 8),
+      content: '这篇日记的历史相似度索引需要重建。',
+      location: '家',
+      weather: '晴',
+      temperature: '26C',
+    );
+    await diaryRepository.saveEntry(entry);
+    await embeddingRepository.saveEmbedding(AiEmbedding(
+      id: 'entry:${entry.id}',
+      sourceType: AiEmbeddingSourceType.entry,
+      sourceId: entry.id,
+      entryId: entry.id,
+      modelId: 'legacy-hashing-embedding',
+      modelVersion: 'v0',
+      dimensions: 64,
+      vector: List<double>.filled(64, 0),
+      generatedAt: DateTime(2026, 7, 1),
+      textHash: 'stale',
+    ));
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AI 任务队列'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('历史相似度索引'), findsOneWidget);
+    expect(find.text('需要重建 1'), findsOneWidget);
+    expect(find.text('一键重建'), findsOneWidget);
+  });
+
   testWidgets('unknown named route does not fall back to today page',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -1672,10 +1712,8 @@ void main() {
     );
     await tester.enterText(find.widgetWithText(TextField, '秘钥'), 'test-key');
     await tester.enterText(find.widgetWithText(TextField, '模型'), 'test-model');
-    await tester.enterText(
-      find.widgetWithText(TextField, '向量模型'),
-      'text-embedding-3-small',
-    );
+    expect(find.text('历史相似度'), findsOneWidget);
+    expect(find.widgetWithText(TextField, '向量模型'), findsNothing);
     await tester.drag(find.byType(ListView), const Offset(0, -320));
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存设置'));
@@ -1717,7 +1755,8 @@ void main() {
     expect(find.text('自定义 AI'), findsOneWidget);
     expect(find.text('使用官方 AI'), findsOneWidget);
     expect(find.text('gpt-4.1-mini'), findsOneWidget);
-    expect(find.text('text-embedding-3-small'), findsOneWidget);
+    expect(find.text('历史相似度'), findsOneWidget);
+    expect(find.text('text-embedding-3-small'), findsNothing);
   });
 
   testWidgets('diary editor ignores invalid stored preference types',
@@ -2680,6 +2719,34 @@ void main() {
     expect(copiedText, contains('topTags=恢复:1,运动:1'));
     expect(copiedText, contains('sensitivity=critical'));
     expect(copiedText, contains('backupPolicy=默认不建议云备份'));
+  });
+
+  testWidgets('AI debug page imports developer diary seed data',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('import-dev-diary-seed-data')));
+    await tester.pumpAndSettle();
+    expect(find.text('导入开发者测试日记？'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '导入'));
+    await tester.pumpAndSettle();
+
+    final entries = await const DiaryRepository().listEntries();
+    final jobs = await const AiAnalysisQueueRepository().listJobs();
+
+    expect(
+      entries.where((entry) => entry.id.startsWith('dev-seed-')).length,
+      greaterThanOrEqualTo(30),
+    );
+    expect(
+      jobs.where((job) => job.id.startsWith('dev-seed-')).length,
+      greaterThanOrEqualTo(30),
+    );
+    expect(find.textContaining('已导入测试日记'), findsOneWidget);
   });
 
   testWidgets('AI debug page repairs embedding indexes', (tester) async {

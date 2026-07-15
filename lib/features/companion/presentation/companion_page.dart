@@ -55,19 +55,39 @@ class _CompanionPageState extends State<CompanionPage> {
     if (text.isEmpty || _isSending) return;
     setState(() {
       _messages.add(_ChatMessage.user(text: text));
+      _messages.add(const _ChatMessage.assistant(
+        text: '正在理解问题…',
+        researchSteps: [],
+      ));
       _isSending = true;
       _controller.clear();
     });
     _scrollToBottom();
-    final answer = await _service.answer(text);
+    final progressIndex = _messages.length - 1;
+    final researchSteps = <CompanionResearchStep>[];
+    final answer = await _service.answer(
+      text,
+      onProgress: (step) {
+        if (!mounted) return;
+        researchSteps.add(step);
+        setState(() {
+          _messages[progressIndex] = _ChatMessage.assistant(
+            text: step.status,
+            researchSteps: List.unmodifiable(researchSteps),
+          );
+        });
+        _scrollToBottom();
+      },
+    );
     if (!mounted) return;
     setState(() {
-      _messages.add(_ChatMessage.assistant(
+      _messages[progressIndex] = _ChatMessage.assistant(
         text: answer.answer,
         followUp: answer.followUp,
         sources: answer.sources,
         usedFallback: answer.usedFallback,
-      ));
+        researchSteps: answer.researchSteps,
+      );
       _isSending = false;
     });
     _scrollToBottom();
@@ -98,16 +118,8 @@ class _CompanionPageState extends State<CompanionPage> {
                 return ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.all(20),
-                  itemCount: _messages.length + (_isSending ? 1 : 0),
+                  itemCount: _messages.length,
                   itemBuilder: (context, index) {
-                    if (index == _messages.length) {
-                      return _MessageBubble(
-                        message: const _ChatMessage.assistant(
-                          text: '正在整理相关记忆…',
-                        ),
-                        developerMode: developerMode,
-                      );
-                    }
                     return _MessageBubble(
                       message: _messages[index],
                       developerMode: developerMode,
@@ -158,6 +170,7 @@ class _ChatMessage {
     this.followUp = '',
     this.sources = const [],
     this.usedFallback = false,
+    this.researchSteps = const [],
   });
 
   const _ChatMessage.user({required String text})
@@ -168,12 +181,14 @@ class _ChatMessage {
     String followUp = '',
     List<CompanionAnswerSource> sources = const [],
     bool usedFallback = false,
+    List<CompanionResearchStep> researchSteps = const [],
   }) : this(
           text: text,
           isUser: false,
           followUp: followUp,
           sources: sources,
           usedFallback: usedFallback,
+          researchSteps: researchSteps,
         );
 
   final String text;
@@ -181,6 +196,7 @@ class _ChatMessage {
   final String followUp;
   final List<CompanionAnswerSource> sources;
   final bool usedFallback;
+  final List<CompanionResearchStep> researchSteps;
 }
 
 class _MessageBubble extends StatelessWidget {
@@ -218,6 +234,13 @@ class _MessageBubble extends StatelessWidget {
                       style: theme.textTheme.bodySmall
                           ?.copyWith(color: theme.colorScheme.primary)),
                 ],
+                if (!message.isUser && message.researchSteps.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _ResearchStepsView(
+                    steps: message.researchSteps,
+                    developerMode: developerMode,
+                  ),
+                ],
                 if (message.sources.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   Wrap(
@@ -250,5 +273,179 @@ class _MessageBubble extends StatelessWidget {
         : '';
     final score = source.score > 0 ? ' ${source.score}' : '';
     return '${source.title}$id$score';
+  }
+}
+
+class _ResearchStepsView extends StatelessWidget {
+  const _ResearchStepsView({
+    required this.steps,
+    required this.developerMode,
+  });
+
+  final List<CompanionResearchStep> steps;
+  final bool developerMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('研究过程', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 6),
+        for (final step in steps)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(left: 4, bottom: 8),
+              title: Text(step.title, style: theme.textTheme.bodyMedium),
+              subtitle: Text(step.status, style: theme.textTheme.bodySmall),
+              initiallyExpanded: (step.evidence.isNotEmpty ||
+                      step.batchSummaries.isNotEmpty) &&
+                  identical(steps.last, step),
+              children: [
+                if (step.detail.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(step.detail, style: theme.textTheme.bodySmall),
+                  ),
+                if (developerMode && step.developerDetail.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      step.developerDetail,
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.primary),
+                    ),
+                  ),
+                ],
+                if (step.evidence.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  for (final item in step.evidence.take(8))
+                    _ResearchEvidenceTile(
+                      evidence: item,
+                      developerMode: developerMode,
+                    ),
+                ],
+                if (step.batchSummaries.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  for (final batch in step.batchSummaries.take(6))
+                    _ResearchBatchTile(
+                      batch: batch,
+                      developerMode: developerMode,
+                    ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ResearchBatchTile extends StatelessWidget {
+  const _ResearchBatchTile({
+    required this.batch,
+    required this.developerMode,
+  });
+
+  final CompanionResearchBatchSummary batch;
+  final bool developerMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color:
+              theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${batch.title} · ${batch.candidateCount} 条',
+                style: theme.textTheme.bodyMedium,
+              ),
+              if (batch.summary.isNotEmpty)
+                Text(batch.summary, style: theme.textTheme.bodySmall),
+              if (developerMode && batch.developerDetail.isNotEmpty)
+                Text(
+                  batch.developerDetail,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.primary),
+                ),
+              if (batch.evidence.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                for (final item in batch.evidence.take(3))
+                  _ResearchEvidenceTile(
+                    evidence: item,
+                    developerMode: developerMode,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ResearchEvidenceTile extends StatelessWidget {
+  const _ResearchEvidenceTile({
+    required this.evidence,
+    required this.developerMode,
+  });
+
+  final CompanionResearchEvidence evidence;
+  final bool developerMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final source = evidence.sourceType == null || evidence.sourceId == null
+        ? ''
+        : formatAiSourceId(evidence.sourceType!, evidence.sourceId!);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(evidence.title, style: theme.textTheme.bodyMedium),
+              if (evidence.summary.isNotEmpty)
+                Text(evidence.summary, style: theme.textTheme.bodySmall),
+              if (evidence.reason.isNotEmpty)
+                Text(evidence.reason, style: theme.textTheme.bodySmall),
+              if (developerMode)
+                Text(
+                  [
+                    if (source.isNotEmpty) source,
+                    if (evidence.entryId?.isNotEmpty ?? false)
+                      'entry=${evidence.entryId}',
+                    'score=${evidence.score}',
+                  ].join(' | '),
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.primary),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

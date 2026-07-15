@@ -6,8 +6,10 @@ import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/period_summary.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_analysis_queue_repository.dart';
+import '../../../data/repositories/ai_embedding_repository.dart';
 import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/embedding_service.dart';
 
 class AiTaskQueuePage extends StatefulWidget {
   const AiTaskQueuePage({super.key});
@@ -20,6 +22,8 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
   final _queueRepository = const AiAnalysisQueueRepository();
   final _queueRunner = const AiAnalysisQueueRunner();
   final _periodRepository = const PeriodSummaryRepository();
+  final _embeddingRepository = const AiEmbeddingRepository();
+  final _embeddingService = const EmbeddingService();
 
   late Future<_AiTaskQueueData> _dataFuture = _loadData();
 
@@ -37,6 +41,13 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
 
   Future<_AiTaskQueueData> _loadData() async {
     final snapshot = await _queueRepository.snapshot();
+    final embeddingSignature = await _embeddingService.currentTargetSignature();
+    final outdatedEmbeddingEntryIds =
+        await _embeddingRepository.listOutdatedEntryIds(
+      modelId: embeddingSignature.modelId,
+      modelVersion: embeddingSignature.modelVersion,
+      dimensions: embeddingSignature.dimensions,
+    );
     final summaries = await _periodRepository.listSummaries();
     final statuses = await _periodRepository.listStatuses();
     final statusById = {for (final status in statuses) status.id: status};
@@ -72,7 +83,12 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
       existingIds.add(job.targetId);
       if (periodItems.length >= 8) break;
     }
-    return _AiTaskQueueData(snapshot: snapshot, periodItems: periodItems);
+    return _AiTaskQueueData(
+      snapshot: snapshot,
+      periodItems: periodItems,
+      embeddingSignature: embeddingSignature,
+      outdatedEmbeddingCount: outdatedEmbeddingEntryIds.length,
+    );
   }
 
   void _refresh() {
@@ -99,6 +115,16 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
     await _refreshAsync();
   }
 
+  Future<void> _enqueueEmbeddingRebuild() async {
+    final count = await _queueRunner.enqueueOutdatedEmbeddingRebuild();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(count == 0 ? '没有需要重建的历史相似度' : '已加入重建队列：$count 篇日记'),
+    ));
+    unawaited(_queueRunner.processUntilIdle(maxJobs: 5));
+    await _refreshAsync();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -121,6 +147,14 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
                   onPauseChanged: _togglePaused,
                 ),
                 const SizedBox(height: 16),
+                _EmbeddingQueueSection(
+                  snapshot: data.snapshot,
+                  targetLabel: data.embeddingSignature.label,
+                  outdatedCount: data.outdatedEmbeddingCount,
+                  onRebuild: _enqueueEmbeddingRebuild,
+                  onContinue: _continueQueue,
+                ),
+                const SizedBox(height: 16),
                 _PeriodQueueSection(
                   items: data.periodItems,
                   onContinue: _continueQueue,
@@ -138,10 +172,14 @@ class _AiTaskQueueData {
   const _AiTaskQueueData({
     required this.snapshot,
     required this.periodItems,
+    required this.embeddingSignature,
+    required this.outdatedEmbeddingCount,
   });
 
   final AiAnalysisQueueSnapshot snapshot;
   final List<_PeriodTaskItem> periodItems;
+  final EmbeddingModelSignature embeddingSignature;
+  final int outdatedEmbeddingCount;
 }
 
 class _PeriodTaskItem {
@@ -264,6 +302,112 @@ class _DiaryQueueSection extends StatelessWidget {
                 label: const Text('继续处理队列'),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmbeddingQueueSection extends StatelessWidget {
+  const _EmbeddingQueueSection({
+    required this.snapshot,
+    required this.targetLabel,
+    required this.outdatedCount,
+    required this.onRebuild,
+    required this.onContinue,
+  });
+
+  final AiAnalysisQueueSnapshot snapshot;
+  final String targetLabel;
+  final int outdatedCount;
+  final VoidCallback onRebuild;
+  final VoidCallback onContinue;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final jobs = snapshot.jobs
+        .where((job) => job.type == AiAnalysisJobType.embeddingRebuild)
+        .toList(growable: false);
+    final activeJobs = jobs
+        .where((job) =>
+            job.canRun ||
+            job.state == AiAnalysisJobState.running ||
+            job.state == AiAnalysisJobState.completed)
+        .toList(growable: false);
+    final completedCount = activeJobs
+        .where((job) => job.state == AiAnalysisJobState.completed)
+        .length;
+    final failedCount =
+        jobs.where((job) => job.state == AiAnalysisJobState.failed).length;
+    final runningOrPending = jobs
+        .where((job) => job.canRun || job.state == AiAnalysisJobState.running)
+        .length;
+    final progress = activeJobs.isEmpty
+        ? 0.0
+        : (completedCount / activeJobs.length).clamp(0.0, 1.0).toDouble();
+    final batches = snapshot.batches
+        .where((batch) => batch.jobs
+            .any((job) => job.type == AiAnalysisJobType.embeddingRebuild))
+        .toList(growable: false);
+
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.manage_search_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('历史相似度索引', style: theme.textTheme.titleMedium),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('当前目标：$targetLabel', style: theme.textTheme.bodySmall),
+            const SizedBox(height: 12),
+            LinearProgressIndicator(value: progress, minHeight: 4),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _CountChip(label: '需要重建', count: outdatedCount),
+                _CountChip(label: '运行/待处理', count: runningOrPending),
+                _CountChip(label: '失败', count: failedCount),
+                _CountChip(label: '已完成', count: completedCount),
+              ],
+            ),
+            if (batches.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              for (final batch in batches.take(3))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _BatchLine(batch: batch),
+                ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: outdatedCount > 0 ? onRebuild : null,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('一键重建'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: runningOrPending > 0 ? onContinue : null,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('继续重建'),
+                ),
+              ],
+            ),
           ],
         ),
       ),

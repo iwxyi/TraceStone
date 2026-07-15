@@ -108,6 +108,38 @@ class AiAnalysisQueueRunner {
     return enqueued;
   }
 
+  Future<int> enqueueOutdatedEmbeddingRebuild({int limit = 5000}) async {
+    final signature = await _embeddingService.currentTargetSignature();
+    final entryIds = await _embeddingRepository.listOutdatedEntryIds(
+      modelId: signature.modelId,
+      modelVersion: signature.modelVersion,
+      dimensions: signature.dimensions,
+    );
+    final batchStartedAt = DateTime.now();
+    final batchId =
+        'embedding-rebuild:${batchStartedAt.microsecondsSinceEpoch}';
+    final batchLabel = '重建历史相似度 ${_dateTimeLabel(batchStartedAt)}';
+    var enqueued = 0;
+    for (final entryId in entryIds) {
+      if (enqueued >= limit) break;
+      final entry = await _diaryRepository.getEntryById(entryId);
+      if (entry == null || entry.content.trim().isEmpty) continue;
+      await _queueRepository.enqueueEmbeddingRebuildEntry(
+        entry,
+        batchId: batchId,
+        batchLabel: batchLabel,
+      );
+      await _insightRepository.saveStatus(DiaryAnalysisStatus(
+        entryId: entry.id,
+        state: DiaryAnalysisState.queued,
+        updatedAt: DateTime.now(),
+        message: '等待重建历史相似度',
+      ));
+      enqueued += 1;
+    }
+    return enqueued;
+  }
+
   Future<void> processNext() async {
     if (_isRunning) return;
     _isRunning = true;
@@ -158,6 +190,17 @@ class AiAnalysisQueueRunner {
     for (final job in jobs) {
       if (job.state != AiAnalysisJobState.incomplete) continue;
       if (job.lastError != '上次整理被中断，已等待继续') continue;
+      if (job.type == AiAnalysisJobType.embeddingRebuild) {
+        final status = await _insightRepository.getStatus(job.entryId);
+        if (status?.state == DiaryAnalysisState.incomplete) continue;
+        await _insightRepository.saveStatus(DiaryAnalysisStatus(
+          entryId: job.entryId,
+          state: DiaryAnalysisState.incomplete,
+          updatedAt: DateTime.now(),
+          message: '上次重建历史相似度被系统中断，下次将继续',
+        ));
+        continue;
+      }
       if (job.type != AiAnalysisJobType.diary) {
         final status = await _periodSummaryRepository.getStatus(job.targetId);
         if (status?.state == PeriodSummaryState.failed) continue;
@@ -181,6 +224,10 @@ class AiAnalysisQueueRunner {
   }
 
   Future<void> _runJob(AiAnalysisJob job) async {
+    if (job.type == AiAnalysisJobType.embeddingRebuild) {
+      await _runEmbeddingRebuildJob(job);
+      return;
+    }
     if (job.type == AiAnalysisJobType.monthSummary ||
         job.type == AiAnalysisJobType.yearSummary) {
       await _runPeriodSummaryJob(job);
@@ -475,6 +522,101 @@ class AiAnalysisQueueRunner {
       }
     } on Object catch (error) {
       await _handleUnexpectedStageError(job, error, now);
+    }
+  }
+
+  Future<void> _runEmbeddingRebuildJob(AiAnalysisJob job) async {
+    final entry = await _diaryRepository.getEntryById(job.entryId);
+    if (entry == null) {
+      await _failJob(job, '日记不存在，无法重建历史相似度');
+      return;
+    }
+    if (entry.updatedAt.microsecondsSinceEpoch != job.pipelineVersion) {
+      await _queueRepository.enqueueEntry(entry);
+      await _queueRepository.deleteJob(job.id);
+      return;
+    }
+    await _saveStage(
+      job,
+      state: AiAnalysisJobState.running,
+      stage: AiAnalysisStage.preparing,
+      analysisState: DiaryAnalysisState.analyzing,
+      message: '准备历史相似度索引资料',
+      retryCount: job.retryCount,
+      inputSummary: 'entryId=${job.entryId}',
+      outputSummary:
+          'date=${_dateLabel(entry.date)} chars=${entry.content.length}',
+      clearLastError: true,
+    );
+    try {
+      var completedStages = _markCompleted(
+        job.completedStages,
+        AiAnalysisStage.preparing,
+      );
+      var segments = await _summaryRepository.listSegments(entry.id);
+      var summary = await _summaryRepository.getSummary(entry.id);
+      final staleArtifacts = summary != null &&
+          !summary.entryUpdatedAt.isAtSameMomentAs(entry.updatedAt);
+      if (segments.isEmpty || summary == null || staleArtifacts) {
+        segments = _summaryService.buildSegments(entry);
+        summary = _summaryService.buildSummary(entry, segments);
+        await _summaryRepository.saveSegments(entry.id, segments);
+        await _summaryRepository.saveSummary(summary);
+        await _saveStage(
+          job,
+          state: AiAnalysisJobState.running,
+          stage: AiAnalysisStage.generatingSummary,
+          analysisState: DiaryAnalysisState.analyzing,
+          message: '补齐索引摘要资料',
+          retryCount: job.retryCount,
+          completedStages: completedStages,
+          outputSummary:
+              'summary=${summary.entryId} segments=${segments.length}',
+          summaryId: summary.entryId,
+          segmentIds: segments.map((segment) => segment.id).toList(),
+          clearLastError: true,
+        );
+        completedStages = _markCompleted(
+          completedStages,
+          AiAnalysisStage.generatingSummary,
+        );
+      }
+      final embeddingIds = _embeddingIds(entry, segments);
+      await _saveStage(
+        job,
+        state: AiAnalysisJobState.running,
+        stage: AiAnalysisStage.embedding,
+        analysisState: DiaryAnalysisState.analyzing,
+        message: '重建历史相似度',
+        retryCount: job.retryCount,
+        completedStages: completedStages,
+        outputSummary: _embeddingOutputSummary(segments),
+        summaryId: summary.entryId,
+        segmentIds: segments.map((segment) => segment.id).toList(),
+        embeddingIds: embeddingIds,
+        clearLastError: true,
+      );
+      await _saveEmbeddings(entry, summary, segments);
+      completedStages =
+          _markCompleted(completedStages, AiAnalysisStage.embedding);
+      completedStages =
+          _markCompleted(completedStages, AiAnalysisStage.completed);
+      await _saveStage(
+        job,
+        state: AiAnalysisJobState.completed,
+        stage: AiAnalysisStage.completed,
+        analysisState: DiaryAnalysisState.completed,
+        message: '历史相似度已更新',
+        retryCount: job.retryCount,
+        completedStages: completedStages,
+        outputSummary: 'embeddings=${embeddingIds.length}',
+        summaryId: summary.entryId,
+        segmentIds: segments.map((segment) => segment.id).toList(),
+        embeddingIds: embeddingIds,
+        clearLastError: true,
+      );
+    } on Object catch (error) {
+      await _failJob(job, '历史相似度重建失败：$error');
     }
   }
 
@@ -847,16 +989,17 @@ class AiAnalysisQueueRunner {
       sourceId: entry.id,
     );
     if (entryEmbedding == null || summaryEmbedding == null) return false;
-    if (entryEmbedding.textHash !=
-        (await _embeddingService
-                .embedForAi(_embeddingTextBuilder.entryText(entry, summary)))
-            .textHash) {
+    final entryResult =
+        await _embeddingService.embedForAi(_embeddingTextBuilder.entryText(
+      entry,
+      summary,
+    ));
+    if (!_embeddingMatches(entryEmbedding, entryResult)) {
       return false;
     }
-    if (summaryEmbedding.textHash !=
-        (await _embeddingService
-                .embedForAi(_embeddingTextBuilder.summaryText(summary)))
-            .textHash) {
+    final summaryResult = await _embeddingService
+        .embedForAi(_embeddingTextBuilder.summaryText(summary));
+    if (!_embeddingMatches(summaryEmbedding, summaryResult)) {
       return false;
     }
     for (final segment in segments) {
@@ -865,14 +1008,20 @@ class AiAnalysisQueueRunner {
         sourceId: segment.id,
       );
       if (embedding == null) return false;
-      if (embedding.textHash !=
-          (await _embeddingService
-                  .embedForAi(_embeddingTextBuilder.segmentText(segment)))
-              .textHash) {
+      final segmentResult = await _embeddingService
+          .embedForAi(_embeddingTextBuilder.segmentText(segment));
+      if (!_embeddingMatches(embedding, segmentResult)) {
         return false;
       }
     }
     return true;
+  }
+
+  bool _embeddingMatches(AiEmbedding embedding, AiEmbeddingResult result) {
+    return embedding.textHash == result.textHash &&
+        embedding.modelId == result.modelId &&
+        embedding.modelVersion == result.modelVersion &&
+        embedding.dimensions == result.dimensions;
   }
 
   List<AiAnalysisStage> _markCompleted(
@@ -1092,6 +1241,15 @@ class AiAnalysisQueueRunner {
         ),
       ),
     ));
+    if (job.type == AiAnalysisJobType.embeddingRebuild) {
+      await _insightRepository.saveStatus(DiaryAnalysisStatus(
+        entryId: job.entryId,
+        state: DiaryAnalysisState.failed,
+        updatedAt: DateTime.now(),
+        message: message,
+      ));
+      return;
+    }
     if (job.type != AiAnalysisJobType.diary) {
       await _periodSummaryRepository.saveStatus(PeriodSummaryStatus(
         id: job.targetId,

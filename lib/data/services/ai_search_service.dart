@@ -107,6 +107,11 @@ class AiSearchService {
     final stoneSources = await _stoneSearchSources();
     final candidates = <AiSearchMatch>[];
     for (final embedding in embeddings) {
+      if (embedding.modelId != queryEmbedding.modelId ||
+          embedding.modelVersion != queryEmbedding.modelVersion ||
+          embedding.dimensions != queryEmbedding.dimensions) {
+        continue;
+      }
       final similarity = _embeddingService.cosineSimilarity(
         queryEmbedding.vector,
         embedding.vector,

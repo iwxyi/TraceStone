@@ -47,7 +47,7 @@ class AiEmbeddingRepository {
   Future<List<String>> listOutdatedEntryIds({
     required String modelId,
     required String modelVersion,
-    required int dimensions,
+    int? dimensions,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final entryIds = <String>{};
@@ -58,7 +58,7 @@ class AiEmbeddingRepository {
       if (embedding == null || embedding.entryId.isEmpty) continue;
       if (embedding.modelId != modelId ||
           embedding.modelVersion != modelVersion ||
-          embedding.dimensions != dimensions) {
+          (dimensions != null && embedding.dimensions != dimensions)) {
         entryIds.add(embedding.entryId);
       }
     }
