@@ -101,11 +101,21 @@ class CompanionAnswerService {
       evidence: primaryEvidence.take(12).toList(growable: false),
       developerDetail: context.debugSummary,
     ));
-    final expandedEvidence = await _runDynamicResearch(
+    final researchResult = await _runDynamicResearch(
       question: question,
       context: context,
       addStep: addStep,
     );
+    final expandedEvidence = researchResult.evidence;
+    await addStep(CompanionResearchStep(
+      title: '评估证据覆盖',
+      status: researchResult.coverageStatus,
+      detail: researchResult.coverageDetail,
+      evidence: _dedupeEvidence([...primaryEvidence, ...expandedEvidence])
+          .take(10)
+          .toList(growable: false),
+      developerDetail: researchResult.developerDetail,
+    ));
     await addStep(CompanionResearchStep(
       title: '生成回答',
       status: '正在基于证据组织 Markdown 回答',
@@ -455,7 +465,7 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
     );
   }
 
-  Future<List<CompanionResearchEvidence>> _runDynamicResearch({
+  Future<_DynamicResearchResult> _runDynamicResearch({
     required String question,
     required AiContextPackage context,
     required Future<void> Function(CompanionResearchStep step) addStep,
@@ -474,7 +484,9 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
           ]),
         ),
     ];
-    if (queues.isEmpty) return const [];
+    if (queues.isEmpty) {
+      return const _DynamicResearchResult(evidence: []);
+    }
 
     await addStep(CompanionResearchStep(
       title: '规划研究路径',
@@ -570,9 +582,17 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
         }
       }
     }
-    return _dedupeEvidence(expandedEvidence)
+    final evidence = _dedupeEvidence(expandedEvidence)
         .take(budget.maxEvidence)
         .toList(growable: false);
+    return _DynamicResearchResult(
+      evidence: evidence,
+      subquestionEvidenceCounts: {
+        for (final item in queues) item.text: item.evidenceCount,
+      },
+      queryCount: queryCount,
+      budget: budget,
+    );
   }
 
   List<String> _splitSubquestions(String question) {
@@ -1301,6 +1321,42 @@ class _ResearchBudget {
   }
 }
 
+class _DynamicResearchResult {
+  const _DynamicResearchResult({
+    required this.evidence,
+    this.subquestionEvidenceCounts = const {},
+    this.queryCount = 0,
+    this.budget,
+  });
+
+  final List<CompanionResearchEvidence> evidence;
+  final Map<String, int> subquestionEvidenceCounts;
+  final int queryCount;
+  final _ResearchBudget? budget;
+
+  String get coverageStatus {
+    if (subquestionEvidenceCounts.isEmpty) return '没有拆出明确子问题';
+    final covered =
+        subquestionEvidenceCounts.values.where((count) => count > 0).length;
+    return '已覆盖 $covered/${subquestionEvidenceCounts.length} 个子问题';
+  }
+
+  String get coverageDetail {
+    if (subquestionEvidenceCounts.isEmpty) return '会根据基础资料直接回答。';
+    return subquestionEvidenceCounts.entries
+        .map((entry) =>
+            '${entry.key}：${entry.value > 0 ? '${entry.value} 条证据' : '证据不足'}')
+        .join('；');
+  }
+
+  String get developerDetail {
+    final budgetText = budget == null
+        ? ''
+        : ' budget(rounds=${budget!.maxRounds}, queries=${budget!.maxQueries}, evidence=${budget!.maxEvidence})';
+    return 'queries=$queryCount evidence=${evidence.length}$budgetText';
+  }
+}
+
 class _ResearchSubquestion {
   _ResearchSubquestion({
     required this.text,
@@ -1334,6 +1390,7 @@ class _ResearchQueryQueue {
     for (final value in values) {
       final normalized = value.trim();
       if (normalized.length < 2) continue;
+      if (_isWeakResearchQuery(normalized)) continue;
       if (!_seen.add(normalized)) continue;
       _pending.add(normalized);
     }
@@ -1348,4 +1405,23 @@ class _ResearchQueryQueue {
     if (_pending.length <= keep) return;
     _pending.removeRange(keep, _pending.length);
   }
+}
+
+bool _isWeakResearchQuery(String query) {
+  final value = query.trim();
+  if (value.length <= 3 && (value.endsWith('什') || value.endsWith('怎'))) {
+    return true;
+  }
+  if (RegExp(r'^[我你他她它]什$').hasMatch(value)) return true;
+  if (RegExp(r'^[\u4e00-\u9fa5]{2,3}[怎什]$').hasMatch(value)) return true;
+  return const {
+    '什么',
+    '怎么',
+    '如何',
+    '哪些',
+    '有没有',
+    '是不是',
+    '怎么样',
+    '给过什',
+  }.contains(value);
 }

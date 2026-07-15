@@ -4304,9 +4304,13 @@ void main() {
       final titles = session?.steps.map((step) => step.title).toList() ?? [];
       expect(titles, contains('规划研究路径'));
       expect(titles, contains('研究第 1 轮'));
+      expect(titles, contains('评估证据覆盖'));
       expect(searchService.queries, contains('周岚'));
       expect(searchService.queries, contains('小红'));
+      expect(searchService.queries, isNot(contains('小红怎')));
+      expect(searchService.queries, isNot(contains('我什')));
       expect(client.lastUserPrompt, contains('拆成 3 个子问题'));
+      expect(client.lastUserPrompt, contains('已覆盖'));
       expect(answer.sources.map((source) => source.sourceId),
           containsAll(['zhou-follow-up', 'xiaohong-follow-up']));
     });
