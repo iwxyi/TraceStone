@@ -255,6 +255,33 @@ class AiAnalysisQueueRepository {
     AiAnalysisQueueBus.bump();
   }
 
+  Future<int> retryFailedJobs() async {
+    final jobs = await listJobs();
+    var count = 0;
+    final now = DateTime.now();
+    for (final job in jobs) {
+      if (job.state != AiAnalysisJobState.failed) continue;
+      await saveJob(job.copyWith(
+        state: AiAnalysisJobState.incomplete,
+        updatedAt: now,
+        retryCount: 0,
+        clearLastError: true,
+        stageLogs: _appendStageLog(
+          job.stageLogs,
+          AiAnalysisStageLog(
+            stage: job.currentStage,
+            startedAt: now,
+            message: '用户手动重试',
+            inputSummary: 'entryId=${job.entryId}',
+            outputSummary: 'state=failed -> incomplete',
+          ),
+        ),
+      ));
+      count++;
+    }
+    return count;
+  }
+
   Future<void> markStaleRunningIncomplete() async {
     final now = DateTime.now();
     final jobs = await listJobs();

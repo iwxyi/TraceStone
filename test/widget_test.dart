@@ -464,6 +464,49 @@ void main() {
     expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
   });
 
+  testWidgets('today queue card shows failed reason and retries failed jobs',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const queueRepository = AiAnalysisQueueRepository();
+    const diaryRepository = DiaryRepository();
+    final date = DateTime.now();
+    await diaryRepository.saveEntry(DiaryEntry(
+      id: 'failed-home-entry',
+      date: date,
+      createdAt: date,
+      updatedAt: date,
+      content: '失败重试测试日记',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'failed-home-entry',
+      entryId: 'failed-home-entry',
+      pipelineVersion: date.microsecondsSinceEpoch,
+      state: AiAnalysisJobState.failed,
+      currentStage: AiAnalysisStage.generatingInsight,
+      createdAt: date,
+      updatedAt: date,
+      retryCount: 3,
+      lastError: 'AI 请求失败：500',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pump();
+
+    expect(find.text('有日记整理失败'), findsOneWidget);
+    expect(find.text('AI 请求失败：500'), findsOneWidget);
+    expect(find.text('生成今日洞察'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '重试'));
+    await tester.pump();
+    final retried = await queueRepository.getJob('failed-home-entry');
+    expect(retried?.retryCount, 0);
+    expect(retried?.state, isNot(AiAnalysisJobState.failed));
+    expect(retried?.lastError, isNot(contains('500')));
+  });
+
   testWidgets('profile page exposes AI assets and task queue', (tester) async {
     SharedPreferences.setMockInitialValues({});
 

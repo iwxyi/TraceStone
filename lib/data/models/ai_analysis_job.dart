@@ -361,6 +361,9 @@ class AiAnalysisQueueSnapshot {
   int get failedCount =>
       jobs.where((job) => job.state == AiAnalysisJobState.failed).length;
 
+  AiAnalysisJob? get firstFailedJob =>
+      jobs.where((job) => job.state == AiAnalysisJobState.failed).firstOrNull;
+
   int get completedCount =>
       jobs.where((job) => job.state == AiAnalysisJobState.completed).length;
 

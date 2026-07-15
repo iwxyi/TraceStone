@@ -2342,6 +2342,33 @@ void main() {
       expect((await repository.listJobs()).single.id, entry.id);
     });
 
+    test('manual retry resets failed jobs even after retry limit', () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = AiAnalysisQueueRepository();
+      final date = DateTime(2026, 7, 3);
+      await repository.saveJob(AiAnalysisJob(
+        id: 'retry-limit-job',
+        entryId: 'retry-limit-job',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.failed,
+        currentStage: AiAnalysisStage.generatingInsight,
+        createdAt: date,
+        updatedAt: date,
+        retryCount: 3,
+        lastError: 'AI 请求失败',
+      ));
+
+      final count = await repository.retryFailedJobs();
+      final job = await repository.getJob('retry-limit-job');
+
+      expect(count, 1);
+      expect(job?.state, AiAnalysisJobState.incomplete);
+      expect(job?.retryCount, 0);
+      expect(job?.lastError, isNull);
+      expect(job?.canRun, isTrue);
+      expect(job?.stageLogs.last.message, '用户手动重试');
+    });
+
     test('ignores invalid stored jobs and repairs the queue index', () async {
       final date = DateTime(2026, 7, 3);
       final valid = AiAnalysisJob(

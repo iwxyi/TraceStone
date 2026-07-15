@@ -91,6 +91,7 @@ class _TodayPageState extends State<TodayPage> {
   }
 
   Future<void> _retryQueue() async {
+    await queueRepository.retryFailedJobs();
     await queueRepository.setPaused(false);
     await _runQueuedAnalysis();
   }
@@ -298,6 +299,7 @@ class _AiQueueCard extends StatelessWidget {
     final theme = Theme.of(context);
     final hasRunning = job?.state == AiAnalysisJobState.running;
     final hasFailed = snapshot.failedCount > 0 && !hasRunning;
+    final failedJob = hasFailed ? snapshot.firstFailedJob : null;
     final isResuming = job?.state == AiAnalysisJobState.incomplete;
     final title = snapshot.isPaused
         ? '记忆整理已暂停'
@@ -306,7 +308,8 @@ class _AiQueueCard extends StatelessWidget {
             : isResuming
                 ? '继续整理记忆'
                 : '正在整理记忆';
-    final stage = job?.stageLabel ?? '等待继续';
+    final stage = job?.stageLabel ?? failedJob?.stageLabel ?? '等待继续';
+    final errorText = job?.lastError ?? failedJob?.lastError;
     final waiting = snapshot.waitingCount;
     final currentBatch = job == null ? null : snapshot.batchForJob(job.id);
     final totalActive = snapshot.runnableCount +
@@ -385,9 +388,9 @@ class _AiQueueCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text('还有 $waiting 篇等待后台串行继续。', style: theme.textTheme.bodySmall),
           ],
-          if (job?.lastError != null && job!.lastError!.isNotEmpty) ...[
+          if (errorText != null && errorText.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text(job.lastError!,
+            Text(errorText,
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.error)),
           ],
