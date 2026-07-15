@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
@@ -47,6 +48,7 @@ import 'package:trace_stone/data/services/ai_profile_decision_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
 import 'package:trace_stone/data/services/companion_answer_service.dart';
+import 'package:trace_stone/data/services/dev_seed_data_service.dart';
 import 'package:trace_stone/data/services/diary_analysis_service.dart';
 import 'package:trace_stone/data/services/embedding_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
@@ -59,6 +61,32 @@ Future<void> _throwStartupCleanupError() async {
 }
 
 void main() {
+  group('DevSeedDataService', () {
+    test('uses built in seed dataset when asset is unavailable', () async {
+      SharedPreferences.setMockInitialValues({});
+      final service = DevSeedDataService(assetBundle: _MapAssetBundle({}));
+
+      final result = await service.importDiaryDataset();
+
+      expect(result.totalCount, greaterThanOrEqualTo(30));
+      expect(
+        await const DiaryRepository().getEntryById('dev-seed-fallback-00'),
+        isNotNull,
+      );
+      expect(
+        await const AiAnalysisQueueRepository().getJob('dev-seed-fallback-00'),
+        isNotNull,
+      );
+      final entries = (await const DiaryRepository().listEntries())
+          .where((entry) => entry.id.startsWith('dev-seed-fallback-'))
+          .toList()
+        ..sort((a, b) => a.date.compareTo(b.date));
+      for (var index = 1; index < entries.length; index++) {
+        expect(entries[index].content, isNot(entries[index - 1].content));
+      }
+    });
+  });
+
   group('AppStartupService', () {
     test('runs blocking cleanup before app and resumes AI queue after start',
         () async {
@@ -2222,6 +2250,54 @@ void main() {
       expect(snapshot.batchForJob('running')?.ordinalOf('running'), 1);
       expect(snapshot.batchForJob('pending')?.ordinalOf('pending'), 2);
       expect(snapshot.batchForJob('missing'), isNull);
+    });
+
+    test('orders diary jobs before month and year summaries', () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = AiAnalysisQueueRepository();
+      final date = DateTime(2026, 7, 3);
+
+      await repository.saveJob(AiAnalysisJob(
+        id: 'year:2026',
+        entryId: 'year:2026',
+        type: AiAnalysisJobType.yearSummary,
+        targetId: 'year:2026',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date,
+        updatedAt: date,
+      ));
+      await repository.saveJob(AiAnalysisJob(
+        id: 'month:2026-07',
+        entryId: 'month:2026-07',
+        type: AiAnalysisJobType.monthSummary,
+        targetId: 'month:2026-07',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date.add(const Duration(seconds: 1)),
+        updatedAt: date,
+      ));
+      await repository.saveJob(AiAnalysisJob(
+        id: 'entry-late',
+        entryId: 'entry-late',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: date.add(const Duration(seconds: 2)),
+        updatedAt: date,
+      ));
+
+      final jobs = await repository.listJobs();
+      final next = await repository.nextRunnableJob();
+
+      expect(jobs.map((job) => job.id), [
+        'entry-late',
+        'month:2026-07',
+        'year:2026',
+      ]);
+      expect(next?.id, 'entry-late');
     });
 
     test('snapshot estimates remaining time from completed stage logs', () {
@@ -7004,9 +7080,11 @@ void main() {
       );
       await diaryRepository.saveEntry(entry);
       await queueRepository.enqueueEntry(entry);
+      await queueRepository.enqueueEmbeddingRebuildEntry(entry);
       await diaryRepository.moveToTrash(entry.id);
 
       expect(await queueRepository.getJob(entry.id), isNull);
+      expect(await queueRepository.getJob('embedding:${entry.id}'), isNull);
       expect(await diaryRepository.getEntryById(entry.id), isNull);
 
       await diaryRepository.restoreFromTrash(entry.id);
@@ -7021,7 +7099,65 @@ void main() {
       expect(status?.message, contains('回收站恢复'));
     });
 
-    test('move to trash removes stone source references', () async {
+    test('trash keeps AI artifacts until permanent delete', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const insightRepository = InsightRepository();
+      const embeddingService = EmbeddingService();
+      final entry = _entry(
+        id: 'trash-ai-artifacts',
+        date: DateTime(2026, 7, 3),
+        content: '这篇日记已经生成摘要、向量和洞察。',
+      );
+      final summary = _summaryForTest(
+        entry: entry,
+        brief: '已经生成 AI 资料',
+        importance: 0.7,
+      );
+      final segments = const EntrySummaryService().buildSegments(entry);
+      await diaryRepository.saveEntry(entry);
+      await summaryRepository.saveSummary(summary);
+      await summaryRepository.saveSegments(entry.id, segments);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: entry.id,
+        text: _entryEmbeddingTextForTest(entry, summary),
+        generatedAt: entry.updatedAt,
+      );
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        text: _summaryEmbeddingTextForTest(summary),
+        generatedAt: entry.updatedAt,
+      );
+      await insightRepository.saveInsight(_insight(
+        entryId: entry.id,
+        date: entry.date,
+      ));
+
+      await diaryRepository.moveToTrash(entry.id);
+
+      expect(await summaryRepository.getSummary(entry.id), isNotNull);
+      expect(await embeddingRepository.listForEntry(entry.id), isNotEmpty);
+      expect(await insightRepository.getInsight(entry.id), isNotNull);
+
+      await diaryRepository.permanentlyDeleteFromTrash(entry.id);
+
+      expect(await summaryRepository.getSummary(entry.id), isNull);
+      expect(await embeddingRepository.listForEntry(entry.id), isEmpty);
+      expect(await insightRepository.getInsight(entry.id), isNull);
+    });
+
+    test('trash keeps stone source references until permanent delete',
+        () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const stoneRepository = StoneTaskRepository();
@@ -7052,8 +7188,16 @@ void main() {
       final task = await stoneRepository.getTask('stone:trash-source');
 
       expect(task, isNotNull);
-      expect(task?.sourceEntryId, isEmpty);
-      expect(task?.checkIns.single.sourceEntryId, isNull);
+      expect(task?.sourceEntryId, entry.id);
+      expect(task?.checkIns.single.sourceEntryId, entry.id);
+
+      await diaryRepository.permanentlyDeleteFromTrash(entry.id);
+      final permanentlyDeletedTask =
+          await stoneRepository.getTask('stone:trash-source');
+
+      expect(permanentlyDeletedTask, isNotNull);
+      expect(permanentlyDeletedTask?.sourceEntryId, isEmpty);
+      expect(permanentlyDeletedTask?.checkIns.single.sourceEntryId, isNull);
     });
 
     test('move to trash marks period summaries referencing the entry stale',
@@ -7110,7 +7254,7 @@ void main() {
           (await periodRepository.getStatus('year:2026'))?.needsUpdate, isTrue);
     });
 
-    test('move to trash clears debug traces referencing the entry', () async {
+    test('trash keeps debug traces until permanent delete', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const memoryRepository = MemoryRepository();
@@ -7181,12 +7325,18 @@ void main() {
 
       await diaryRepository.moveToTrash(entry.id);
 
+      expect(await promptRepository.getTrace('companion:last'), isNotNull);
+      expect(await retrievalRepository.getTrace('search:last'), isNotNull);
+      expect(await retrievalRepository.getTrace('question:last'), isNotNull);
+
+      await diaryRepository.permanentlyDeleteFromTrash(entry.id);
+
       expect(await promptRepository.getTrace('companion:last'), isNull);
       expect(await retrievalRepository.getTrace('search:last'), isNull);
       expect(await retrievalRepository.getTrace('question:last'), isNull);
     });
 
-    test('move to trash prunes unsupported profile preferences', () async {
+    test('trash keeps profile preferences until permanent delete', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const insightRepository = InsightRepository();
@@ -7253,6 +7403,23 @@ void main() {
       );
 
       await diaryRepository.moveToTrash(deletedEntry.id);
+
+      expect(
+        await preferenceRepository.getPreference(
+          targetType: AiProfilePreferenceTargetType.profileFact,
+          targetId: unsupportedFact.id,
+        ),
+        isNotNull,
+      );
+      expect(
+        await preferenceRepository.getPreference(
+          targetType: AiProfilePreferenceTargetType.relationship,
+          targetId: '小林',
+        ),
+        isNotNull,
+      );
+
+      await diaryRepository.permanentlyDeleteFromTrash(deletedEntry.id);
 
       expect(
         await preferenceRepository.getPreference(
@@ -8301,5 +8468,21 @@ class _FakeAiSearchService extends AiSearchService {
         .expand((entry) => entry.value)
         .take(limit)
         .toList(growable: false);
+  }
+}
+
+class _MapAssetBundle extends CachingAssetBundle {
+  _MapAssetBundle(this.assets);
+
+  final Map<String, String> assets;
+
+  @override
+  Future<ByteData> load(String key) async {
+    final value = assets[key];
+    if (value == null) {
+      throw StateError('Unable to load asset: "$key".');
+    }
+    final bytes = Uint8List.fromList(utf8.encode(value));
+    return ByteData.view(bytes.buffer);
   }
 }

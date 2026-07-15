@@ -84,6 +84,11 @@ class AiAnalysisQueueRunner {
 
   Future<int> enqueueBackfill({int limit = 200}) async {
     final entries = await _diaryRepository.listEntries();
+    entries.sort((a, b) {
+      final byDate = a.date.compareTo(b.date);
+      if (byDate != 0) return byDate;
+      return a.createdAt.compareTo(b.createdAt);
+    });
     final batchStartedAt = DateTime.now();
     final batchId = 'backfill:${batchStartedAt.microsecondsSinceEpoch}';
     final batchLabel = '补建缺失资料 ${_dateTimeLabel(batchStartedAt)}';

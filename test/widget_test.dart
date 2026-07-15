@@ -2879,6 +2879,96 @@ void main() {
     expect(find.textContaining('已导入测试日记'), findsOneWidget);
   });
 
+  testWidgets('AI debug page moves existing diaries to trash before reimport',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const diaryRepository = DiaryRepository();
+    const queueRepository = AiAnalysisQueueRepository();
+    final date = DateTime(2026, 7, 3);
+    final first = DiaryEntry(
+      id: 'clear-debug-entry-1',
+      date: date,
+      createdAt: date,
+      updatedAt: date,
+      content: '准备清空的第一篇日记。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    );
+    final second = DiaryEntry(
+      id: 'clear-debug-entry-2',
+      date: date.add(const Duration(days: 1)),
+      createdAt: date,
+      updatedAt: date,
+      content: '准备清空的第二篇日记。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    );
+    await diaryRepository.saveEntry(first);
+    await diaryRepository.saveEntry(second);
+    await queueRepository.enqueueEntry(first);
+    await queueRepository.enqueueEntry(second);
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('clear-existing-diary-entries')),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('clear-existing-diary-entries')));
+    await tester.pumpAndSettle();
+    expect(find.text('清空已有日记？'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '移入回收站'));
+    await tester.pumpAndSettle();
+
+    expect(await diaryRepository.listEntries(), isEmpty);
+    expect(await diaryRepository.listTrashEntries(), hasLength(2));
+    expect(await queueRepository.getJob(first.id), isNull);
+    expect(await queueRepository.getJob(second.id), isNull);
+    expect(find.textContaining('已移入回收站：2 篇日记'), findsOneWidget);
+  });
+
+  testWidgets('AI debug page collapses long debug text by default',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final longPreview =
+        List.filled(36, '这是一段很长的调试上下文，用于验证页面不会被无限撑开。').join('\n');
+    await const AiPromptTraceRepository().saveTrace(AiPromptTrace(
+      id: 'companion:last',
+      scenario: 'companion',
+      createdAt: DateTime(2026, 7, 3),
+      contextSummary: 'long debug trace',
+      systemPromptPreview: longPreview,
+      userPromptPreview: longPreview,
+      systemPromptLength: longPreview.length,
+      userPromptLength: longPreview.length,
+      rawResponsePreview: longPreview,
+      rawResponseLength: longPreview.length,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('展开完整内容'), findsWidgets);
+
+    await tester.scrollUntilVisible(
+      find.text('展开完整内容').first,
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('展开完整内容').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('收起'), findsOneWidget);
+  });
+
   testWidgets('AI debug page repairs embedding indexes', (tester) async {
     SharedPreferences.setMockInitialValues({
       'ai.embeddings.summary:entry-1': jsonEncode({
@@ -3136,6 +3226,7 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
     await tester.pumpAndSettle();
+    await _expandFirstAiDebugJob(tester);
 
     expect(find.textContaining('用户标记洞察不准确'), findsWidgets);
     expect(find.textContaining('value=inaccurate'), findsOneWidget);
@@ -3234,6 +3325,7 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
     await tester.pumpAndSettle();
+    await _expandFirstAiDebugJob(tester);
 
     expect(find.textContaining('evidence=current_entry:$entryId#s1'),
         findsOneWidget);
@@ -3285,12 +3377,12 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
     await tester.pumpAndSettle();
+    await _expandFirstAiDebugJob(tester);
     await tester.scrollUntilVisible(
       find.text('局部重建'),
       260,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -120));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, '局部重建'));
     await tester.pumpAndSettle();
@@ -3348,12 +3440,12 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
     await tester.pumpAndSettle();
+    await _expandFirstAiDebugJob(tester);
     await tester.scrollUntilVisible(
       find.text('修正摘要'),
       120,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
     await tester.pumpAndSettle();
     await tester.tap(find.text('修正摘要'));
     await tester.pumpAndSettle();
@@ -3431,6 +3523,18 @@ void main() {
     expect(copiedText, contains('summary:debug-summary-entry'));
     expect(copiedText, contains('entry:debug-summary-entry'));
   });
+}
+
+Future<void> _expandFirstAiDebugJob(WidgetTester tester) async {
+  final expandButton = find.widgetWithText(TextButton, '展开调试资料').first;
+  await tester.scrollUntilVisible(
+    expandButton,
+    260,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(expandButton);
+  await tester.pumpAndSettle();
 }
 
 Future<void> _seedSearchEntry() async {

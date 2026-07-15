@@ -215,6 +215,8 @@ class AiAnalysisQueueRepository {
       final byState =
           _statePriority(a.state).compareTo(_statePriority(b.state));
       if (byState != 0) return byState;
+      final byType = _typePriority(a.type).compareTo(_typePriority(b.type));
+      if (byType != 0) return byType;
       return a.createdAt.compareTo(b.createdAt);
     });
     return jobs;
@@ -329,6 +331,18 @@ class AiAnalysisQueueRepository {
         return 3;
       case AiAnalysisJobState.completed:
         return 4;
+    }
+  }
+
+  int _typePriority(AiAnalysisJobType type) {
+    switch (type) {
+      case AiAnalysisJobType.diary:
+      case AiAnalysisJobType.embeddingRebuild:
+        return 0;
+      case AiAnalysisJobType.monthSummary:
+        return 1;
+      case AiAnalysisJobType.yearSummary:
+        return 2;
     }
   }
 

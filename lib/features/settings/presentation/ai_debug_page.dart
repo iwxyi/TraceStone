@@ -152,35 +152,52 @@ class _AiDebugPageState extends State<AiDebugPage> {
           if (queue == null) {
             return const Center(child: CircularProgressIndicator());
           }
-          return ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              _QueueSummaryCard(
-                queue: queue,
-                onContinue: _continueQueue,
-                onBackfill: _enqueueBackfill,
-                onPauseChanged: _toggleQueuePaused,
+          return CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.all(20),
+                sliver: SliverList.list(
+                  children: [
+                    _QueueSummaryCard(
+                      queue: queue,
+                      onContinue: _continueQueue,
+                      onBackfill: _enqueueBackfill,
+                      onPauseChanged: _toggleQueuePaused,
+                    ),
+                    const SizedBox(height: 16),
+                    _RecentRetrievalTraceCard(
+                      key: ValueKey('retrieval-$_debugRecordsVersion'),
+                    ),
+                    const SizedBox(height: 16),
+                    const _RecentPeriodSummaryCard(),
+                    const SizedBox(height: 16),
+                    _CompanionTraceCard(
+                      key: ValueKey('companion-$_debugRecordsVersion'),
+                    ),
+                    const SizedBox(height: 16),
+                    if (queue.jobs.isEmpty)
+                      const Center(child: Text('暂无 AI 队列任务')),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
-              _RecentRetrievalTraceCard(
-                key: ValueKey('retrieval-$_debugRecordsVersion'),
+              if (queue.jobs.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  sliver: SliverList.builder(
+                    itemCount: queue.jobs.length,
+                    itemBuilder: (context, index) {
+                      final job = queue.jobs[index];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _JobCard(job: job, onChanged: _refresh),
+                      );
+                    },
+                  ),
+                ),
+              const SliverPadding(
+                padding: EdgeInsets.fromLTRB(20, 6, 20, 20),
+                sliver: SliverToBoxAdapter(child: _AiDataInventoryCard()),
               ),
-              const SizedBox(height: 16),
-              const _RecentPeriodSummaryCard(),
-              const SizedBox(height: 16),
-              _CompanionTraceCard(
-                key: ValueKey('companion-$_debugRecordsVersion'),
-              ),
-              const SizedBox(height: 16),
-              if (queue.jobs.isEmpty)
-                const Center(child: Text('暂无 AI 队列任务'))
-              else
-                for (final job in queue.jobs) ...[
-                  _JobCard(job: job, onChanged: _refresh),
-                  const SizedBox(height: 10),
-                ],
-              const SizedBox(height: 16),
-              const _AiDataInventoryCard(),
             ],
           );
         },
@@ -750,6 +767,7 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
   bool _repairingEmbeddingIndexes = false;
   bool _rebuildingOutdatedEmbeddings = false;
   bool _importingSeedData = false;
+  bool _clearingDiaryEntries = false;
   _InventoryFilter _filter = _InventoryFilter.all;
 
   void _reload() {
@@ -850,6 +868,20 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
                             )
                           : const Icon(Icons.dataset_outlined),
                       label: const Text('导入测试日记'),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('clear-existing-diary-entries'),
+                      onPressed: _clearingDiaryEntries
+                          ? null
+                          : _clearExistingDiaryEntries,
+                      icon: _clearingDiaryEntries
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.delete_sweep_outlined),
+                      label: const Text('清空已有日记'),
                     ),
                   ],
                 ),
@@ -1071,6 +1103,62 @@ class _AiDataInventoryCardState extends State<_AiDataInventoryCard> {
       }
     }
   }
+
+  Future<void> _clearExistingDiaryEntries() async {
+    final entries = await const DiaryRepository().listEntries();
+    if (!mounted) return;
+    if (entries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前没有可清空的日记')),
+      );
+      return;
+    }
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空已有日记？'),
+        content: Text(
+          '这会把当前 ${entries.length} 篇日记移入回收站。'
+          '日记会从主列表消失，可在 90 天内从回收站恢复；永久删除时才会清理对应的 AI 摘要、向量、洞察和调试数据。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('移入回收站'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    setState(() {
+      _clearingDiaryEntries = true;
+    });
+    try {
+      await const DiaryRepository().moveManyToTrash(
+        entries.map((entry) => entry.id),
+      );
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已移入回收站：${entries.length} 篇日记')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('清空日记失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _clearingDiaryEntries = false;
+        });
+      }
+    }
+  }
 }
 
 enum _InventoryFilter {
@@ -1226,27 +1314,71 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
-class _JobCard extends StatelessWidget {
+class _JobCard extends StatefulWidget {
   const _JobCard({required this.job, required this.onChanged});
 
   final AiAnalysisJob job;
   final VoidCallback onChanged;
 
   @override
+  State<_JobCard> createState() => _JobCardState();
+}
+
+class _JobCardState extends State<_JobCard> {
+  bool _expanded = false;
+  Future<_JobArtifacts>? _artifactsFuture;
+
+  AiAnalysisJob get job => widget.job;
+  VoidCallback get onChanged => widget.onChanged;
+
+  @override
+  void didUpdateWidget(covariant _JobCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.job.entryId != widget.job.entryId) {
+      _expanded = false;
+      _artifactsFuture = null;
+    } else if (oldWidget.job.updatedAt != widget.job.updatedAt ||
+        oldWidget.job.stageLogs.length != widget.job.stageLogs.length ||
+        oldWidget.job.summaryId != widget.job.summaryId ||
+        oldWidget.job.insightId != widget.job.insightId ||
+        oldWidget.job.retrievalTraceId != widget.job.retrievalTraceId) {
+      _artifactsFuture =
+          _expanded ? _JobArtifacts.load(widget.job.entryId) : null;
+    }
+  }
+
+  void _toggleExpanded() {
+    setState(() {
+      _expanded = !_expanded;
+      if (_expanded) {
+        _artifactsFuture ??= _JobArtifacts.load(widget.job.entryId);
+      }
+    });
+  }
+
+  void _refreshArtifacts() {
+    if (!_expanded) return;
+    setState(() {
+      _artifactsFuture = _JobArtifacts.load(widget.job.entryId);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isFailed = job.state == AiAnalysisJobState.failed;
-    return FutureBuilder<_JobArtifacts>(
-      future: _JobArtifacts.load(job.entryId),
-      builder: (context, snapshot) {
-        final artifacts = snapshot.data;
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: _toggleExpanded,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
                   children: [
                     Icon(
                       _stateIcon(job.state),
@@ -1258,174 +1390,223 @@ class _JobCard extends StatelessWidget {
                           style: const TextStyle(fontWeight: FontWeight.w600)),
                     ),
                     Text(job.stageLabel, style: theme.textTheme.bodySmall),
+                    const SizedBox(width: 8),
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                    ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                _DebugLine(label: 'entryId', value: job.entryId),
-                _DebugLine(
-                    label: 'pipelineVersion', value: '${job.pipelineVersion}'),
-                _DebugLine(label: 'retryCount', value: '${job.retryCount}'),
-                _DebugLine(
-                    label: 'updatedAt', value: job.updatedAt.toIso8601String()),
-                if (job.completedStages.isNotEmpty)
-                  _DebugLine(
-                    label: 'completedStages',
-                    value:
-                        job.completedStages.map((item) => item.name).join(', '),
-                  ),
-                if (job.summaryId?.isNotEmpty ?? false)
-                  _DebugLine(label: 'artifact.summary', value: job.summaryId!),
-                if (job.segmentIds.isNotEmpty)
-                  _DebugLine(
-                    label: 'artifact.segments',
-                    value: job.segmentIds.join(', '),
-                  ),
-                if (job.embeddingIds.isNotEmpty)
-                  _DebugLine(
-                    label: 'artifact.embeddings',
-                    value: job.embeddingIds.join(', '),
-                  ),
-                if (job.insightId?.isNotEmpty ?? false)
-                  _DebugLine(label: 'artifact.insight', value: job.insightId!),
-                if (job.retrievalTraceId?.isNotEmpty ?? false)
-                  _DebugLine(
-                    label: 'artifact.retrieval',
-                    value: job.retrievalTraceId!,
-                  ),
-                if (job.stageLogs.isNotEmpty) ...[
-                  _DebugLine(
-                      label: 'stageLogs', value: '${job.stageLogs.length}'),
-                  for (final log in job.stageLogs.reversed.take(4))
-                    _DebugLine(label: 'stageLog', value: _stageLogLine(log)),
-                ],
-                if (artifacts != null) ...[
-                  const Divider(height: 20),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    alignment: WrapAlignment.end,
-                    children: [
-                      TextButton.icon(
-                        onPressed: () => _showDebugDetails(context, artifacts),
-                        icon: const Icon(Icons.article_outlined),
-                        label: const Text('详情'),
-                      ),
-                      TextButton.icon(
-                        onPressed: () =>
-                            _copyPipelineContext(context, artifacts),
-                        icon: const Icon(Icons.copy_all_outlined),
-                        label: const Text('复制上下文'),
-                      ),
-                      TextButton.icon(
-                        onPressed: artifacts.hasSummary
-                            ? () => _correctSummary(context, artifacts)
-                            : null,
-                        icon: const Icon(Icons.edit_note_outlined),
-                        label: const Text('修正摘要'),
-                      ),
-                      TextButton.icon(
-                        onPressed: job.state == AiAnalysisJobState.running
-                            ? null
-                            : () => _reenqueue(context),
-                        icon: const Icon(Icons.restart_alt),
-                        label: const Text('继续/重试'),
-                      ),
-                      TextButton.icon(
-                        onPressed: job.state == AiAnalysisJobState.running
-                            ? null
-                            : () => _rebuildArtifacts(context),
-                        icon: const Icon(Icons.refresh_outlined),
-                        label: const Text('重建资料'),
-                      ),
-                      TextButton.icon(
-                        onPressed: job.state == AiAnalysisJobState.running
-                            ? null
-                            : () => _showPartialRebuildDialog(context),
-                        icon: const Icon(Icons.tune_outlined),
-                        label: const Text('局部重建'),
-                      ),
-                      TextButton.icon(
-                        onPressed: job.state == AiAnalysisJobState.running
-                            ? null
-                            : () => _deleteJob(context),
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('删除任务'),
-                      ),
-                      TextButton.icon(
-                        onPressed: () => _clearDebugTraces(context),
-                        icon: const Icon(Icons.cleaning_services_outlined),
-                        label: const Text('清除调试'),
-                      ),
-                    ],
-                  ),
-                  _DebugLine(label: 'summary.brief', value: artifacts.brief),
-                  if (artifacts.summaryMeta.isNotEmpty)
-                    _DebugLine(
-                        label: 'summary.meta', value: artifacts.summaryMeta),
-                  _DebugLine(
-                      label: 'segments', value: '${artifacts.segmentCount}'),
-                  if (artifacts.firstSegment.isNotEmpty)
-                    _DebugLine(
-                        label: 'segments[0]', value: artifacts.firstSegment),
-                  _DebugLine(
-                      label: 'embeddings',
-                      value:
-                          '${artifacts.embeddingCount} ${artifacts.embeddingModel}'),
-                  if (artifacts.embeddingTypes.isNotEmpty)
-                    _DebugLine(
-                        label: 'embedding.types',
-                        value: artifacts.embeddingTypes),
-                  for (final line in artifacts.embeddingLines.take(3))
-                    _DebugLine(label: 'embedding', value: line),
-                  if (artifacts.contextSummary.isNotEmpty)
-                    _DebugLine(
-                        label: 'context', value: artifacts.contextSummary),
-                  if (artifacts.promptSummary.isNotEmpty)
-                    _DebugLine(label: 'prompt', value: artifacts.promptSummary),
-                  if (artifacts.promptPreview.isNotEmpty)
-                    _DebugLine(
-                        label: 'prompt.preview',
-                        value: artifacts.promptPreview),
-                  if (artifacts.claimSummary.isNotEmpty)
-                    _DebugLine(
-                        label: 'insight.claims', value: artifacts.claimSummary),
-                  for (final line in artifacts.claimLines.take(4))
-                    _DebugLine(label: 'claim', value: line),
-                  if (artifacts.updateCandidateSummary.isNotEmpty)
-                    _DebugLine(
-                      label: 'insight.updateCandidates',
-                      value: artifacts.updateCandidateSummary,
-                    ),
-                  for (final line in artifacts.updateCandidateLines.take(4))
-                    _DebugLine(label: 'updateCandidate', value: line),
-                  if (artifacts.feedback.isNotEmpty)
-                    _DebugLine(label: 'feedback', value: artifacts.feedback),
-                  if (artifacts.memoryLifecycle.isNotEmpty)
-                    _DebugLine(
-                        label: 'memory.lifecycle',
-                        value: artifacts.memoryLifecycle),
-                  _DebugLine(
-                      label: 'retrieval.sources',
-                      value: '${artifacts.retrievalCount}'),
-                  if (artifacts.calendarCount > 0)
-                    _DebugLine(
-                        label: 'calendar.sources',
-                        value: '${artifacts.calendarCount}'),
-                  for (final line in artifacts.retrievalLines.take(3))
-                    _DebugLine(label: 'retrieval', value: line),
-                ],
-                if (job.lastError != null && job.lastError!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(job.lastError!,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: theme.colorScheme.error)),
-                  ),
-              ],
+              ),
             ),
-          ),
-        );
-      },
+            const SizedBox(height: 10),
+            _DebugLine(label: 'entryId', value: job.entryId),
+            _DebugLine(
+                label: 'pipelineVersion', value: '${job.pipelineVersion}'),
+            _DebugLine(label: 'retryCount', value: '${job.retryCount}'),
+            _DebugLine(
+                label: 'updatedAt', value: job.updatedAt.toIso8601String()),
+            if (job.completedStages.isNotEmpty)
+              _DebugLine(
+                label: 'completedStages',
+                value:
+                    '${job.completedStages.length}/${AiAnalysisStage.values.length}',
+              ),
+            if (job.stageLogs.isNotEmpty)
+              _DebugLine(label: 'stageLogs', value: '${job.stageLogs.length}'),
+            if (job.lastError != null && job.lastError!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  job.lastError!,
+                  maxLines: _expanded ? null : 3,
+                  overflow:
+                      _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.error),
+                ),
+              ),
+            if (!_expanded) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _toggleExpanded,
+                  icon: const Icon(Icons.unfold_more),
+                  label: const Text('展开调试资料'),
+                ),
+              ),
+            ],
+            if (_expanded) ...[
+              const Divider(height: 20),
+              FutureBuilder<_JobArtifacts>(
+                future: _artifactsFuture,
+                builder: (context, snapshot) {
+                  final artifacts = snapshot.data;
+                  if (artifacts == null) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: LinearProgressIndicator(minHeight: 3),
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (job.summaryId?.isNotEmpty ?? false)
+                        _DebugLine(
+                            label: 'artifact.summary', value: job.summaryId!),
+                      if (job.segmentIds.isNotEmpty)
+                        _DebugLine(
+                          label: 'artifact.segments',
+                          value: job.segmentIds.join(', '),
+                        ),
+                      if (job.embeddingIds.isNotEmpty)
+                        _DebugLine(
+                          label: 'artifact.embeddings',
+                          value: job.embeddingIds.join(', '),
+                        ),
+                      if (job.insightId?.isNotEmpty ?? false)
+                        _DebugLine(
+                            label: 'artifact.insight', value: job.insightId!),
+                      if (job.retrievalTraceId?.isNotEmpty ?? false)
+                        _DebugLine(
+                          label: 'artifact.retrieval',
+                          value: job.retrievalTraceId!,
+                        ),
+                      if (job.stageLogs.isNotEmpty)
+                        for (final log in job.stageLogs.reversed.take(4))
+                          _DebugLine(
+                              label: 'stageLog', value: _stageLogLine(log)),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.end,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () =>
+                                _showDebugDetails(context, artifacts),
+                            icon: const Icon(Icons.article_outlined),
+                            label: const Text('详情'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () =>
+                                _copyPipelineContext(context, artifacts),
+                            icon: const Icon(Icons.copy_all_outlined),
+                            label: const Text('复制上下文'),
+                          ),
+                          TextButton.icon(
+                            onPressed: artifacts.hasSummary
+                                ? () => _correctSummary(context, artifacts)
+                                : null,
+                            icon: const Icon(Icons.edit_note_outlined),
+                            label: const Text('修正摘要'),
+                          ),
+                          TextButton.icon(
+                            onPressed: job.state == AiAnalysisJobState.running
+                                ? null
+                                : () => _reenqueue(context),
+                            icon: const Icon(Icons.restart_alt),
+                            label: const Text('继续/重试'),
+                          ),
+                          TextButton.icon(
+                            onPressed: job.state == AiAnalysisJobState.running
+                                ? null
+                                : () => _rebuildArtifacts(context),
+                            icon: const Icon(Icons.refresh_outlined),
+                            label: const Text('重建资料'),
+                          ),
+                          TextButton.icon(
+                            onPressed: job.state == AiAnalysisJobState.running
+                                ? null
+                                : () => _showPartialRebuildDialog(context),
+                            icon: const Icon(Icons.tune_outlined),
+                            label: const Text('局部重建'),
+                          ),
+                          TextButton.icon(
+                            onPressed: job.state == AiAnalysisJobState.running
+                                ? null
+                                : () => _deleteJob(context),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('删除任务'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () => _clearDebugTraces(context),
+                            icon: const Icon(Icons.cleaning_services_outlined),
+                            label: const Text('清除调试'),
+                          ),
+                        ],
+                      ),
+                      _DebugLine(
+                          label: 'summary.brief', value: artifacts.brief),
+                      if (artifacts.summaryMeta.isNotEmpty)
+                        _DebugLine(
+                            label: 'summary.meta',
+                            value: artifacts.summaryMeta),
+                      _DebugLine(
+                          label: 'segments',
+                          value: '${artifacts.segmentCount}'),
+                      if (artifacts.firstSegment.isNotEmpty)
+                        _DebugLine(
+                            label: 'segments[0]',
+                            value: artifacts.firstSegment),
+                      _DebugLine(
+                          label: 'embeddings',
+                          value:
+                              '${artifacts.embeddingCount} ${artifacts.embeddingModel}'),
+                      if (artifacts.embeddingTypes.isNotEmpty)
+                        _DebugLine(
+                            label: 'embedding.types',
+                            value: artifacts.embeddingTypes),
+                      for (final line in artifacts.embeddingLines.take(3))
+                        _DebugLine(label: 'embedding', value: line),
+                      if (artifacts.contextSummary.isNotEmpty)
+                        _DebugLine(
+                            label: 'context', value: artifacts.contextSummary),
+                      if (artifacts.promptSummary.isNotEmpty)
+                        _DebugLine(
+                            label: 'prompt', value: artifacts.promptSummary),
+                      if (artifacts.promptPreview.isNotEmpty)
+                        _DebugLine(
+                            label: 'prompt.preview',
+                            value: artifacts.promptPreview),
+                      if (artifacts.claimSummary.isNotEmpty)
+                        _DebugLine(
+                            label: 'insight.claims',
+                            value: artifacts.claimSummary),
+                      for (final line in artifacts.claimLines.take(4))
+                        _DebugLine(label: 'claim', value: line),
+                      if (artifacts.updateCandidateSummary.isNotEmpty)
+                        _DebugLine(
+                          label: 'insight.updateCandidates',
+                          value: artifacts.updateCandidateSummary,
+                        ),
+                      for (final line in artifacts.updateCandidateLines.take(4))
+                        _DebugLine(label: 'updateCandidate', value: line),
+                      if (artifacts.feedback.isNotEmpty)
+                        _DebugLine(
+                            label: 'feedback', value: artifacts.feedback),
+                      if (artifacts.memoryLifecycle.isNotEmpty)
+                        _DebugLine(
+                            label: 'memory.lifecycle',
+                            value: artifacts.memoryLifecycle),
+                      _DebugLine(
+                          label: 'retrieval.sources',
+                          value: '${artifacts.retrievalCount}'),
+                      if (artifacts.calendarCount > 0)
+                        _DebugLine(
+                            label: 'calendar.sources',
+                            value: '${artifacts.calendarCount}'),
+                      for (final line in artifacts.retrievalLines.take(3))
+                        _DebugLine(label: 'retrieval', value: line),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -1493,6 +1674,7 @@ class _JobCard extends StatelessWidget {
         return;
       }
       onChanged();
+      _refreshArtifacts();
       messenger.showSnackBar(SnackBar(content: Text(result.message)));
     } on Object catch (error) {
       if (!context.mounted) return;
@@ -1559,6 +1741,7 @@ class _JobCard extends StatelessWidget {
     await const AiAnalysisQueueRunner().enqueue(entry, start: false);
     if (!context.mounted) return;
     onChanged();
+    _refreshArtifacts();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已清除本篇 AI 资料并重新加入队列')),
     );
@@ -1581,6 +1764,7 @@ class _JobCard extends StatelessWidget {
     await retrievalRepository.deleteForEntry(job.entryId);
     if (!context.mounted) return;
     onChanged();
+    _refreshArtifacts();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已清除本篇调试记录')),
     );
@@ -1628,6 +1812,7 @@ class _JobCard extends StatelessWidget {
     await _appendSummaryCorrectionLog(updated);
     if (!context.mounted) return;
     onChanged();
+    _refreshArtifacts();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已修正摘要并刷新摘要向量')),
     );
@@ -1905,6 +2090,7 @@ class _DebugSection extends StatelessWidget {
 
   final String title;
   final List<String> lines;
+  static const _collapsedMaxLines = 10;
 
   @override
   Widget build(BuildContext context) {
@@ -1921,7 +2107,10 @@ class _DebugSection extends StatelessWidget {
           for (final line in visibleLines)
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
-              child: SelectableText(line),
+              child: _CollapsibleDebugText(
+                text: line,
+                collapsedMaxLines: _collapsedMaxLines,
+              ),
             ),
         ],
       ),
@@ -2580,12 +2769,89 @@ class _DebugLine extends StatelessWidget {
 
   final String label;
   final String value;
+  static const _collapsedMaxLines = 6;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
-      child: SelectableText('$label: $value'),
+      child: _CollapsibleDebugText(
+        text: '$label: $value',
+        collapsedMaxLines: _collapsedMaxLines,
+      ),
+    );
+  }
+}
+
+class _CollapsibleDebugText extends StatefulWidget {
+  const _CollapsibleDebugText({
+    required this.text,
+    required this.collapsedMaxLines,
+  });
+
+  final String text;
+  final int collapsedMaxLines;
+
+  @override
+  State<_CollapsibleDebugText> createState() => _CollapsibleDebugTextState();
+}
+
+class _CollapsibleDebugTextState extends State<_CollapsibleDebugText> {
+  static const _longTextThreshold = 520;
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final lineBreaks = '\n'.allMatches(widget.text).length;
+    final shouldCollapse = widget.text.length > _longTextThreshold ||
+        lineBreaks >= widget.collapsedMaxLines;
+    if (!shouldCollapse) {
+      return SelectableText(widget.text);
+    }
+
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.42,
+        ),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(
+              widget.text,
+              maxLines: _expanded ? null : widget.collapsedMaxLines,
+            ),
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _expanded = !_expanded;
+                  });
+                },
+                icon: Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up
+                      : Icons.keyboard_arrow_down,
+                  size: 18,
+                ),
+                label: Text(_expanded ? '收起' : '展开完整内容'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

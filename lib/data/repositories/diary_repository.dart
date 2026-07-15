@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/ai_embedding.dart';
 import '../models/diary_entry.dart';
 import '../models/diary_analysis_status.dart';
 import 'ai_analysis_queue_repository.dart';
@@ -123,7 +124,7 @@ class DiaryRepository {
     final deletedEntry =
         DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     await _markPeriodSummaryChanged(deletedEntry);
-    await _deleteAiArtifactsForEntry(id);
+    await _stopAiQueueForTrashedEntry(id);
     DiaryChangeBus.bump();
   }
 
@@ -163,13 +164,15 @@ class DiaryRepository {
     }
     await _removeTrashItem(prefs, id);
     await _markPeriodSummaryChanged(item.entry);
-    await const AiAnalysisQueueRepository().enqueueEntry(item.entry);
-    await const InsightRepository().saveStatus(DiaryAnalysisStatus(
-      entryId: item.entry.id,
-      state: DiaryAnalysisState.queued,
-      updatedAt: DateTime.now(),
-      message: '已从回收站恢复，等待重新整理 AI 资料',
-    ));
+    if (await _needsAiRebuild(item.entry)) {
+      await const AiAnalysisQueueRepository().enqueueEntry(item.entry);
+      await const InsightRepository().saveStatus(DiaryAnalysisStatus(
+        entryId: item.entry.id,
+        state: DiaryAnalysisState.queued,
+        updatedAt: DateTime.now(),
+        message: '已从回收站恢复，等待重新整理 AI 资料',
+      ));
+    }
     DiaryChangeBus.bump();
   }
 
@@ -291,6 +294,38 @@ class DiaryRepository {
     await promptTraceRepository.deleteForEntry(id);
     await const EntrySummaryRepository().deleteForEntry(id);
     await retrievalTraceRepository.deleteForEntry(id);
+  }
+
+  Future<void> _stopAiQueueForTrashedEntry(String id) async {
+    await const AiAnalysisQueueRepository().deleteJob(id);
+    await const AiAnalysisQueueRepository().deleteJob('embedding:$id');
+  }
+
+  Future<bool> _needsAiRebuild(DiaryEntry entry) async {
+    final summary = await const EntrySummaryRepository().getSummary(entry.id);
+    final segments =
+        await const EntrySummaryRepository().listSegments(entry.id);
+    if (summary == null || segments.isEmpty) return true;
+    final embeddings =
+        await const AiEmbeddingRepository().listForEntry(entry.id);
+    final hasEntryEmbedding = embeddings.any(
+      (embedding) => embedding.sourceType == AiEmbeddingSourceType.entry,
+    );
+    final hasSummaryEmbedding = embeddings.any(
+      (embedding) => embedding.sourceType == AiEmbeddingSourceType.summary,
+    );
+    final segmentEmbeddingIds = embeddings
+        .where((embedding) =>
+            embedding.sourceType == AiEmbeddingSourceType.segment)
+        .map((embedding) => embedding.sourceId)
+        .toSet();
+    final hasSegmentEmbeddings =
+        segments.every((segment) => segmentEmbeddingIds.contains(segment.id));
+    if (!hasEntryEmbedding || !hasSummaryEmbedding || !hasSegmentEmbeddings) {
+      return true;
+    }
+    final insight = await const InsightRepository().getInsight(entry.id);
+    return insight == null;
   }
 
   Future<void> _markPeriodSummaryChanged(DiaryEntry entry) async {
