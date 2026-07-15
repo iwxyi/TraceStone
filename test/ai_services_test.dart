@@ -13,6 +13,7 @@ import 'package:trace_stone/data/models/ai_profile.dart';
 import 'package:trace_stone/data/models/ai_profile_preference.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
+import 'package:trace_stone/data/models/ai_research_session.dart';
 import 'package:trace_stone/data/models/calendar_memory.dart';
 import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
@@ -27,6 +28,7 @@ import 'package:trace_stone/data/repositories/ai_embedding_repository.dart';
 import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
 import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_retrieval_trace_repository.dart';
+import 'package:trace_stone/data/repositories/ai_research_session_repository.dart';
 import 'package:trace_stone/data/repositories/ai_profile_preference_repository.dart';
 import 'package:trace_stone/data/repositories/calendar_memory_repository.dart';
 import 'package:trace_stone/data/repositories/developer_settings_repository.dart';
@@ -4151,6 +4153,68 @@ void main() {
       expect(client.lastUserPrompt, contains('批次摘要'));
       expect(client.lastUserPrompt, contains('entry_summary:leader-entry-0'));
       expect(answer.sources.single.sourceId, 'leader-entry-0');
+    });
+
+    test('companion answer persists research session progress', () async {
+      SharedPreferences.setMockInitialValues({});
+      final client = _CompanionAiClientService(jsonEncode({
+        'answer': '## 时间线\n第一次明确记录新加坡是在 2025 年。',
+        'follow_up': '',
+        'sources': [
+          {
+            'source_id': 'entry_summary:singapore-entry-0',
+            'title': '新加坡计划 0',
+            'reason': '扩展检索代表证据',
+            'score': 10,
+          },
+        ],
+      }));
+      const context = AiContextPackage(
+        scenario: AiContextScenario.question,
+        query: '我什么时候去的新加坡',
+        searchMatches: [
+          AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'seed-singapore',
+            entryId: 'seed-singapore',
+            title: '新加坡计划',
+            summary: '计划去新加坡，提到樟宜和 Bugis。',
+            score: 8,
+            reasons: ['关键词重合：新加坡'],
+            matchedTokens: ['新加坡'],
+          ),
+        ],
+      );
+      final searchService = _FakeAiSearchService({
+        '新加坡': List<AiSearchMatch>.generate(
+          16,
+          (index) => AiSearchMatch(
+            sourceType: 'entry_summary',
+            sourceId: 'singapore-entry-$index',
+            entryId: 'singapore-entry-$index',
+            title: '新加坡计划 $index',
+            summary: '第 $index 条新加坡旅行记录，包含樟宜、Bugis 和行程复盘。',
+            score: 10 - (index % 4),
+            reasons: const ['地点匹配：新加坡'],
+            matchedTokens: const ['新加坡'],
+          ),
+        ),
+      });
+
+      await CompanionAnswerService(
+        client: client,
+        contextBuilder: _FakeQuestionContextBuilder(context),
+        searchService: searchService,
+      ).answer('我什么时候去的新加坡');
+
+      final session =
+          await const AiResearchSessionRepository().getLastSession();
+      expect(session, isNotNull);
+      expect(session?.state, AiResearchSessionState.completed);
+      expect(session?.question, '我什么时候去的新加坡');
+      expect(session?.steps.map((step) => step.title), contains('规划检索路径'));
+      expect(session?.compressedCandidateCount, greaterThan(0));
+      expect(session?.answerPreview, contains('第一次明确记录新加坡'));
     });
 
     test('question prompt respects hidden and corrected profile preferences',

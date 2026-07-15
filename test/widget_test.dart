@@ -15,6 +15,8 @@ import 'package:trace_stone/data/models/diary_analysis_status.dart';
 import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
+import 'package:trace_stone/data/models/ai_research_session.dart';
+import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/period_summary.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
@@ -24,6 +26,7 @@ import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
 import 'package:trace_stone/data/repositories/ai_profile_preference_repository.dart';
 import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_retrieval_trace_repository.dart';
+import 'package:trace_stone/data/repositories/ai_research_session_repository.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
@@ -2456,10 +2459,46 @@ void main() {
       userPrompt: '完整 user prompt',
       rawResponse: '{"answer":"raw"}',
     ));
+    await const AiResearchSessionRepository().saveSession(AiResearchSession(
+      id: 'companion:test',
+      question: '我什么时候去的新加坡',
+      startedAt: DateTime(2026, 7, 3, 20),
+      updatedAt: DateTime(2026, 7, 3, 20, 1),
+      state: AiResearchSessionState.completed,
+      answerPreview: '第一次明确记录新加坡是在 2025 年。',
+      steps: [
+        CompanionResearchStep(
+          title: '整理“新加坡”',
+          status: '找到 16 条候选资料',
+          detail: '候选资料较多，已压缩成 2 组摘要。',
+          batchSummaries: [
+            CompanionResearchBatchSummary(
+              title: 'entry_summary / 新加坡',
+              summary: '集中在 新加坡、旅行',
+              candidateCount: 16,
+              evidence: const [
+                CompanionResearchEvidence(
+                  title: '新加坡计划',
+                  summary: '计划去新加坡。',
+                  reason: '地点匹配：新加坡',
+                  score: 10,
+                  sourceType: 'entry_summary',
+                  sourceId: 'singapore-entry',
+                  entryId: 'singapore-entry',
+                ),
+              ],
+              developerDetail: 'query=新加坡 kept=1/16',
+            ),
+          ],
+        ),
+      ],
+    ));
 
     await tester.pumpWidget(const MaterialApp(home: AiDebugPage()));
     await tester.pumpAndSettle();
     expect(find.text('最近陪伴问答'), findsOneWidget);
+    expect(find.textContaining('research.state'), findsOneWidget);
+    expect(find.textContaining('compressed=16'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, '复制'));
     await tester.pumpAndSettle();
     expect(find.text('复制调试上下文？'), findsOneWidget);
@@ -2475,11 +2514,16 @@ void main() {
     expect(copiedText, contains('完整 user prompt'));
     expect(copiedText, contains('RAW RESPONSE:'));
     expect(copiedText, contains('{"answer":"raw"}'));
+    expect(copiedText, contains('## Research Session'));
+    expect(copiedText, contains('question=我什么时候去的新加坡'));
+    expect(copiedText, contains('compressedCandidates=16'));
+    expect(copiedText, contains('batch=entry_summary / 新加坡 count=16'));
 
     await tester.tap(find.widgetWithText(TextButton, '清除'));
     await tester.pumpAndSettle();
 
     expect(find.text('最近陪伴问答'), findsNothing);
+    expect(await const AiResearchSessionRepository().getLastSession(), isNull);
   });
 
   testWidgets('AI debug page clears debug records without deleting artifacts',

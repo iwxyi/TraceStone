@@ -46,6 +46,32 @@ class CompanionResearchStep {
   final List<CompanionResearchEvidence> evidence;
   final List<CompanionResearchBatchSummary> batchSummaries;
   final String developerDetail;
+
+  Map<String, dynamic> toJson() => {
+        'title': title,
+        'status': status,
+        'detail': detail,
+        'evidence': evidence.map((item) => item.toJson()).toList(),
+        'batchSummaries': batchSummaries.map((item) => item.toJson()).toList(),
+        'developerDetail': developerDetail,
+      };
+
+  factory CompanionResearchStep.fromJson(Map<String, dynamic> json) {
+    return CompanionResearchStep(
+      title: _string(json['title']),
+      status: _string(json['status']),
+      detail: _string(json['detail']),
+      evidence: _list(json['evidence'])
+          .whereType<Map<String, dynamic>>()
+          .map(CompanionResearchEvidence.fromJson)
+          .toList(growable: false),
+      batchSummaries: _list(json['batchSummaries'])
+          .whereType<Map<String, dynamic>>()
+          .map(CompanionResearchBatchSummary.fromJson)
+          .toList(growable: false),
+      developerDetail: _string(json['developerDetail']),
+    );
+  }
 }
 
 class CompanionResearchBatchSummary {
@@ -62,6 +88,27 @@ class CompanionResearchBatchSummary {
   final int candidateCount;
   final List<CompanionResearchEvidence> evidence;
   final String developerDetail;
+
+  Map<String, dynamic> toJson() => {
+        'title': title,
+        'summary': summary,
+        'candidateCount': candidateCount,
+        'evidence': evidence.map((item) => item.toJson()).toList(),
+        'developerDetail': developerDetail,
+      };
+
+  factory CompanionResearchBatchSummary.fromJson(Map<String, dynamic> json) {
+    return CompanionResearchBatchSummary(
+      title: _string(json['title']),
+      summary: _string(json['summary']),
+      candidateCount: _int(json['candidateCount']),
+      evidence: _list(json['evidence'])
+          .whereType<Map<String, dynamic>>()
+          .map(CompanionResearchEvidence.fromJson)
+          .toList(growable: false),
+      developerDetail: _string(json['developerDetail']),
+    );
+  }
 }
 
 class CompanionResearchEvidence {
@@ -82,4 +129,42 @@ class CompanionResearchEvidence {
   final String? sourceType;
   final String? sourceId;
   final String? entryId;
+
+  Map<String, dynamic> toJson() => {
+        'title': title,
+        'summary': summary,
+        'reason': reason,
+        'score': score,
+        if (sourceType != null) 'sourceType': sourceType,
+        if (sourceId != null) 'sourceId': sourceId,
+        if (entryId != null) 'entryId': entryId,
+      };
+
+  factory CompanionResearchEvidence.fromJson(Map<String, dynamic> json) {
+    return CompanionResearchEvidence(
+      title: _string(json['title']),
+      summary: _string(json['summary']),
+      reason: _string(json['reason']),
+      score: _int(json['score']),
+      sourceType: _nullableString(json['sourceType']),
+      sourceId: _nullableString(json['sourceId']),
+      entryId: _nullableString(json['entryId']),
+    );
+  }
+}
+
+String _string(Object? value) => value is String ? value : '${value ?? ''}';
+
+String? _nullableString(Object? value) => value is String ? value : null;
+
+int _int(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value) ?? 0;
+  return 0;
+}
+
+List<Object?> _list(Object? value) {
+  if (value is List) return value;
+  return const [];
 }

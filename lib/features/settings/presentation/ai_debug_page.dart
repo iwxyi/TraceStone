@@ -7,6 +7,7 @@ import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/ai_embedding.dart';
 import '../../../data/models/ai_prompt_trace.dart';
 import '../../../data/models/ai_retrieval_trace.dart';
+import '../../../data/models/ai_research_session.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/models/entry_summary.dart';
 import '../../../data/models/period_summary.dart';
@@ -16,6 +17,7 @@ import '../../../data/repositories/ai_embedding_repository.dart';
 import '../../../data/repositories/ai_feedback_repository.dart';
 import '../../../data/repositories/ai_prompt_trace_repository.dart';
 import '../../../data/repositories/ai_retrieval_trace_repository.dart';
+import '../../../data/repositories/ai_research_session_repository.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/entry_summary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
@@ -349,8 +351,14 @@ class _CompanionTraceCard extends StatefulWidget {
 class _CompanionTraceCardState extends State<_CompanionTraceCard> {
   late Future<AiPromptTrace?> _future =
       const AiPromptTraceRepository().getTrace('companion:last');
+  late Future<AiResearchSession?> _sessionFuture =
+      const AiResearchSessionRepository().getLastSession();
 
-  Future<void> _copyTrace(BuildContext context, AiPromptTrace trace) async {
+  Future<void> _copyTrace(
+    BuildContext context,
+    AiPromptTrace trace,
+    AiResearchSession? session,
+  ) async {
     final confirmed = await _confirmDebugContextCopy(context);
     if (!confirmed) return;
     final text = [
@@ -373,6 +381,26 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
         'RAW RESPONSE:\n${trace.rawResponse}'
       else if (trace.rawResponsePreview.isNotEmpty)
         'RAW RESPONSE PREVIEW:\n${trace.rawResponsePreview}',
+      if (session != null) ...[
+        '',
+        '## Research Session',
+        'id=${session.id}',
+        'state=${session.state.name}',
+        'question=${session.question}',
+        'startedAt=${session.startedAt.toIso8601String()}',
+        'updatedAt=${session.updatedAt.toIso8601String()}',
+        'steps=${session.steps.length}',
+        'evidence=${session.evidenceCount}',
+        'compressedCandidates=${session.compressedCandidateCount}',
+        if ((session.error ?? '').isNotEmpty) 'error=${session.error}',
+        for (final step in session.steps) ...[
+          '- ${step.title}｜${step.status}｜${step.detail}',
+          if (step.developerDetail.isNotEmpty)
+            '  developer=${step.developerDetail}',
+          for (final batch in step.batchSummaries)
+            '  batch=${batch.title} count=${batch.candidateCount} ${batch.summary}',
+        ],
+      ],
     ].join('\n');
     await Clipboard.setData(ClipboardData(text: text));
     if (!context.mounted) return;
@@ -383,9 +411,11 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
 
   Future<void> _clearTrace(BuildContext context) async {
     await const AiPromptTraceRepository().deleteTrace('companion:last');
+    await const AiResearchSessionRepository().deleteAllSessions();
     if (!context.mounted) return;
     setState(() {
       _future = const AiPromptTraceRepository().getTrace('companion:last');
+      _sessionFuture = const AiResearchSessionRepository().getLastSession();
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已清除陪伴问答调试记录')),
@@ -399,54 +429,77 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
       builder: (context, snapshot) {
         final trace = snapshot.data;
         if (trace == null) return const SizedBox.shrink();
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        return FutureBuilder(
+          future: _sessionFuture,
+          builder: (context, sessionSnapshot) {
+            final session = sessionSnapshot.data;
+            return Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Expanded(
-                      child: Text('最近陪伴问答',
-                          style: TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.w600)),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text('最近陪伴问答',
+                              style: TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.w600)),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _copyTrace(context, trace, session),
+                          icon: const Icon(Icons.copy),
+                          label: const Text('复制'),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _clearTrace(context),
+                          icon: const Icon(Icons.cleaning_services_outlined),
+                          label: const Text('清除'),
+                        ),
+                      ],
                     ),
-                    TextButton.icon(
-                      onPressed: () => _copyTrace(context, trace),
-                      icon: const Icon(Icons.copy),
-                      label: const Text('复制'),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => _clearTrace(context),
-                      icon: const Icon(Icons.cleaning_services_outlined),
-                      label: const Text('清除'),
-                    ),
+                    const SizedBox(height: 8),
+                    _DebugLine(label: 'scenario', value: trace.scenario),
+                    _DebugLine(
+                        label: 'createdAt',
+                        value: trace.createdAt.toIso8601String()),
+                    _DebugLine(label: 'context', value: trace.contextSummary),
+                    _DebugLine(
+                        label: 'prompt.length',
+                        value:
+                            'system=${trace.systemPromptLength} user=${trace.userPromptLength}'),
+                    if (session != null) ...[
+                      const SizedBox(height: 8),
+                      _DebugLine(
+                          label: 'research.state',
+                          value:
+                              '${session.state.name} steps=${session.steps.length} evidence=${session.evidenceCount} compressed=${session.compressedCandidateCount}'),
+                      _DebugLine(
+                          label: 'research.question', value: session.question),
+                      for (final step in session.steps.take(8))
+                        _DebugLine(
+                          label: 'research.step',
+                          value:
+                              '${step.title}｜${step.status}${step.batchSummaries.isEmpty ? '' : '｜batches=${step.batchSummaries.length}'}',
+                        ),
+                    ],
+                    if (trace.rawResponsePreview.isNotEmpty)
+                      _DebugLine(
+                          label: 'raw.response',
+                          value: trace.rawResponsePreview),
+                    if (trace.systemPromptPreview.isNotEmpty)
+                      _DebugLine(
+                          label: 'system.preview',
+                          value: trace.systemPromptPreview),
+                    if (trace.userPromptPreview.isNotEmpty)
+                      _DebugLine(
+                          label: 'user.preview',
+                          value: trace.userPromptPreview),
                   ],
                 ),
-                const SizedBox(height: 8),
-                _DebugLine(label: 'scenario', value: trace.scenario),
-                _DebugLine(
-                    label: 'createdAt',
-                    value: trace.createdAt.toIso8601String()),
-                _DebugLine(label: 'context', value: trace.contextSummary),
-                _DebugLine(
-                    label: 'prompt.length',
-                    value:
-                        'system=${trace.systemPromptLength} user=${trace.userPromptLength}'),
-                if (trace.rawResponsePreview.isNotEmpty)
-                  _DebugLine(
-                      label: 'raw.response', value: trace.rawResponsePreview),
-                if (trace.systemPromptPreview.isNotEmpty)
-                  _DebugLine(
-                      label: 'system.preview',
-                      value: trace.systemPromptPreview),
-                if (trace.userPromptPreview.isNotEmpty)
-                  _DebugLine(
-                      label: 'user.preview', value: trace.userPromptPreview),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );

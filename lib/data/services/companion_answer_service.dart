@@ -3,9 +3,11 @@ import 'dart:convert';
 import '../models/ai_context_package.dart';
 import '../models/ai_prompt_trace.dart';
 import '../models/ai_profile.dart';
+import '../models/ai_research_session.dart';
 import '../models/companion_answer.dart';
 import '../models/stone_task.dart';
 import '../repositories/ai_prompt_trace_repository.dart';
+import '../repositories/ai_research_session_repository.dart';
 import '../utils/ai_source_formatter.dart';
 import 'ai_client_service.dart';
 import 'ai_context_builder.dart';
@@ -30,16 +32,20 @@ class CompanionAnswerService {
     AiClientService? client,
     AiContextBuilder? contextBuilder,
     AiPromptTraceRepository? promptTraceRepository,
+    AiResearchSessionRepository? researchSessionRepository,
     AiSearchService? searchService,
   })  : _client = client ?? const AiClientService(),
         _contextBuilder = contextBuilder ?? const AiContextBuilder(),
         _promptTraceRepository =
             promptTraceRepository ?? const AiPromptTraceRepository(),
+        _researchSessionRepository =
+            researchSessionRepository ?? const AiResearchSessionRepository(),
         _searchService = searchService ?? const AiSearchService();
 
   final AiClientService _client;
   final AiContextBuilder _contextBuilder;
   final AiPromptTraceRepository _promptTraceRepository;
+  final AiResearchSessionRepository _researchSessionRepository;
   final AiSearchService _searchService;
 
   Future<CompanionAnswer> answer(
@@ -53,20 +59,36 @@ class CompanionAnswerService {
     String question, {
     CompanionResearchProgress? onProgress,
   }) async {
+    final startedAt = DateTime.now();
+    final sessionId = 'companion:${startedAt.millisecondsSinceEpoch}';
     final steps = <CompanionResearchStep>[];
-    void addStep(CompanionResearchStep step) {
+    var session = AiResearchSession(
+      id: sessionId,
+      question: question,
+      startedAt: startedAt,
+      updatedAt: startedAt,
+      state: AiResearchSessionState.running,
+    );
+    await _researchSessionRepository.saveSession(session);
+
+    Future<void> addStep(CompanionResearchStep step) async {
       steps.add(step);
       onProgress?.call(step);
+      session = session.copyWith(
+        updatedAt: DateTime.now(),
+        steps: List.unmodifiable(steps),
+      );
+      await _researchSessionRepository.saveSession(session);
     }
 
-    addStep(const CompanionResearchStep(
+    await addStep(const CompanionResearchStep(
       title: '理解问题',
       status: '正在分析问题需要哪些资料',
       detail: '识别人物、时间、地点、事件和可能的多跳线索。',
     ));
     final context = await _contextBuilder.buildForQuestion(question);
     final primaryEvidence = _evidenceFromContext(context);
-    addStep(CompanionResearchStep(
+    await addStep(CompanionResearchStep(
       title: '检索基础资料',
       status: '已完成基础检索',
       detail:
@@ -75,10 +97,17 @@ class CompanionAnswerService {
       developerDetail: context.debugSummary,
     ));
     final expansionQueries = _expansionQueries(question, context);
+    if (expansionQueries.isNotEmpty) {
+      await addStep(CompanionResearchStep(
+        title: '规划检索路径',
+        status: '准备扩展 ${expansionQueries.take(4).length} 条线索',
+        detail: expansionQueries.take(4).join('；'),
+        developerDetail: 'queries=${expansionQueries.join(' | ')}',
+      ));
+    }
     final expandedEvidence = <CompanionResearchEvidence>[];
-    final batchSummaries = <CompanionResearchBatchSummary>[];
     for (final query in expansionQueries.take(4)) {
-      addStep(CompanionResearchStep(
+      await addStep(CompanionResearchStep(
         title: '扩展检索',
         status: '正在检索“$query”',
         detail: '根据上一轮线索继续查找相关日记、摘要、片段和记忆。',
@@ -89,9 +118,8 @@ class CompanionAnswerService {
           .map(_evidenceFromMatch)
           .toList(growable: false);
       final batches = _batchSummariesFor(query, evidence);
-      batchSummaries.addAll(batches);
       expandedEvidence.addAll(_representativeEvidence(evidence, batches));
-      addStep(CompanionResearchStep(
+      await addStep(CompanionResearchStep(
         title: '整理“$query”',
         status: '找到 ${evidence.length} 条候选资料',
         detail: evidence.length > 12
@@ -105,7 +133,7 @@ class CompanionAnswerService {
             'query=$query matches=${matches.length} sourceTypes=${_sourceTypeSummary(matches)}',
       ));
     }
-    addStep(CompanionResearchStep(
+    await addStep(CompanionResearchStep(
       title: '生成回答',
       status: '正在基于证据组织 Markdown 回答',
       detail: '会优先说明能确定的结论、不确定性和关键来源。',
@@ -175,15 +203,36 @@ class CompanionAnswerService {
           rawResponse: jsonText,
         ));
       }
-      return CompanionAnswer(
+      final answer = CompanionAnswer(
         answer: (parsed['answer'] as String? ?? '').trim(),
         followUp: (parsed['follow_up'] as String? ?? '').trim(),
         sources: sources,
         usedFallback: false,
         researchSteps: steps,
       );
+      session = session.copyWith(
+        updatedAt: DateTime.now(),
+        state: AiResearchSessionState.completed,
+        completedAt: DateTime.now(),
+        answerPreview: _preview(answer.answer),
+        steps: List.unmodifiable(steps),
+      );
+      await _researchSessionRepository.saveSession(session);
+      return answer;
     } on Object {
-      return _fallbackAnswer(question, context, steps);
+      final answer = _fallbackAnswer(question, context, steps);
+      session = session.copyWith(
+        updatedAt: DateTime.now(),
+        state: answer.usedFallback
+            ? AiResearchSessionState.completed
+            : AiResearchSessionState.failed,
+        completedAt: DateTime.now(),
+        error: answer.usedFallback ? null : 'companion answer failed',
+        answerPreview: _preview(answer.answer),
+        steps: List.unmodifiable(steps),
+      );
+      await _researchSessionRepository.saveSession(session);
+      return answer;
     }
   }
 
@@ -458,6 +507,9 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
         add('$name ${_intentKeywords(question).join(' ')}');
       }
     }
+    for (final query in _questionClueQueries(question)) {
+      add(query);
+    }
     if (lower.contains('singapore') || question.contains('新加坡')) {
       add('新加坡 樟宜 Bugis 滨海湾');
     }
@@ -470,7 +522,40 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
     if (_containsAny(question, const ['升职', '晋升', '向上管理', '领导'])) {
       add('升职 晋升 领导 汇报 向上管理');
     }
-    return queries.take(6).toList(growable: false);
+    return queries.take(8).toList(growable: false);
+  }
+
+  List<String> _questionClueQueries(String question) {
+    final queries = <String>[];
+    void add(String value) {
+      final normalized = value.trim();
+      if (normalized.length < 2) return;
+      if (queries.contains(normalized)) return;
+      queries.add(normalized);
+    }
+
+    final names = _namesFromText(question);
+    final intents = _intentKeywords(question);
+    for (final name in names) {
+      add(name);
+      add('$name ${intents.join(' ')}');
+    }
+    final timeTerms = _timeTerms(question);
+    final topicTerms = _topicTerms(question);
+    for (final time in timeTerms) {
+      for (final topic in topicTerms.take(4)) {
+        add('$time $topic');
+      }
+    }
+    for (final topic in topicTerms.take(6)) {
+      add(topic);
+    }
+    if (topicTerms.length >= 2) {
+      for (var i = 0; i < topicTerms.length - 1 && i < 4; i++) {
+        add('${topicTerms[i]} ${topicTerms[i + 1]}');
+      }
+    }
+    return queries;
   }
 
   List<String> _intentKeywords(String question) {
@@ -490,10 +575,113 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
       '新加坡',
       '杭州',
       '梅花',
+      '旅行',
+      '酒店',
+      '情绪',
+      '压力',
+      '睡眠',
+      '健身',
+      '饮食',
+      '关系',
+      '沟通',
     ]) {
       if (question.contains(item)) keywords.add(item);
     }
     return keywords.isEmpty ? [question] : keywords;
+  }
+
+  List<String> _timeTerms(String question) {
+    final terms = <String>[];
+    for (final item in const [
+      '今天',
+      '昨天',
+      '前天',
+      '最近',
+      '上周',
+      '本周',
+      '上个月',
+      '这个月',
+      '去年',
+      '今年',
+      '前年',
+      '过去一年',
+      '最近三个月',
+    ]) {
+      if (question.contains(item)) terms.add(item);
+    }
+    for (final match
+        in RegExp(r'20\d{2}年?(?:\d{1,2}月?)?').allMatches(question)) {
+      terms.add(match.group(0)!);
+    }
+    return terms;
+  }
+
+  List<String> _topicTerms(String question) {
+    final stops = {
+      '什么',
+      '哪些',
+      '怎么',
+      '如何',
+      '是不是',
+      '有没有',
+      '时候',
+      '可以',
+      '可能',
+      '适合',
+      '最近',
+      '去年',
+      '今年',
+      '今天',
+      '这个',
+      '那个',
+      '自己',
+      '我的',
+      '我和',
+      '以及',
+      '还是',
+    };
+    final terms = <String>[];
+    final cleaned = question.replaceAll(
+      RegExp(r'[\s\n\r\t，。！？；：、“”‘’（）《》【】,.!?;:#>*_`\[\](){}/\\-]+'),
+      ' ',
+    );
+    for (final part in cleaned.split(' ')) {
+      final value = part.trim();
+      if (value.length >= 2 && value.length <= 12 && !stops.contains(value)) {
+        terms.add(value);
+      }
+      if (value.length >= 5) {
+        for (var i = 0; i <= value.length - 2; i += 2) {
+          final token = value.substring(i, i + 2);
+          if (!stops.contains(token)) terms.add(token);
+        }
+      }
+    }
+    for (final item in const [
+      '新加坡',
+      '杭州',
+      '梅花',
+      '升职',
+      '晋升',
+      '向上管理',
+      '领导',
+      '月经',
+      '姨妈',
+      '生理期',
+      '周期',
+      '旅行',
+      '酒店',
+      '健身',
+      '睡眠',
+      '饮食',
+      '压力',
+      '情绪',
+      '沟通',
+      '关系',
+    ]) {
+      if (question.contains(item)) terms.add(item);
+    }
+    return terms.toSet().toList(growable: false);
   }
 
   List<String> _namesFromText(String text) {
