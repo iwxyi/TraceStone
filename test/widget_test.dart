@@ -292,8 +292,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('成长画像'), findsOneWidget);
-    expect(find.text('画像候选'), findsNothing);
-    expect(find.text('self_regulation'), findsOneWidget);
+    expect(find.text('画像决策'), findsNothing);
+    expect(find.text('自我调节'), findsOneWidget);
+    expect(find.text('self_regulation'), findsNothing);
     expect(find.textContaining('运动可能帮助恢复状态'), findsOneWidget);
   });
 
@@ -1159,6 +1160,43 @@ void main() {
     expect(copiedText, contains('kind=corrected'));
     expect(copiedText, contains('targetId=self_regulation:散步可能帮助恢复状态'));
     expect(copiedText, contains('preference=corrected'));
+  });
+
+  testWidgets(
+      'profile page hides developer decision review outside developer mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'settings.developerMode': false,
+    });
+    final date = DateTime(2026, 7, 3);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-public-mode',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.62,
+        ),
+      ],
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('画像决策'), findsNothing);
+    expect(find.text('自我调节'), findsOneWidget);
+    expect(find.text('self_regulation'), findsNothing);
   });
 
   testWidgets('profile page merges same-field profile candidates',

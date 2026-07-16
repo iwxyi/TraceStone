@@ -26,8 +26,6 @@ class _ProfilePageState extends State<ProfilePage> {
   final _projectionService = const ProfileProjectionService();
   final _decisionService = const AiProfileDecisionService();
   late Future<_ProfilePageData> _dataFuture = _loadData();
-  late final Future<bool> _developerModeFuture =
-      _developerSettings.isDeveloperModeEnabled();
 
   Future<_ProfilePageData> _loadData() async {
     final insights = await _repository.listInsights();
@@ -35,9 +33,11 @@ class _ProfilePageState extends State<ProfilePage> {
     final preferences = await _profilePreferences.listPreferences();
     final conflicts = _projectionService.buildConflictNotes(insights);
     final visibleFacts = await _profilePreferences.applyToProfileFacts(facts);
+    final developerMode = await _developerSettings.isDeveloperModeEnabled();
     return _ProfilePageData(
       facts: visibleFacts,
       conflicts: conflicts,
+      developerMode: developerMode,
       decisions: _decisionService.buildProfileFactDecisions(
         facts: visibleFacts,
         preferences: preferences,
@@ -234,8 +234,10 @@ class _ProfilePageState extends State<ProfilePage> {
         actions: [
           IconButton(
             tooltip: '设置',
-            onPressed: () =>
-                Navigator.of(context).pushNamed(AppRoutes.settings),
+            onPressed: () async {
+              await Navigator.of(context).pushNamed(AppRoutes.settings);
+              if (mounted) await _refresh();
+            },
             icon: const Icon(Icons.settings_outlined),
           ),
         ],
@@ -263,40 +265,34 @@ class _ProfilePageState extends State<ProfilePage> {
                   )
                 else if (facts.isEmpty &&
                     data.conflicts.isEmpty &&
-                    data.decisions.isEmpty)
+                    (!data.developerMode || data.decisions.isEmpty))
                   const _EmptyProfileCandidates()
                 else
-                  FutureBuilder<bool>(
-                    future: _developerModeFuture,
-                    builder: (context, developerSnapshot) {
-                      final developerMode = developerSnapshot.data ?? false;
-                      return Column(
-                        children: [
-                          if (data.conflicts.isNotEmpty) ...[
-                            _ProfileConflictCard(
-                              conflicts: data.conflicts,
-                              developerMode: developerMode,
-                              onAdopt: _adoptConflict,
-                              onKeepExisting: _keepExistingForConflict,
-                            ),
-                            if (facts.isNotEmpty) const SizedBox(height: 16),
-                          ],
-                          if (developerMode && data.decisions.isNotEmpty) ...[
-                            _ProfileDecisionCard(decisions: data.decisions),
-                            if (facts.isNotEmpty) const SizedBox(height: 16),
-                          ],
-                          if (facts.isNotEmpty)
-                            _ProfileSummary(
-                              facts: facts,
-                              developerMode: developerMode,
-                              onConfirmedChanged: _setConfirmed,
-                              onHide: _hideFact,
-                              onCorrect: _correctFact,
-                              onMerge: _mergeFacts,
-                            ),
-                        ],
-                      );
-                    },
+                  Column(
+                    children: [
+                      if (data.conflicts.isNotEmpty) ...[
+                        _ProfileConflictCard(
+                          conflicts: data.conflicts,
+                          developerMode: data.developerMode,
+                          onAdopt: _adoptConflict,
+                          onKeepExisting: _keepExistingForConflict,
+                        ),
+                        if (facts.isNotEmpty) const SizedBox(height: 16),
+                      ],
+                      if (data.developerMode && data.decisions.isNotEmpty) ...[
+                        _ProfileDecisionCard(decisions: data.decisions),
+                        if (facts.isNotEmpty) const SizedBox(height: 16),
+                      ],
+                      if (facts.isNotEmpty)
+                        _ProfileSummary(
+                          facts: facts,
+                          developerMode: data.developerMode,
+                          onConfirmedChanged: _setConfirmed,
+                          onHide: _hideFact,
+                          onCorrect: _correctFact,
+                          onMerge: _mergeFacts,
+                        ),
+                    ],
                   ),
               ],
             );
@@ -352,11 +348,13 @@ class _ProfilePageData {
     this.facts = const [],
     this.conflicts = const [],
     this.decisions = const [],
+    this.developerMode = false,
   });
 
   final List<ProfileFact> facts;
   final List<ProfileConflictNote> conflicts;
   final List<AiProfileDecision> decisions;
+  final bool developerMode;
 }
 
 class _ProfileHeader extends StatelessWidget {
@@ -708,7 +706,7 @@ class _DecisionLine extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Chip(label: Text(decision.actionLabel)),
-            Text(decision.title,
+            Text(_profileFieldLabel(decision.title),
                 style: const TextStyle(fontWeight: FontWeight.w600)),
           ],
         ),
@@ -753,7 +751,7 @@ class _ProfileFactTile extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: Text(fact.field,
+              child: Text(_profileFieldLabel(fact.field),
                   style: const TextStyle(fontWeight: FontWeight.w600)),
             ),
             Text(
@@ -829,7 +827,7 @@ class _ProfileFactTile extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: 3),
               child: Text(
-                _evidenceLine(evidence),
+                _evidenceLine(evidence, developerMode: developerMode),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -838,10 +836,20 @@ class _ProfileFactTile extends StatelessWidget {
     );
   }
 
-  String _evidenceLine(InsightEvidence evidence) {
+  String _evidenceLine(
+    InsightEvidence evidence, {
+    required bool developerMode,
+  }) {
     final summary = evidence.summary ?? '';
     final quote = evidence.quote ?? '';
     final relevance = evidence.relevance ?? '';
+    if (!developerMode) {
+      return [
+        if (summary.isNotEmpty) summary,
+        if (quote.isNotEmpty) '“$quote”',
+        if (relevance.isNotEmpty) relevance,
+      ].where((item) => item.trim().isNotEmpty).join(' | ');
+    }
     return [
       formatInsightEvidenceId(evidence),
       if (summary.isNotEmpty) summary,
@@ -866,6 +874,46 @@ class _ProfileFactTile extends StatelessWidget {
 }
 
 enum _ProfileFactAction { confirm, unconfirm, correct, merge, hide }
+
+String _profileFieldLabel(String field) {
+  final normalized = field.trim().toLowerCase();
+  const labels = {
+    'self_regulation': '自我调节',
+    'self regulation': '自我调节',
+    'emotion_regulation': '情绪调节',
+    'emotional_regulation': '情绪调节',
+    'stress_trigger': '压力来源',
+    'stress_triggers': '压力来源',
+    'work_pattern': '工作模式',
+    'learning_pattern': '学习模式',
+    'social_pattern': '社交模式',
+    'relationship_pattern': '关系模式',
+    'health_pattern': '健康习惯',
+    'exercise_pattern': '运动习惯',
+    'sleep_pattern': '睡眠习惯',
+    'food_pattern': '饮食习惯',
+    'motivation': '动力来源',
+    'values': '价值观',
+    'goal': '目标',
+    'goals': '目标',
+    'strength': '优势',
+    'strengths': '优势',
+    'risk': '风险点',
+    'risks': '风险点',
+    'preference': '偏好',
+    'preferences': '偏好',
+    'identity': '自我认同',
+    'growth': '成长线索',
+  };
+  final mapped = labels[normalized];
+  if (mapped != null) return mapped;
+  if (field.trim().isEmpty) return '未分类画像';
+  return field
+      .trim()
+      .split(RegExp(r'[_\s-]+'))
+      .where((part) => part.isNotEmpty)
+      .join(' ');
+}
 
 class _ProfileCorrectionDialog extends StatefulWidget {
   const _ProfileCorrectionDialog({required this.fact});
@@ -964,7 +1012,9 @@ class _ProfileMergeDialogState extends State<_ProfileMergeDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${widget.primary.field} 下有 ${widget.siblings.length + 1} 条候选。'),
+          Text(
+            '${_profileFieldLabel(widget.primary.field)} 下有 ${widget.siblings.length + 1} 条候选。',
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _controller,
