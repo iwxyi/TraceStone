@@ -264,17 +264,12 @@ class AiSearchService {
   Future<_ProfileSearchSources> _profileSearchSources() async {
     final projection = _profileProjectionService
         .build(await _insightRepository.listInsights());
-    final profileFacts = await _profilePreferenceRepository.applyToProfileFacts(
-      projection.profileFacts,
-    );
     final relationshipProfiles =
         await _profilePreferenceRepository.applyToRelationshipProfiles(
       projection.relationshipProfiles,
     );
     return _ProfileSearchSources(
-      profileFacts: {
-        for (final fact in profileFacts) fact.id: fact,
-      },
+      profileFacts: const {},
       relationshipProfiles: {
         for (final profile in relationshipProfiles) profile.personName: profile,
       },

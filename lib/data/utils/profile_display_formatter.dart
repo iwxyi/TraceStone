@@ -47,7 +47,7 @@ String profileStatusLabel(ProfileFactStatus status) {
     case ProfileFactStatus.stable:
       return '稳定画像';
     case ProfileFactStatus.emerging:
-      return '形成中';
+      return '待更多证据';
     case ProfileFactStatus.weak:
       return '待确认';
   }

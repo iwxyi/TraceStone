@@ -20,7 +20,6 @@ import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/period_summary.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
-import 'package:trace_stone/data/repositories/ai_analysis_queue_bus.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
 import 'package:trace_stone/data/repositories/ai_embedding_repository.dart';
 import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
@@ -51,7 +50,6 @@ import 'package:trace_stone/features/settings/presentation/calendar_memory_page.
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
 import 'package:trace_stone/features/settings/presentation/ai_debug_page.dart';
 import 'package:trace_stone/features/settings/presentation/memory_management_page.dart';
-import 'package:trace_stone/features/settings/presentation/profile_page.dart';
 import 'package:trace_stone/features/search/presentation/search_page.dart';
 import 'package:trace_stone/features/shaping_stone/presentation/shaping_stone_page.dart';
 
@@ -263,7 +261,38 @@ void main() {
     expect(summary?.brief, isNot('旧的七月总结'));
   });
 
-  testWidgets('shows profile candidates on profile tab', (tester) async {
+  testWidgets('shows AI user profile on profile tab', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 3);
+    await const MemoryRepository().saveMemory(MemoryEntry(
+      id: 'ai-user-profile',
+      sourceEntryId: 'entry',
+      date: date,
+      createdAt: date,
+      summary:
+          '用户正在学习把项目经历沉淀成可复用的方法，也在寻找更稳定的恢复节奏。\n\n关系和工作建议需要避免空泛鼓励，最好结合具体场景。',
+      keywords: ['项目经验', '恢复节奏'],
+      emotion: '需要具体、克制的建议',
+      people: const [],
+      tags: const ['用户画像', 'AI综合画像'],
+      evidenceEntryIds: ['entry'],
+      importance: 0.9,
+      confidence: 0.72,
+    ));
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('用户画像'), findsOneWidget);
+    expect(find.text('画像决策'), findsNothing);
+    expect(find.textContaining('用户正在学习把项目经历沉淀'), findsOneWidget);
+    expect(find.textContaining('关系和工作建议需要避免空泛鼓励'), findsOneWidget);
+    expect(find.text('self_regulation'), findsNothing);
+  });
+
+  testWidgets('profile tab no longer renders old profile candidates',
+      (tester) async {
     SharedPreferences.setMockInitialValues({});
     final date = DateTime(2026, 7, 3);
     await const InsightRepository().saveInsight(DiaryInsight(
@@ -292,11 +321,10 @@ void main() {
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
 
-    expect(find.text('成长画像'), findsOneWidget);
-    expect(find.text('画像决策'), findsNothing);
-    expect(find.text('自我调节'), findsOneWidget);
-    expect(find.text('self_regulation'), findsNothing);
-    expect(find.textContaining('运动可能帮助恢复状态'), findsOneWidget);
+    expect(find.text('用户画像'), findsOneWidget);
+    expect(find.textContaining('还没有生成用户画像'), findsOneWidget);
+    expect(find.text('自我调节'), findsNothing);
+    expect(find.textContaining('运动可能帮助恢复状态'), findsNothing);
   });
 
   testWidgets('today insight developer structure respects developer mode',
@@ -924,438 +952,6 @@ void main() {
     expect(feedback?.value, AiFeedbackValue.inaccurate);
     expect(regenerationQueued, isTrue);
     expect(find.text('已标记为不准确，正在重新整理'), findsOneWidget);
-  });
-
-  testWidgets('corrects profile candidate text', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    final date = DateTime(2026, 7, 3);
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-correct',
-      entryDate: date,
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '运动一定能解决压力',
-          confidence: 0.62,
-        ),
-      ],
-    ));
-
-    await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.byTooltip('画像操作').first,
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('画像操作').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('修正'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.widgetWithText(TextField, '更准确的说法'),
-      '运动有时能帮助我从压力中恢复',
-    );
-    await tester.tap(find.text('保存'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('运动有时能帮助我从压力中恢复'), findsOneWidget);
-    expect(find.text('已确认'), findsOneWidget);
-  });
-
-  testWidgets('profile page shows evidence sources in developer mode',
-      (tester) async {
-    SharedPreferences.setMockInitialValues({
-      'settings.developerMode': true,
-    });
-    final date = DateTime(2026, 7, 3);
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-evidence',
-      entryDate: date,
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '散步可能帮助恢复状态',
-          confidence: 0.62,
-        ),
-      ],
-    ));
-
-    await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('证据来源'), findsOneWidget);
-    expect(
-        find.textContaining('current_entry:profile-evidence'), findsOneWidget);
-  });
-
-  testWidgets('profile page shows conflict notes in developer mode',
-      (tester) async {
-    SharedPreferences.setMockInitialValues({
-      'settings.developerMode': true,
-    });
-    final date = DateTime(2026, 7, 3);
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-conflict-entry',
-      entryDate: date,
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '散步可能帮助恢复状态',
-          confidence: 0.62,
-        ),
-      ],
-      contradictions: const [
-        InsightContradiction(
-          oldMemoryId: 'profile:self_regulation',
-          newEvidence: '这次独处比散步更能恢复状态。',
-          interpretation: '调节方式画像需要保留情境差异。',
-          confidence: 0.72,
-          evidence: [
-            InsightEvidence(
-              type: 'current_entry',
-              id: 'profile-conflict-entry',
-            ),
-          ],
-        ),
-      ],
-    ));
-
-    await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('需要核对的变化'), findsOneWidget);
-    expect(find.text('这次独处比散步更能恢复状态。'), findsOneWidget);
-    expect(find.text('调节方式画像需要保留情境差异。'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, '采纳变化'), findsOneWidget);
-    expect(find.widgetWithText(OutlinedButton, '保持原画像'), findsOneWidget);
-    expect(find.text('target: profile:self_regulation'), findsOneWidget);
-    expect(find.text('entry: profile-conflict-entry'), findsOneWidget);
-    expect(find.textContaining('source: current_entry:profile-conflict-entry'),
-        findsOneWidget);
-
-    await tester.scrollUntilVisible(
-      find.widgetWithText(FilledButton, '采纳变化'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, '采纳变化'));
-    await tester.pumpAndSettle();
-
-    final preference = await const AiProfilePreferenceRepository()
-        .getPreference(
-            targetType: AiProfilePreferenceTargetType.profileFact,
-            targetId: 'self_regulation:散步可能帮助恢复状态');
-    expect(preference?.correctedValue, '这次独处比散步更能恢复状态。');
-    expect(preference?.confirmed, isTrue);
-    expect(find.text('已采纳这条变化并更新画像'), findsOneWidget);
-  });
-
-  testWidgets('profile page shows developer decision review', (tester) async {
-    SharedPreferences.setMockInitialValues({
-      'settings.developerMode': true,
-    });
-    String? copiedText;
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      SystemChannels.platform,
-      (call) async {
-        if (call.method == 'Clipboard.setData') {
-          copiedText =
-              (call.arguments as Map<Object?, Object?>?)?['text'] as String?;
-        }
-        return null;
-      },
-    );
-    addTearDown(() {
-      tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, null);
-    });
-    final date = DateTime(2026, 7, 3);
-    const preferenceRepository = AiProfilePreferenceRepository();
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-decision-entry',
-      entryDate: date,
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '散步可能帮助恢复状态',
-          confidence: 0.62,
-        ),
-        ProfileUpdateCandidate(
-          field: 'work_pattern',
-          value: '项目推进时容易进入专注状态',
-          confidence: 0.54,
-        ),
-      ],
-    ));
-    await preferenceRepository.setCorrectedValue(
-      targetType: AiProfilePreferenceTargetType.profileFact,
-      targetId: 'self_regulation:散步可能帮助恢复状态',
-      correctedValue: '散步有时能帮助恢复状态',
-    );
-
-    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
-    await tester.pumpAndSettle();
-
-    expect(find.text('画像决策'), findsOneWidget);
-    expect(find.text('全部 2'), findsOneWidget);
-    expect(find.text('已修正 1'), findsOneWidget);
-    expect(find.text('使用用户修正'), findsOneWidget);
-    expect(find.text('散步有时能帮助恢复状态'), findsWidgets);
-    expect(find.textContaining('preference=corrected'), findsOneWidget);
-    await tester.tap(find.text('已修正 1'));
-    await tester.pumpAndSettle();
-    expect(find.text('显示 1/1'), findsOneWidget);
-    expect(find.text('继续观察'), findsNothing);
-
-    await tester.tap(find.widgetWithText(TextButton, '复制审计'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('已复制画像决策审计'), findsOneWidget);
-    expect(copiedText, contains('## Profile Decision Audit'));
-    expect(copiedText, contains('kind=corrected'));
-    expect(copiedText, contains('targetId=self_regulation:散步可能帮助恢复状态'));
-    expect(copiedText, contains('preference=corrected'));
-  });
-
-  testWidgets(
-      'profile page hides developer decision review outside developer mode',
-      (tester) async {
-    SharedPreferences.setMockInitialValues({
-      'settings.developerMode': false,
-    });
-    final date = DateTime(2026, 7, 3);
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-public-mode',
-      entryDate: date,
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '散步可能帮助恢复状态',
-          confidence: 0.62,
-        ),
-      ],
-    ));
-
-    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
-    await tester.pumpAndSettle();
-
-    expect(find.text('画像决策'), findsNothing);
-    expect(find.text('自我调节'), findsOneWidget);
-    expect(find.text('self_regulation'), findsNothing);
-  });
-
-  testWidgets('profile page refreshes when AI queue changes profile data',
-      (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    final date = DateTime(2026, 7, 3);
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-dynamic-existing',
-      entryDate: date,
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '散步可能帮助恢复状态',
-          confidence: 0.62,
-        ),
-      ],
-    ));
-
-    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
-    await tester.pumpAndSettle();
-    expect(find.text('成长画像'), findsOneWidget);
-    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
-
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-dynamic-refresh',
-      entryDate: date.add(const Duration(days: 1)),
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '独处也能帮助恢复状态',
-          confidence: 0.62,
-        ),
-      ],
-    ));
-    AiAnalysisQueueBus.bump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
-    await tester.pumpAndSettle();
-
-    expect(find.text('成长画像'), findsOneWidget);
-    expect(find.text('自我调节'), findsWidgets);
-    expect(find.textContaining('独处也能帮助恢复状态'), findsOneWidget);
-  });
-
-  testWidgets('profile page merges same-field profile candidates',
-      (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    final date = DateTime(2026, 7, 3);
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-merge-first',
-      entryDate: date,
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '散步有助于恢复状态',
-          confidence: 0.62,
-        ),
-      ],
-    ));
-    await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-merge-second',
-      entryDate: date.add(const Duration(days: 1)),
-      generatedAt: date,
-      reflection: '洞察',
-      relatedMemories: const [],
-      emotion: '',
-      keywords: const [],
-      people: const [],
-      stoneTitle: '',
-      stoneDescription: '',
-      memorySummary: '',
-      memoryTags: const [],
-      profileUpdateCandidates: const [
-        ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '独处也能恢复状态',
-          confidence: 0.58,
-        ),
-      ],
-    ));
-
-    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
-    await tester.pumpAndSettle();
-
-    expect(find.text('同字段 2 条'), findsWidgets);
-
-    await tester.tap(find.byTooltip('画像操作').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('合并同类画像'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('合并同类画像'), findsOneWidget);
-    await tester.enterText(
-      find.widgetWithText(TextField, '合并后的画像'),
-      '散步和独处都可能帮助我恢复状态',
-    );
-    await tester.tap(find.widgetWithText(FilledButton, '合并'));
-    await tester.pumpAndSettle();
-
-    final primary = await const AiProfilePreferenceRepository().getPreference(
-      targetType: AiProfilePreferenceTargetType.profileFact,
-      targetId: 'self_regulation:散步有助于恢复状态',
-    );
-    final hidden = await const AiProfilePreferenceRepository().getPreference(
-      targetType: AiProfilePreferenceTargetType.profileFact,
-      targetId: 'self_regulation:独处也能恢复状态',
-    );
-    expect(primary?.correctedValue, '散步和独处都可能帮助我恢复状态');
-    expect(primary?.confirmed, isTrue);
-    expect(hidden?.hidden, isTrue);
-    expect(find.text('已合并同字段画像候选'), findsOneWidget);
-
-    await tester.tap(find.text('撤销'));
-    await tester.pumpAndSettle();
-
-    final restoredPrimary =
-        await const AiProfilePreferenceRepository().getPreference(
-      targetType: AiProfilePreferenceTargetType.profileFact,
-      targetId: 'self_regulation:散步有助于恢复状态',
-    );
-    final restoredHidden =
-        await const AiProfilePreferenceRepository().getPreference(
-      targetType: AiProfilePreferenceTargetType.profileFact,
-      targetId: 'self_regulation:独处也能恢复状态',
-    );
-    expect(restoredPrimary, isNull);
-    expect(restoredHidden, isNull);
-    expect(find.text('同字段 2 条'), findsWidgets);
   });
 
   testWidgets('relationships page shows developer decision review',
@@ -2369,6 +1965,20 @@ void main() {
         ),
       ],
     ));
+    await const MemoryRepository().saveMemory(MemoryEntry(
+      id: 'ai-user-profile',
+      sourceEntryId: 'search-context',
+      date: date,
+      createdAt: date,
+      summary: '用户画像：散步可能帮助恢复状态，和妈妈沟通时需要温和具体的建议。',
+      keywords: const ['散步', '恢复', '妈妈'],
+      emotion: '需要具体建议',
+      people: const ['妈妈'],
+      tags: const ['用户画像', 'AI综合画像'],
+      evidenceEntryIds: const ['search-context'],
+      importance: 0.9,
+      confidence: 0.72,
+    ));
     await const StoneTaskRepository().saveTask(StoneTask(
       id: 'stone:search',
       sourceEntryId: 'search-context',
@@ -2384,8 +1994,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_forward));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
-    expect(find.textContaining('自我调节'), findsOneWidget);
+    expect(find.textContaining('用户画像：散步可能帮助恢复状态'), findsOneWidget);
+    expect(find.textContaining('自我调节'), findsNothing);
     expect(find.text('self_regulation'), findsNothing);
     expect(find.text('妈妈'), findsOneWidget);
     expect(find.text('晚饭后散步 10 分钟'), findsOneWidget);
@@ -2516,7 +2126,7 @@ void main() {
     expect(copiedText, contains('query=散步 焦虑'));
     expect(copiedText, contains('entry_summary:search-entry'));
     expect(copiedText, contains('evidence=current_entry:search-context'));
-    expect(copiedText, contains('晚饭后散步后状态恢复'));
+    expect(copiedText, contains('晚饭后散步 10 分钟'));
     expect(copiedText, contains('interaction=search-context'));
     expect(copiedText, contains('stone:search-debug'));
     expect(copiedText, contains('sourceEntry=search-context'));

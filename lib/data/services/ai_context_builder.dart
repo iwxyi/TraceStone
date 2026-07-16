@@ -16,6 +16,7 @@ import '../repositories/stone_task_repository.dart';
 import '../repositories/calendar_memory_repository.dart';
 import 'profile_projection_service.dart';
 import 'ai_search_service.dart';
+import 'ai_user_profile_service.dart';
 import 'lunar_calendar_service.dart';
 
 class AiContextBuilder {
@@ -29,6 +30,7 @@ class AiContextBuilder {
     AiProfilePreferenceRepository? profilePreferenceRepository,
     ProfileProjectionService? profileProjectionService,
     AiSearchService? searchService,
+    AiUserProfileService? userProfileService,
     LunarCalendarService? lunarCalendarService,
     AiRetrievalTraceRepository? retrievalTraceRepository,
   })  : _diaryRepository = diaryRepository ?? const DiaryRepository(),
@@ -45,6 +47,8 @@ class AiContextBuilder {
         _profileProjectionService =
             profileProjectionService ?? const ProfileProjectionService(),
         _searchService = searchService ?? const AiSearchService(),
+        _userProfileService =
+            userProfileService ?? const AiUserProfileService(),
         _lunarCalendarService =
             lunarCalendarService ?? const LunarCalendarService(),
         _retrievalTraceRepository =
@@ -59,24 +63,25 @@ class AiContextBuilder {
   final AiProfilePreferenceRepository _profilePreferenceRepository;
   final ProfileProjectionService _profileProjectionService;
   final AiSearchService _searchService;
+  final AiUserProfileService _userProfileService;
   final LunarCalendarService _lunarCalendarService;
   final AiRetrievalTraceRepository _retrievalTraceRepository;
 
   static const _todayMemoryLimit = 8;
-  static const _profileFactLimit = 5;
-
   Future<AiContextPackage> buildForTodayInsight(DiaryEntry entry) async {
     final recentEntries = await _recentEntries(entry);
     final recentSummaries = await _recentSummaries(recentEntries);
     final summary = await _summaryRepository.getSummary(entry.id);
     final segments = await _summaryRepository.listSegments(entry.id);
-    final relatedMemories = await _memoryRepository.findRelatedWithReasons(
-      entry: entry,
-      limit: _todayMemoryLimit,
+    final relatedMemories = await _withUserProfileMemory(
+      await _memoryRepository.findRelatedWithReasons(
+        entry: entry,
+        limit: _todayMemoryLimit,
+      ),
     );
     final calendarMatches = await _calendarMatches(entry);
     final projection = await _profileProjection();
-    final profileFacts = _topProfileFacts(projection.profileFacts);
+    const profileFacts = <ProfileFact>[];
     final relationshipProfiles = _relatedRelationshipProfiles(
       projection.relationshipProfiles,
       entry.content,
@@ -99,7 +104,7 @@ class AiContextBuilder {
         _budgetNote(
           'profile',
           profileFacts.length,
-          _eligibleProfileFacts(projection.profileFacts).length,
+          0,
         ),
         _budgetNote(
           'relationships',
@@ -169,8 +174,9 @@ class AiContextBuilder {
       temperature: null,
       updatedAt: now,
     );
-    final relatedMemories =
-        await _memoryRepository.findRelatedWithReasons(entry: entry, limit: 12);
+    final relatedMemories = await _withUserProfileMemory(
+      await _memoryRepository.findRelatedWithReasons(entry: entry, limit: 12),
+    );
     final searchMatches = await _searchService.search(query);
     final searchMemoryIds = searchMatches
         .where((match) => match.sourceType == 'memory')
@@ -180,8 +186,7 @@ class AiContextBuilder {
         .where((result) => !searchMemoryIds.contains(result.memory.id))
         .toList(growable: false);
     final projection = await _profileProjection();
-    final profileFacts =
-        _topProfileFacts(_matchingProfileFacts(projection.profileFacts, query));
+    const profileFacts = <ProfileFact>[];
     final relationshipProfiles = _relatedRelationshipProfiles(
       projection.relationshipProfiles,
       query,
@@ -209,7 +214,7 @@ class AiContextBuilder {
         _budgetNote(
           'profile',
           profileFacts.length,
-          _matchingProfileFacts(projection.profileFacts, query).length,
+          0,
         ),
         _budgetNote(
           'relationships',
@@ -285,14 +290,16 @@ class AiContextBuilder {
       temperature: null,
       updatedAt: DateTime.now(),
     );
-    final relatedMemories = queryText.trim().isEmpty
-        ? <MemoryRetrievalResult>[]
-        : await _memoryRepository.findRelatedWithReasons(
-            entry: queryEntry,
-            limit: 12,
-          );
+    final relatedMemories = await _withUserProfileMemory(
+      queryText.trim().isEmpty
+          ? <MemoryRetrievalResult>[]
+          : await _memoryRepository.findRelatedWithReasons(
+              entry: queryEntry,
+              limit: 12,
+            ),
+    );
     final projection = await _profileProjection();
-    final profileFacts = _topProfileFacts(projection.profileFacts);
+    const profileFacts = <ProfileFact>[];
     final relationshipProfiles =
         projection.relationshipProfiles.take(5).toList(growable: false);
     final stoneTasks = await _activeStoneTasks(limit: 8);
@@ -315,7 +322,7 @@ class AiContextBuilder {
         _budgetNote(
           'profile',
           profileFacts.length,
-          _eligibleProfileFacts(projection.profileFacts).length,
+          0,
         ),
         _budgetNote(
           'relationships',
@@ -369,29 +376,24 @@ class AiContextBuilder {
     );
   }
 
-  List<ProfileFact> _topProfileFacts(List<ProfileFact> facts) {
-    return _eligibleProfileFacts(facts).take(_profileFactLimit).toList(
-          growable: false,
-        );
-  }
-
-  List<ProfileFact> _eligibleProfileFacts(List<ProfileFact> facts) {
-    return facts
-        .where((fact) =>
-            fact.status != ProfileFactStatus.weak || fact.userConfirmed)
+  Future<List<MemoryRetrievalResult>> _withUserProfileMemory(
+    List<MemoryRetrievalResult> memories,
+  ) async {
+    final profile = await _userProfileService.currentProfile();
+    if (profile == null) return memories;
+    final withoutProfile = memories
+        .where((item) => item.memory.id != profile.id)
         .toList(growable: false);
-  }
-
-  List<ProfileFact> _matchingProfileFacts(
-    List<ProfileFact> facts,
-    String query,
-  ) {
-    final queryTokens = _tokens(query);
-    if (queryTokens.isEmpty) return facts;
-    return facts.where((fact) {
-      final textTokens = _tokens('${fact.field} ${fact.value}');
-      return queryTokens.any(textTokens.contains);
-    }).toList(growable: false);
+    return [
+      MemoryRetrievalResult(
+        memory: profile,
+        score: 999,
+        reasons: const ['长期用户画像'],
+        matchedTokens: const [],
+        rerankSignals: const {'profile': 1},
+      ),
+      ...withoutProfile,
+    ];
   }
 
   List<RelationshipProfile> _relatedRelationshipProfiles(

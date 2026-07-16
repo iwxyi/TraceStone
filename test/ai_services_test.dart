@@ -635,9 +635,9 @@ void main() {
       expect(client.lastUserPrompt, contains('signals:'));
       expect(client.lastUserPrompt, contains('stone:stone-walk-source'));
       expect(client.lastUserPrompt, contains('sourceEntry:stone-entry-source'));
-      expect(client.lastUserPrompt, contains('profile:p1'));
+      expect(client.lastUserPrompt, contains('长期用户画像：'));
+      expect(client.lastUserPrompt, isNot(contains('profile:p1')));
       expect(client.lastUserPrompt, contains('relationship:r1'));
-      expect(client.lastUserPrompt, contains('晚饭后散步更容易帮助我卸下压力'));
       expect(client.lastUserPrompt, contains('妈妈｜家人'));
       expect(client.lastUserPrompt, isNot(contains('散步后压力下降')));
       expect(client.lastUserPrompt, isNot(contains('private_pattern')));
@@ -4516,12 +4516,12 @@ void main() {
           containsAll(['zhou-follow-up', 'xiaohong-follow-up']));
     });
 
-    test('question prompt respects hidden and corrected profile preferences',
+    test(
+        'question prompt uses AI user profile memory and relationship preferences',
         () async {
       SharedPreferences.setMockInitialValues({});
       const insightRepository = InsightRepository();
       const preferenceRepository = AiProfilePreferenceRepository();
-      const projectionService = ProfileProjectionService();
       final date = DateTime(2026, 7, 3);
       final visibleInsight = _insight(
         entryId: 'companion-visible-profile',
@@ -4557,23 +4557,20 @@ void main() {
       );
       await insightRepository.saveInsight(visibleInsight);
       await insightRepository.saveInsight(hiddenInsight);
-      final projection =
-          projectionService.build([visibleInsight, hiddenInsight]);
-      final visibleFact = projection.profileFacts
-          .firstWhere((fact) => fact.field == 'self_regulation');
-      final hiddenFact = projection.profileFacts
-          .firstWhere((fact) => fact.field == 'private_pattern');
-
-      await preferenceRepository.setCorrectedValue(
-        targetType: AiProfilePreferenceTargetType.profileFact,
-        targetId: visibleFact.id,
-        correctedValue: '晚饭后散步更容易帮助我卸下压力',
-      );
-      await preferenceRepository.setHidden(
-        targetType: AiProfilePreferenceTargetType.profileFact,
-        targetId: hiddenFact.id,
-        hidden: true,
-      );
+      await const MemoryRepository().saveMemory(MemoryEntry(
+        id: 'ai-user-profile',
+        sourceEntryId: 'companion-visible-profile',
+        date: date,
+        createdAt: date,
+        summary: '用户画像：晚饭后散步更容易帮助用户卸下压力；和妈妈沟通时适合给出温和具体的建议。',
+        keywords: ['散步', '压力', '妈妈'],
+        emotion: '需要具体建议',
+        people: ['妈妈'],
+        tags: const ['用户画像', 'AI综合画像'],
+        evidenceEntryIds: ['companion-visible-profile'],
+        importance: 0.9,
+        confidence: 0.74,
+      ));
       await preferenceRepository.setHidden(
         targetType: AiProfilePreferenceTargetType.relationship,
         targetId: '小王',
@@ -4594,8 +4591,8 @@ void main() {
       await CompanionAnswerService(client: client).answer('散步 压力 妈妈 协作摩擦');
       final prompt = client.lastUserPrompt ?? '';
 
-      expect(prompt, contains('晚饭后散步更容易帮助我卸下压力'));
-      expect(prompt, contains('source_id=profile:p1'));
+      expect(prompt, contains('晚饭后散步更容易帮助用户卸下压力'));
+      expect(prompt, contains('source_id=memory:ai-user-profile'));
       expect(prompt, contains('source_id=relationship:r1'));
       expect(prompt, contains('妈妈｜家人'));
       expect(prompt, isNot(contains('散步后压力下降')));
@@ -5499,8 +5496,7 @@ void main() {
       );
     });
 
-    test('returns profile and relationship matches with traceable signals',
-        () async {
+    test('returns relationship matches with traceable signals', () async {
       SharedPreferences.setMockInitialValues({});
       const insightRepository = InsightRepository();
       await insightRepository.saveInsight(_insight(
@@ -5540,27 +5536,23 @@ void main() {
       ));
 
       final matches = await const AiSearchService().search('妈妈 散步 恢复');
-      final profile =
-          matches.firstWhere((match) => match.sourceType == 'profile');
       final relationship =
           matches.firstWhere((match) => match.sourceType == 'relationship');
-      final profileEmbedding = await const AiEmbeddingRepository().getBySource(
-        sourceType: AiEmbeddingSourceType.profile,
-        sourceId: profile.sourceId,
-      );
       final relationshipEmbedding =
           await const AiEmbeddingRepository().getBySource(
         sourceType: AiEmbeddingSourceType.relationship,
         sourceId: relationship.sourceId,
       );
 
-      expect(profile.sourceId, contains('self_regulation'));
-      expect(profile.entryId, 'profile-search-source');
-      expect(profile.reasons.join(' '), contains('画像匹配'));
-      expect(profile.rerankSignals['confidence'], 0.64);
-      expect(profile.rerankSignals['evidence'], 1);
-      expect(profileEmbedding?.sourceType, AiEmbeddingSourceType.profile);
-      expect(profileEmbedding?.entryId, 'profile-search-source');
+      expect(
+          matches.map((match) => match.sourceType), isNot(contains('profile')));
+      expect(
+        await const AiEmbeddingRepository().getBySource(
+          sourceType: AiEmbeddingSourceType.profile,
+          sourceId: 'self_regulation:散步可能帮助恢复状态',
+        ),
+        isNull,
+      );
       expect(relationship.sourceId, '妈妈');
       expect(relationship.entryId, 'relationship-search-source');
       expect(relationship.reasons.join(' '), contains('关系匹配'));
@@ -5571,29 +5563,10 @@ void main() {
       expect(relationshipEmbedding?.entryId, 'relationship-search-source');
     });
 
-    test('respects profile and relationship preferences in search', () async {
+    test('respects relationship preferences in search', () async {
       SharedPreferences.setMockInitialValues({});
       const insightRepository = InsightRepository();
-      const preferenceRepository = AiProfilePreferenceRepository();
       const embeddingRepository = AiEmbeddingRepository();
-      await insightRepository.saveInsight(_insight(
-        entryId: 'profile-preference-visible',
-        date: DateTime(2026, 7, 1),
-        profileCandidate: const ProfileUpdateCandidate(
-          field: 'self_regulation',
-          value: '散步可能帮助恢复状态',
-          confidence: 0.64,
-        ),
-      ));
-      await insightRepository.saveInsight(_insight(
-        entryId: 'profile-preference-hidden',
-        date: DateTime(2026, 7, 2),
-        profileCandidate: const ProfileUpdateCandidate(
-          field: 'preference',
-          value: '可能喜欢夜间写作',
-          confidence: 0.65,
-        ),
-      ));
       await insightRepository.saveInsight(_insight(
         entryId: 'relationship-preference-hidden',
         date: DateTime(2026, 7, 3),
@@ -5604,21 +5577,7 @@ void main() {
           confidence: 0.66,
         ),
       ));
-      final projection = const ProfileProjectionService().build(
-        await insightRepository.listInsights(),
-      );
-      final visibleFact = projection.profileFacts
-          .firstWhere((fact) => fact.field == 'self_regulation');
-      final hiddenFact = projection.profileFacts
-          .firstWhere((fact) => fact.field == 'preference');
       await const AiSearchService().search('夜间 小林');
-      expect(
-        await embeddingRepository.getBySource(
-          sourceType: AiEmbeddingSourceType.profile,
-          sourceId: hiddenFact.id,
-        ),
-        isNotNull,
-      );
       expect(
         await embeddingRepository.getBySource(
           sourceType: AiEmbeddingSourceType.relationship,
@@ -5626,17 +5585,7 @@ void main() {
         ),
         isNotNull,
       );
-      await preferenceRepository.setCorrectedValue(
-        targetType: AiProfilePreferenceTargetType.profileFact,
-        targetId: visibleFact.id,
-        correctedValue: '晚饭后散步最能帮助恢复状态',
-      );
-      await preferenceRepository.setHidden(
-        targetType: AiProfilePreferenceTargetType.profileFact,
-        targetId: hiddenFact.id,
-        hidden: true,
-      );
-      await preferenceRepository.setHidden(
+      await const AiProfilePreferenceRepository().setHidden(
         targetType: AiProfilePreferenceTargetType.relationship,
         targetId: '小林',
         hidden: true,
@@ -5644,21 +5593,7 @@ void main() {
 
       final matches = await const AiSearchService().search('散步 夜间 小林');
 
-      final profile =
-          matches.firstWhere((match) => match.sourceType == 'profile');
-      expect(profile.sourceId, visibleFact.id);
-      expect(profile.summary, '晚饭后散步最能帮助恢复状态');
-      expect(profile.rerankSignals['userConfirmed'], 1);
-      expect(matches.map((match) => match.sourceId),
-          isNot(contains(hiddenFact.id)));
       expect(matches.map((match) => match.sourceId), isNot(contains('小林')));
-      expect(
-        await embeddingRepository.getBySource(
-          sourceType: AiEmbeddingSourceType.profile,
-          sourceId: hiddenFact.id,
-        ),
-        isNull,
-      );
       expect(
         await embeddingRepository.getBySource(
           sourceType: AiEmbeddingSourceType.relationship,
@@ -6733,24 +6668,39 @@ void main() {
         updatedAt: DateTime(2026, 7, 1),
         tags: const ['散步'],
       ));
+      await const MemoryRepository().saveMemory(MemoryEntry(
+        id: 'ai-user-profile',
+        sourceEntryId: 'profile-1',
+        date: DateTime(2026, 7, 3),
+        createdAt: DateTime(2026, 7, 3),
+        summary: '用户画像：散步和晚间节奏对恢复状态有帮助，和妈妈的沟通需要温和处理。',
+        keywords: ['散步', '恢复', '妈妈'],
+        emotion: '需要具体建议',
+        people: ['妈妈'],
+        tags: const ['用户画像', 'AI综合画像'],
+        evidenceEntryIds: ['profile-1', 'relationship-1'],
+        importance: 0.9,
+        confidence: 0.74,
+      ));
 
       final package =
           await const AiContextBuilder().buildForTodayInsight(current);
 
-      expect(package.profileFacts.map((item) => item.field),
-          contains('self_regulation'));
+      expect(package.profileFacts, isEmpty);
+      expect(package.relatedMemories.map((item) => item.memory.id),
+          contains('ai-user-profile'));
       expect(package.relationshipProfiles.map((item) => item.personName),
           contains('妈妈'));
       expect(package.stoneTasks.map((item) => item.title),
           contains('晚饭后散步 10 分钟'));
-      expect(package.debugSummary, contains('profile='));
+      expect(package.debugSummary, contains('memories='));
       expect(package.retrievalTrace?.items.map((item) => item.sourceType),
-          containsAll(['profile', 'relationship', 'stone']));
+          containsAll(['memory', 'relationship', 'stone']));
       expect(
         package.retrievalTrace?.items
-            .firstWhere((item) => item.sourceType == 'profile')
-            .rerankSignals['confidence'],
-        closeTo(0.64, 0.02),
+            .firstWhere((item) => item.sourceId == 'ai-user-profile')
+            .rerankSignals['profile'],
+        1,
       );
       expect(
         package.retrievalTrace?.items
@@ -6946,7 +6896,7 @@ void main() {
       expect(package.debugSummary, contains('budget=memories:8/8'));
     });
 
-    test('today context keeps profile fact budget within design limit',
+    test('today context does not include old profile fact candidates',
         () async {
       SharedPreferences.setMockInitialValues({});
       const insightRepository = InsightRepository();
@@ -6971,9 +6921,9 @@ void main() {
       final package =
           await const AiContextBuilder().buildForTodayInsight(entry);
 
-      expect(package.profileFacts, hasLength(5));
-      expect(package.debugSummary, contains('profile=5'));
-      expect(package.debugSummary, contains('profile:5/7'));
+      expect(package.profileFacts, isEmpty);
+      expect(package.debugSummary, isNot(contains('profile=')));
+      expect(package.debugSummary, contains('profile:0/0'));
     });
 
     test('today context keeps relationship profile budget within design limit',
