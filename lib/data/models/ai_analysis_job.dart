@@ -386,9 +386,17 @@ class AiAnalysisQueueSnapshot {
   }
 
   Duration? get estimatedRemainingDuration {
-    final stages = remainingStageCount;
-    if (stages <= 0) return null;
-    return averageStageDuration * stages;
+    final activeJobs = jobs
+        .where((job) => job.canRun || job.state == AiAnalysisJobState.running)
+        .toList(growable: false);
+    if (activeJobs.isEmpty) return null;
+    var total = Duration.zero;
+    for (final job in activeJobs) {
+      for (final stage in _remainingStagesFor(job)) {
+        total += _estimatedDurationFor(job.type, stage);
+      }
+    }
+    return total;
   }
 
   Duration get averageStageDuration {
@@ -416,24 +424,34 @@ class AiAnalysisQueueSnapshot {
 
   String get averageStageDurationLabel => _durationLabel(averageStageDuration);
 
-  List<AiAnalysisStageCalibration> get stageCalibrations {
+  Duration get _fallbackAverageStageDuration => averageStageDuration;
+
+  Map<AiAnalysisStage, Duration> get _stageAverageDurations {
     final grouped = <AiAnalysisStage, List<Duration>>{};
     for (final sample in _completedStageDurationSamples) {
       grouped.putIfAbsent(sample.stage, () => []).add(sample.duration);
     }
-    final result = grouped.entries.map((entry) {
-      final totalMs = entry.value
-          .map((duration) => duration.inMilliseconds)
-          .reduce((a, b) => a + b);
+    return {
+      for (final entry in grouped.entries)
+        entry.key: Duration(
+          milliseconds: (entry.value
+                      .map((duration) => duration.inMilliseconds)
+                      .reduce((a, b) => a + b) /
+                  entry.value.length)
+              .round(),
+        ),
+    };
+  }
+
+  List<AiAnalysisStageCalibration> get stageCalibrations {
+    final result = _stageAverageDurations.entries.map((entry) {
       return AiAnalysisStageCalibration(
         stage: entry.key,
-        sampleCount: entry.value.length,
-        averageDuration: Duration(
-          milliseconds: (totalMs / entry.value.length).round(),
-        ),
-        durationLabel: _durationLabel(Duration(
-          milliseconds: (totalMs / entry.value.length).round(),
-        )),
+        sampleCount: _completedStageDurationSamples
+            .where((sample) => sample.stage == entry.key)
+            .length,
+        averageDuration: entry.value,
+        durationLabel: _durationLabel(entry.value),
       );
     }).toList()
       ..sort((a, b) {
@@ -551,6 +569,88 @@ class AiAnalysisQueueSnapshot {
 
   bool _isValidCalibrationDuration(Duration duration) =>
       duration.inMilliseconds > 0 && duration < const Duration(days: 1);
+
+  List<AiAnalysisStage> _remainingStagesFor(AiAnalysisJob job) {
+    final expectedStages = _expectedStagesFor(job.type).toList(growable: false);
+    final completed = job.completedStages.toSet();
+    final remaining = expectedStages
+        .where((stage) => !completed.contains(stage))
+        .toList(growable: false);
+    if (remaining.isNotEmpty) return remaining;
+    if (job.currentStage != AiAnalysisStage.queued &&
+        job.currentStage != AiAnalysisStage.completed &&
+        expectedStages.contains(job.currentStage)) {
+      return [job.currentStage];
+    }
+    return [expectedStages.last];
+  }
+
+  Duration _estimatedDurationFor(
+    AiAnalysisJobType type,
+    AiAnalysisStage stage,
+  ) {
+    final calibrated = _stageAverageDurations[stage];
+    final base = calibrated ?? _fallbackAverageStageDuration;
+    final minimum = _minimumStageDuration(type, stage);
+    return base < minimum ? minimum : base;
+  }
+
+  Duration _minimumStageDuration(
+    AiAnalysisJobType type,
+    AiAnalysisStage stage,
+  ) {
+    switch (type) {
+      case AiAnalysisJobType.diary:
+        switch (stage) {
+          case AiAnalysisStage.generatingInsight:
+            return const Duration(seconds: 35);
+          case AiAnalysisStage.embedding:
+            return const Duration(seconds: 12);
+          case AiAnalysisStage.generatingSummary:
+          case AiAnalysisStage.retrieving:
+          case AiAnalysisStage.updatingMemory:
+            return const Duration(seconds: 8);
+          case AiAnalysisStage.segmenting:
+          case AiAnalysisStage.preparing:
+            return const Duration(seconds: 2);
+          case AiAnalysisStage.queued:
+          case AiAnalysisStage.completed:
+            return Duration.zero;
+        }
+      case AiAnalysisJobType.embeddingRebuild:
+        switch (stage) {
+          case AiAnalysisStage.embedding:
+            return const Duration(seconds: 12);
+          case AiAnalysisStage.generatingSummary:
+            return const Duration(seconds: 5);
+          case AiAnalysisStage.preparing:
+            return const Duration(seconds: 2);
+          case AiAnalysisStage.queued:
+          case AiAnalysisStage.segmenting:
+          case AiAnalysisStage.retrieving:
+          case AiAnalysisStage.generatingInsight:
+          case AiAnalysisStage.updatingMemory:
+          case AiAnalysisStage.completed:
+            return const Duration(seconds: 2);
+        }
+      case AiAnalysisJobType.monthSummary:
+      case AiAnalysisJobType.yearSummary:
+        switch (stage) {
+          case AiAnalysisStage.generatingSummary:
+            return const Duration(seconds: 45);
+          case AiAnalysisStage.preparing:
+            return const Duration(seconds: 5);
+          case AiAnalysisStage.queued:
+          case AiAnalysisStage.segmenting:
+          case AiAnalysisStage.embedding:
+          case AiAnalysisStage.retrieving:
+          case AiAnalysisStage.generatingInsight:
+          case AiAnalysisStage.updatingMemory:
+          case AiAnalysisStage.completed:
+            return const Duration(seconds: 5);
+        }
+    }
+  }
 
   static Set<AiAnalysisStage> _expectedStagesFor(AiAnalysisJobType type) {
     switch (type) {

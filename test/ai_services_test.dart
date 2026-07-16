@@ -2240,7 +2240,7 @@ void main() {
       expect(snapshot.totalTrackedCount, 4);
       expect(snapshot.activeOrdinal, 1);
       expect(snapshot.remainingStageCount, 21);
-      expect(snapshot.estimatedRemainingLabel, '约 2 分钟');
+      expect(snapshot.estimatedRemainingLabel, '约 4 分钟');
       expect(snapshot.estimateSampleCount, 0);
       expect(snapshot.averageStageDurationLabel, '约 8 秒');
       expect(snapshot.batches, hasLength(1));
@@ -2342,7 +2342,7 @@ void main() {
       expect(snapshot.remainingStageCount, 7);
       expect(snapshot.estimateSampleCount, 3);
       expect(snapshot.averageStageDurationLabel, '约 2 秒');
-      expect(snapshot.estimatedRemainingLabel, '约 14 秒');
+      expect(snapshot.estimatedRemainingLabel, '约 1 分钟');
       expect(snapshot.stageCalibrations, hasLength(3));
       expect(
         snapshot.stageCalibrations.map((item) => item.stage),
@@ -2423,7 +2423,7 @@ void main() {
 
       expect(snapshot.remainingStageCount, 13);
       expect(snapshot.averageStageDurationLabel, '约 10 秒');
-      expect(snapshot.estimatedRemainingLabel, '约 2 分钟');
+      expect(snapshot.estimatedRemainingLabel, '约 3 分钟');
     });
 
     test('paused queue keeps jobs visible but does not return runnable work',
