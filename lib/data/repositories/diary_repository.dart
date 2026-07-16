@@ -63,8 +63,18 @@ class DiaryRepository {
   Future<List<DiaryEntry>> listEntries() async {
     final prefs = await SharedPreferences.getInstance();
     final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    final storedIds = prefs
+        .getKeys()
+        .where((key) =>
+            key.startsWith(_entryPrefix) && !key.startsWith(_recoveryPrefix))
+        .map((key) => key.substring(_entryPrefix.length));
+    final reconciledIndex = {...index, ...storedIds}.toList();
+    if (reconciledIndex.length != index.length) {
+      await prefs.setStringList(_indexKey, reconciledIndex);
+    }
+
     final entries = <DiaryEntry>[];
-    for (final id in index) {
+    for (final id in reconciledIndex) {
       final raw = _safeGetString(prefs, '$_entryPrefix$id');
       if (raw == null) continue;
       entries.add(DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>));

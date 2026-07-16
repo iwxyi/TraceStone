@@ -176,6 +176,15 @@ class _ReviewPageState extends State<ReviewPage> {
       body: FutureBuilder<List<DiaryEntry>>(
         future: _entriesFuture,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: FilledButton.icon(
+                onPressed: _refreshEntries,
+                icon: const Icon(Icons.refresh),
+                label: const Text('加载日记失败，点击重试'),
+              ),
+            );
+          }
           final entries = snapshot.data ?? [];
           if (snapshot.connectionState == ConnectionState.waiting) {
             return _ReviewLoadingPlaceholder(selectedIndex: _selectedIndex);

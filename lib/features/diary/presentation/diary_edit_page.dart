@@ -62,6 +62,8 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   String? _analysisSourceSignature;
   Future<_ReadInsightData>? _insightFuture;
   Timer? _insightPollTimer;
+  Timer? _autoSaveTimer;
+  Future<void> _autoSaveTail = Future.value();
 
   String _entryId = const Uuid().v4();
   DateTime _createdAt = DateTime.now();
@@ -105,6 +107,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   @override
   void dispose() {
     _insightPollTimer?.cancel();
+    unawaited(_flushAutoSave());
     _controller.removeListener(_onTextChanged);
     _focusNode.dispose();
     _controller.dispose();
@@ -297,10 +300,24 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _redoStack.clear();
     }
     if (_autoSave) {
-      _saveEntry();
+      _scheduleAutoSave();
     } else if (mounted) {
       setState(() => _hasUnsavedChanges = true);
     }
+  }
+
+  void _scheduleAutoSave() {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = Timer(const Duration(milliseconds: 750), () {
+      _autoSaveTail = _autoSaveTail.then((_) => _saveEntry());
+    });
+  }
+
+  Future<void> _flushAutoSave() async {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = null;
+    _autoSaveTail = _autoSaveTail.then((_) => _saveEntry());
+    await _autoSaveTail;
   }
 
   void _restoreText(String value) {
@@ -1035,18 +1052,9 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
 
     setState(() {
       _selectedDate = date;
-      _entryId = const Uuid().v4();
-      _createdAt = DateTime.now();
-      _controller.clear();
-      _selectedLocation = '定位中';
-      _weather = '';
-      _temperature = null;
-      _locationDetails = const {};
-      _hasManualLocation = false;
-      _hasManualWeather = false;
-      _hasUnsavedChanges = false;
+      _hasUnsavedChanges = true;
     });
-    await _loadCurrentLocationWeather();
+    if (_autoSave) _scheduleAutoSave();
   }
 
   Future<void> _openWeatherMenu() async {
@@ -2470,10 +2478,19 @@ class _PreviewLine extends StatelessWidget {
         ),
       );
     }
-    if (line.startsWith('![')) {
+    final imageMatch = RegExp(r'^!\[[^\]]*\]\(([^)]+)\)$').firstMatch(line);
+    if (imageMatch != null) {
+      final path = imageMatch.group(1)!;
       return Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: Text(line, style: Theme.of(context).textTheme.bodySmall),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: kIsWeb
+              ? Image.network(path,
+                  errorBuilder: (_, __, ___) => const Text('图片无法加载'))
+              : Image.file(File(path),
+                  errorBuilder: (_, __, ___) => const Text('图片无法加载')),
+        ),
       );
     }
     return Padding(
