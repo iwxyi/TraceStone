@@ -1,12 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/routing/app_route_observer.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../data/models/ai_profile.dart';
 import '../../../data/models/ai_profile_preference.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
+import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/ai_profile_decision_service.dart';
 import '../../../data/services/profile_projection_service.dart';
@@ -19,13 +24,60 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _ProfilePageState extends State<ProfilePage> {
+class _ProfilePageState extends State<ProfilePage> with RouteAware {
   final _repository = const InsightRepository();
   final _developerSettings = const DeveloperSettingsRepository();
   final _profilePreferences = const AiProfilePreferenceRepository();
   final _projectionService = const ProfileProjectionService();
   final _decisionService = const AiProfileDecisionService();
   late Future<_ProfilePageData> _dataFuture = _loadData();
+  Timer? _refreshDebounce;
+  bool _routeSubscribed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AiAnalysisQueueBus.version.addListener(_scheduleDynamicRefresh);
+    DiaryChangeBus.version.addListener(_scheduleDynamicRefresh);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_routeSubscribed) return;
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+      _routeSubscribed = true;
+    }
+  }
+
+  @override
+  void dispose() {
+    _refreshDebounce?.cancel();
+    AiAnalysisQueueBus.version.removeListener(_scheduleDynamicRefresh);
+    DiaryChangeBus.version.removeListener(_scheduleDynamicRefresh);
+    if (_routeSubscribed) appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    _refreshNow();
+  }
+
+  void _scheduleDynamicRefresh() {
+    if (!mounted) return;
+    _refreshDebounce?.cancel();
+    _refreshDebounce = Timer(const Duration(milliseconds: 350), _refreshNow);
+  }
+
+  void _refreshNow() {
+    if (!mounted) return;
+    setState(() {
+      _dataFuture = _loadData();
+    });
+  }
 
   Future<_ProfilePageData> _loadData() async {
     final insights = await _repository.listInsights();
@@ -220,9 +272,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _refresh() async {
-    setState(() {
-      _dataFuture = _loadData();
-    });
+    _refreshNow();
     await _dataFuture;
   }
 
@@ -234,10 +284,8 @@ class _ProfilePageState extends State<ProfilePage> {
         actions: [
           IconButton(
             tooltip: '设置',
-            onPressed: () async {
-              await Navigator.of(context).pushNamed(AppRoutes.settings);
-              if (mounted) await _refresh();
-            },
+            onPressed: () =>
+                Navigator.of(context).pushNamed(AppRoutes.settings),
             icon: const Icon(Icons.settings_outlined),
           ),
         ],

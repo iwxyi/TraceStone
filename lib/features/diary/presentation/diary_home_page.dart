@@ -41,7 +41,6 @@ class _DiaryHomePageState extends State<DiaryHomePage> {
         onDestinationSelected: (index) => setState(() {
           _currentIndex = index;
           if (index == 0 || index == 1) _refreshToken++;
-          if (index == 3) _refreshToken++;
         }),
         destinations: const [
           NavigationDestination(

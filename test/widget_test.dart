@@ -20,6 +20,7 @@ import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/period_summary.dart';
 import 'package:trace_stone/data/models/stone_task.dart';
+import 'package:trace_stone/data/repositories/ai_analysis_queue_bus.dart';
 import 'package:trace_stone/data/repositories/ai_analysis_queue_repository.dart';
 import 'package:trace_stone/data/repositories/ai_embedding_repository.dart';
 import 'package:trace_stone/data/repositories/ai_feedback_repository.dart';
@@ -1197,6 +1198,46 @@ void main() {
     expect(find.text('画像决策'), findsNothing);
     expect(find.text('自我调节'), findsOneWidget);
     expect(find.text('self_regulation'), findsNothing);
+  });
+
+  testWidgets('profile page refreshes when AI queue changes profile data',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
+    await tester.pumpAndSettle();
+    expect(find.text('个人成长概要'), findsOneWidget);
+    expect(find.text('自我调节'), findsNothing);
+
+    final date = DateTime(2026, 7, 3);
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-dynamic-refresh',
+      entryDate: date,
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '散步可能帮助恢复状态',
+          confidence: 0.62,
+        ),
+      ],
+    ));
+    AiAnalysisQueueBus.bump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('成长画像'), findsOneWidget);
+    expect(find.text('自我调节'), findsOneWidget);
+    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
   });
 
   testWidgets('profile page merges same-field profile candidates',

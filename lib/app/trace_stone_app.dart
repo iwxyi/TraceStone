@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/routing/app_route_observer.dart';
 import '../core/routing/app_routes.dart';
 import '../data/services/app_startup_service.dart';
 import 'theme_controller.dart';
@@ -51,6 +52,7 @@ class _TraceStoneAppState extends State<TraceStoneApp>
           themeMode: themeController.themeMode,
           routes: AppRoutes.routes,
           onGenerateRoute: AppRoutes.onGenerateRoute,
+          navigatorObservers: [appRouteObserver],
           initialRoute: AppRoutes.home,
         );
       },
