@@ -160,6 +160,8 @@ class AppTheme {
         selectedColor: primary.withValues(alpha: dark ? 0.28 : 0.16),
         labelStyle: TextStyle(color: text),
         side: BorderSide(color: border),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       extensions: [

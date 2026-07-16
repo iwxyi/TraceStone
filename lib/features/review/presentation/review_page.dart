@@ -1871,6 +1871,7 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
   late Future<_PeriodSummaryCardData> _future;
   bool _isRegenerating = false;
   bool _autoQueued = false;
+  bool _collapsed = false;
 
   @override
   void initState() {
@@ -2020,6 +2021,7 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                   IconButton(
                     tooltip: '重新生成$title',
                     onPressed: _isRegenerating ? null : _regenerate,
+                    style: _quietIconButtonStyle(context),
                     icon: const Icon(Icons.refresh_outlined),
                   ),
                 ],
@@ -2061,6 +2063,7 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                         const SizedBox(width: 4),
                         IconButton(
                           tooltip: '重新生成$title',
+                          style: _quietIconButtonStyle(context),
                           icon: _isRegenerating
                               ? const SizedBox(
                                   width: 18,
@@ -2071,94 +2074,111 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                               : const Icon(Icons.refresh_outlined),
                           onPressed: _isRegenerating ? null : _regenerate,
                         ),
+                        IconButton(
+                          tooltip: _collapsed ? '展开$title' : '折叠$title',
+                          style: _quietIconButtonStyle(context),
+                          icon: AnimatedRotation(
+                            turns: _collapsed ? -0.25 : 0.25,
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeOutCubic,
+                            child: const Icon(Icons.chevron_right),
+                          ),
+                          onPressed: () =>
+                              setState(() => _collapsed = !_collapsed),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    Text(summary.brief),
-                    if (updateMessage.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        updateMessage,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
-                      ),
-                    ],
-                    if (summary.themes.isNotEmpty ||
-                        summary.emotions.isNotEmpty) ...[
+                    if (!_collapsed) ...[
                       const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final theme in summary.themes.take(6))
-                            Chip(label: Text(theme)),
-                          for (final emotion in summary.emotions.take(3))
-                            Chip(
-                              avatar: const Icon(Icons.mood_outlined, size: 16),
-                              label: Text(emotion),
-                            ),
-                        ],
-                      ),
-                    ],
-                    if (summary.relationshipHighlights.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text('关系变化',
-                          style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 6),
-                      for (final line in summary.relationshipHighlights.take(3))
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(line),
+                      Text(summary.brief),
+                      if (updateMessage.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          updateMessage,
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                         ),
-                    ],
-                    if (summary.growthHighlights.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text('成长线索',
-                          style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 6),
-                      for (final line in summary.growthHighlights.take(4))
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(line),
+                      ],
+                      if (summary.themes.isNotEmpty ||
+                          summary.emotions.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final theme in summary.themes.take(6))
+                              Chip(label: Text(theme)),
+                            for (final emotion in summary.emotions.take(3))
+                              Chip(
+                                avatar:
+                                    const Icon(Icons.mood_outlined, size: 16),
+                                label: Text(emotion),
+                              ),
+                          ],
                         ),
-                    ],
-                    if (summary.notableChanges.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text('值得注意的变化',
-                          style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 6),
-                      for (final line in summary.notableChanges.take(4))
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(line),
-                        ),
-                    ],
-                    if (summary.stoneHighlights.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text('成长线索',
-                          style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 6),
-                      for (final line in summary.stoneHighlights.take(4))
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(line),
-                        ),
-                    ],
-                    if (summary.outlook.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text('接下来',
-                          style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 6),
-                      Text(summary.outlook),
-                    ],
-                    if (developerMode &&
-                        (summary.contextDebugSummary.isNotEmpty ||
-                            summary.contextSourceLines.isNotEmpty)) ...[
-                      const SizedBox(height: 12),
-                      _PeriodSummaryDebugSources(summary: summary),
+                      ],
+                      if (summary.relationshipHighlights.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text('关系变化',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 6),
+                        for (final line
+                            in summary.relationshipHighlights.take(3))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(line),
+                          ),
+                      ],
+                      if (summary.growthHighlights.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text('成长线索',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 6),
+                        for (final line in summary.growthHighlights.take(4))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(line),
+                          ),
+                      ],
+                      if (summary.notableChanges.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text('值得注意的变化',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 6),
+                        for (final line in summary.notableChanges.take(4))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(line),
+                          ),
+                      ],
+                      if (summary.stoneHighlights.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text('成长线索',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 6),
+                        for (final line in summary.stoneHighlights.take(4))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(line),
+                          ),
+                      ],
+                      if (summary.outlook.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text('接下来',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 6),
+                        Text(summary.outlook),
+                      ],
+                      if (developerMode &&
+                          (summary.contextDebugSummary.isNotEmpty ||
+                              summary.contextSourceLines.isNotEmpty)) ...[
+                        const SizedBox(height: 12),
+                        _PeriodSummaryDebugSources(summary: summary),
+                      ],
                     ],
                   ],
                 ),
@@ -2176,6 +2196,18 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
       return '日记变化较多，正在排队更新这个总结。';
     }
     return '有 ${status.changedEntryIds.length} 篇日记变化，约占 $percent%，暂不自动更新。';
+  }
+
+  ButtonStyle _quietIconButtonStyle(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    return IconButton.styleFrom(
+      foregroundColor: color.withValues(alpha: 0.72),
+      disabledForegroundColor: color.withValues(alpha: 0.32),
+      backgroundColor: Colors.transparent,
+      hoverColor: color.withValues(alpha: 0.08),
+      focusColor: color.withValues(alpha: 0.08),
+      highlightColor: color.withValues(alpha: 0.08),
+    );
   }
 }
 
