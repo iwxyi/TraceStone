@@ -11,6 +11,7 @@ import '../repositories/entry_summary_repository.dart';
 import '../repositories/insight_repository.dart';
 import '../repositories/memory_repository.dart';
 import '../repositories/stone_task_repository.dart';
+import '../utils/profile_display_formatter.dart';
 import 'embedding_service.dart';
 import 'profile_projection_service.dart';
 
@@ -402,7 +403,7 @@ class AiSearchService {
       sourceType: 'profile',
       sourceId: fact.id,
       entryId: _firstEvidenceEntryId(fact.evidence),
-      title: fact.field,
+      title: fact.value,
       summary: fact.value,
       score: score,
       reasons: [
@@ -594,11 +595,11 @@ class AiSearchService {
       sourceType: 'profile',
       sourceId: fact.id,
       entryId: _firstEvidenceEntryId(fact.evidence),
-      title: fact.field,
+      title: fact.value,
       summary: fact.value,
       importance: fact.confidence,
       date: fact.lastSeenAt,
-      topics: [fact.field, fact.status.name],
+      topics: [profileFieldLabel(fact.field), fact.field, fact.status.name],
       confidence: fact.confidence,
       referenceCount: fact.evidenceCount,
       text: _profileFactText(fact),

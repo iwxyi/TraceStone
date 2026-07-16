@@ -1203,15 +1203,9 @@ void main() {
   testWidgets('profile page refreshes when AI queue changes profile data',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
-
-    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
-    await tester.pumpAndSettle();
-    expect(find.text('个人成长概要'), findsOneWidget);
-    expect(find.text('自我调节'), findsNothing);
-
     final date = DateTime(2026, 7, 3);
     await const InsightRepository().saveInsight(DiaryInsight(
-      entryId: 'profile-dynamic-refresh',
+      entryId: 'profile-dynamic-existing',
       entryDate: date,
       generatedAt: date,
       reflection: '洞察',
@@ -1231,13 +1225,41 @@ void main() {
         ),
       ],
     ));
+
+    await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
+    await tester.pumpAndSettle();
+    expect(find.text('成长画像'), findsOneWidget);
+    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
+
+    await const InsightRepository().saveInsight(DiaryInsight(
+      entryId: 'profile-dynamic-refresh',
+      entryDate: date.add(const Duration(days: 1)),
+      generatedAt: date,
+      reflection: '洞察',
+      relatedMemories: const [],
+      emotion: '',
+      keywords: const [],
+      people: const [],
+      stoneTitle: '',
+      stoneDescription: '',
+      memorySummary: '',
+      memoryTags: const [],
+      profileUpdateCandidates: const [
+        ProfileUpdateCandidate(
+          field: 'self_regulation',
+          value: '独处也能帮助恢复状态',
+          confidence: 0.62,
+        ),
+      ],
+    ));
     AiAnalysisQueueBus.bump();
     await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
     await tester.pumpAndSettle();
 
     expect(find.text('成长画像'), findsOneWidget);
-    expect(find.text('自我调节'), findsOneWidget);
-    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
+    expect(find.text('自我调节'), findsWidgets);
+    expect(find.textContaining('独处也能帮助恢复状态'), findsOneWidget);
   });
 
   testWidgets('profile page merges same-field profile candidates',
@@ -2360,7 +2382,9 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_forward));
     await tester.pumpAndSettle();
 
-    expect(find.text('self_regulation'), findsOneWidget);
+    expect(find.textContaining('散步可能帮助恢复状态'), findsOneWidget);
+    expect(find.textContaining('自我调节'), findsOneWidget);
+    expect(find.text('self_regulation'), findsNothing);
     expect(find.text('妈妈'), findsOneWidget);
     expect(find.text('晚饭后散步 10 分钟'), findsOneWidget);
 
@@ -2369,6 +2393,7 @@ void main() {
 
     expect(find.text('妈妈'), findsOneWidget);
     expect(find.text('self_regulation'), findsNothing);
+    expect(find.textContaining('散步可能帮助恢复状态'), findsNothing);
     expect(find.text('晚饭后散步 10 分钟'), findsNothing);
   });
 

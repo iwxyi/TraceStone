@@ -7,7 +7,6 @@ import '../../../core/routing/app_route_observer.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../data/models/ai_profile.dart';
 import '../../../data/models/ai_profile_preference.dart';
-import '../../../data/models/diary_insight.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
@@ -16,6 +15,7 @@ import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/ai_profile_decision_service.dart';
 import '../../../data/services/profile_projection_service.dart';
 import '../../../data/utils/ai_source_formatter.dart';
+import '../../../data/utils/profile_display_formatter.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -30,15 +30,18 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
   final _profilePreferences = const AiProfilePreferenceRepository();
   final _projectionService = const ProfileProjectionService();
   final _decisionService = const AiProfileDecisionService();
-  late Future<_ProfilePageData> _dataFuture = _loadData();
   Timer? _refreshDebounce;
   bool _routeSubscribed = false;
+  _ProfilePageData _data = const _ProfilePageData();
+  Future<_ProfilePageData>? _loadingFuture;
+  bool _loadingInitial = true;
 
   @override
   void initState() {
     super.initState();
     AiAnalysisQueueBus.version.addListener(_scheduleDynamicRefresh);
     DiaryChangeBus.version.addListener(_scheduleDynamicRefresh);
+    _refreshNow();
   }
 
   @override
@@ -74,8 +77,20 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
 
   void _refreshNow() {
     if (!mounted) return;
-    setState(() {
-      _dataFuture = _loadData();
+    final future = _loadData();
+    _loadingFuture = future;
+    if (_data.isEmpty) {
+      setState(() => _loadingInitial = true);
+    }
+    future.then((data) {
+      if (!mounted || _loadingFuture != future) return;
+      setState(() {
+        _data = data;
+        _loadingInitial = false;
+      });
+    }).catchError((Object _) {
+      if (!mounted || _loadingFuture != future) return;
+      setState(() => _loadingInitial = false);
     });
   }
 
@@ -273,7 +288,7 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
 
   Future<void> _refresh() async {
     _refreshNow();
-    await _dataFuture;
+    await _loadingFuture;
   }
 
   @override
@@ -292,61 +307,92 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<_ProfilePageData>(
-          future: _dataFuture,
-          builder: (context, snapshot) {
-            final data = snapshot.data ?? const _ProfilePageData();
-            final facts = data.facts;
-            return ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                const _ProfileHeader(),
-                const SizedBox(height: 16),
-                const _ProfileAiToolsCard(),
-                const SizedBox(height: 16),
-                if (snapshot.connectionState != ConnectionState.done)
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: CircularProgressIndicator(),
-                    ),
-                  )
-                else if (facts.isEmpty &&
-                    data.conflicts.isEmpty &&
-                    (!data.developerMode || data.decisions.isEmpty))
-                  const _EmptyProfileCandidates()
-                else
-                  Column(
-                    children: [
-                      if (data.conflicts.isNotEmpty) ...[
-                        _ProfileConflictCard(
-                          conflicts: data.conflicts,
-                          developerMode: data.developerMode,
-                          onAdopt: _adoptConflict,
-                          onKeepExisting: _keepExistingForConflict,
-                        ),
-                        if (facts.isNotEmpty) const SizedBox(height: 16),
-                      ],
-                      if (data.developerMode && data.decisions.isNotEmpty) ...[
-                        _ProfileDecisionCard(decisions: data.decisions),
-                        if (facts.isNotEmpty) const SizedBox(height: 16),
-                      ],
-                      if (facts.isNotEmpty)
-                        _ProfileSummary(
-                          facts: facts,
-                          developerMode: data.developerMode,
-                          onConfirmedChanged: _setConfirmed,
-                          onHide: _hideFact,
-                          onCorrect: _correctFact,
-                          onMerge: _mergeFacts,
-                        ),
-                    ],
-                  ),
-              ],
-            );
-          },
+        child: _ProfileContent(
+          data: _data,
+          loadingInitial: _loadingInitial,
+          onAdoptConflict: _adoptConflict,
+          onKeepExistingForConflict: _keepExistingForConflict,
+          onConfirmedChanged: _setConfirmed,
+          onHide: _hideFact,
+          onCorrect: _correctFact,
+          onMerge: _mergeFacts,
         ),
       ),
+    );
+  }
+}
+
+class _ProfileContent extends StatelessWidget {
+  const _ProfileContent({
+    required this.data,
+    required this.loadingInitial,
+    required this.onAdoptConflict,
+    required this.onKeepExistingForConflict,
+    required this.onConfirmedChanged,
+    required this.onHide,
+    required this.onCorrect,
+    required this.onMerge,
+  });
+
+  final _ProfilePageData data;
+  final bool loadingInitial;
+  final Future<void> Function(ProfileConflictNote conflict) onAdoptConflict;
+  final Future<void> Function(ProfileConflictNote conflict)
+      onKeepExistingForConflict;
+  final Future<void> Function(ProfileFact fact, bool confirmed)
+      onConfirmedChanged;
+  final Future<void> Function(ProfileFact fact) onHide;
+  final Future<void> Function(ProfileFact fact) onCorrect;
+  final Future<void> Function(ProfileFact fact, List<ProfileFact> siblings)
+      onMerge;
+
+  @override
+  Widget build(BuildContext context) {
+    final facts = data.facts;
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const _ProfileHeader(),
+        const SizedBox(height: 16),
+        const _ProfileAiToolsCard(),
+        const SizedBox(height: 16),
+        if (loadingInitial)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(),
+            ),
+          )
+        else if (data.isEmpty)
+          const _EmptyProfileCandidates()
+        else
+          Column(
+            children: [
+              if (data.conflicts.isNotEmpty) ...[
+                _ProfileConflictCard(
+                  conflicts: data.conflicts,
+                  developerMode: data.developerMode,
+                  onAdopt: onAdoptConflict,
+                  onKeepExisting: onKeepExistingForConflict,
+                ),
+                if (facts.isNotEmpty) const SizedBox(height: 16),
+              ],
+              if (data.developerMode && data.decisions.isNotEmpty) ...[
+                _ProfileDecisionCard(decisions: data.decisions),
+                if (facts.isNotEmpty) const SizedBox(height: 16),
+              ],
+              if (facts.isNotEmpty)
+                _ProfileSummary(
+                  facts: facts,
+                  developerMode: data.developerMode,
+                  onConfirmedChanged: onConfirmedChanged,
+                  onHide: onHide,
+                  onCorrect: onCorrect,
+                  onMerge: onMerge,
+                ),
+            ],
+          ),
+      ],
     );
   }
 }
@@ -403,6 +449,11 @@ class _ProfilePageData {
   final List<ProfileConflictNote> conflicts;
   final List<AiProfileDecision> decisions;
   final bool developerMode;
+
+  bool get isEmpty =>
+      facts.isEmpty &&
+      conflicts.isEmpty &&
+      (!developerMode || decisions.isEmpty);
 }
 
 class _ProfileHeader extends StatelessWidget {
@@ -754,7 +805,7 @@ class _DecisionLine extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Chip(label: Text(decision.actionLabel)),
-            Text(_profileFieldLabel(decision.title),
+            Text(profileFieldLabel(decision.title),
                 style: const TextStyle(fontWeight: FontWeight.w600)),
           ],
         ),
@@ -799,8 +850,10 @@ class _ProfileFactTile extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: Text(_profileFieldLabel(fact.field),
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              child: Text(
+                fact.value,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
             Text(
               status,
@@ -850,13 +903,12 @@ class _ProfileFactTile extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        Text(fact.value),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
+            Chip(label: Text(profileFieldLabel(fact.field))),
             Chip(label: Text('来自 ${fact.evidenceCount} 条记录')),
             Chip(label: Text('${fact.distinctDays} 天')),
             Chip(label: Text('最近 ${_dateLabel(fact.lastSeenAt)}')),
@@ -875,7 +927,7 @@ class _ProfileFactTile extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: 3),
               child: Text(
-                _evidenceLine(evidence, developerMode: developerMode),
+                profileEvidenceLine(evidence, developerMode: developerMode),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -884,37 +936,8 @@ class _ProfileFactTile extends StatelessWidget {
     );
   }
 
-  String _evidenceLine(
-    InsightEvidence evidence, {
-    required bool developerMode,
-  }) {
-    final summary = evidence.summary ?? '';
-    final quote = evidence.quote ?? '';
-    final relevance = evidence.relevance ?? '';
-    if (!developerMode) {
-      return [
-        if (summary.isNotEmpty) summary,
-        if (quote.isNotEmpty) '“$quote”',
-        if (relevance.isNotEmpty) relevance,
-      ].where((item) => item.trim().isNotEmpty).join(' | ');
-    }
-    return [
-      formatInsightEvidenceId(evidence),
-      if (summary.isNotEmpty) summary,
-      if (quote.isNotEmpty) quote,
-      if (relevance.isNotEmpty) relevance,
-    ].join(' | ');
-  }
-
   static String _statusText(ProfileFactStatus status) {
-    switch (status) {
-      case ProfileFactStatus.stable:
-        return '稳定画像';
-      case ProfileFactStatus.emerging:
-        return '形成中';
-      case ProfileFactStatus.weak:
-        return '待确认';
-    }
+    return profileStatusLabel(status);
   }
 
   static String _dateLabel(DateTime date) =>
@@ -922,46 +945,6 @@ class _ProfileFactTile extends StatelessWidget {
 }
 
 enum _ProfileFactAction { confirm, unconfirm, correct, merge, hide }
-
-String _profileFieldLabel(String field) {
-  final normalized = field.trim().toLowerCase();
-  const labels = {
-    'self_regulation': '自我调节',
-    'self regulation': '自我调节',
-    'emotion_regulation': '情绪调节',
-    'emotional_regulation': '情绪调节',
-    'stress_trigger': '压力来源',
-    'stress_triggers': '压力来源',
-    'work_pattern': '工作模式',
-    'learning_pattern': '学习模式',
-    'social_pattern': '社交模式',
-    'relationship_pattern': '关系模式',
-    'health_pattern': '健康习惯',
-    'exercise_pattern': '运动习惯',
-    'sleep_pattern': '睡眠习惯',
-    'food_pattern': '饮食习惯',
-    'motivation': '动力来源',
-    'values': '价值观',
-    'goal': '目标',
-    'goals': '目标',
-    'strength': '优势',
-    'strengths': '优势',
-    'risk': '风险点',
-    'risks': '风险点',
-    'preference': '偏好',
-    'preferences': '偏好',
-    'identity': '自我认同',
-    'growth': '成长线索',
-  };
-  final mapped = labels[normalized];
-  if (mapped != null) return mapped;
-  if (field.trim().isEmpty) return '未分类画像';
-  return field
-      .trim()
-      .split(RegExp(r'[_\s-]+'))
-      .where((part) => part.isNotEmpty)
-      .join(' ');
-}
 
 class _ProfileCorrectionDialog extends StatefulWidget {
   const _ProfileCorrectionDialog({required this.fact});
@@ -1061,7 +1044,7 @@ class _ProfileMergeDialogState extends State<_ProfileMergeDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${_profileFieldLabel(widget.primary.field)} 下有 ${widget.siblings.length + 1} 条候选。',
+            '${profileFieldLabel(widget.primary.field)} 下有 ${widget.siblings.length + 1} 条候选。',
           ),
           const SizedBox(height: 12),
           TextField(

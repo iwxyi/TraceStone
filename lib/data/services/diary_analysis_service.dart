@@ -117,7 +117,7 @@ class DiaryAnalysisService {
   "people": ["人物名"],
   "stone_suggestion": {"title": "明天就能做的微小行动", "description": "一步即可执行"},
   "memory_update": {"summary": "这篇日记值得长期记住的摘要", "tags": ["长期标签"]},
-  "profile_update_candidates": [{"field": "self_regulation", "value": "运动可能帮助用户恢复状态", "confidence": 0.58, "action": "candidate", "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
+  "profile_update_candidates": [{"field": "health_pattern", "value": "运动可能帮助用户恢复状态", "confidence": 0.58, "action": "candidate", "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
   "relationship_updates": [{"person": "人物名", "relationship": "朋友/家人/同事/未知", "summary": "本次互动摘要", "emotion": "互动情绪", "pattern": "谨慎的互动模式候选", "confidence": 0.55, "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
   "contradictions": [{"old_memory_id": "memoryId", "new_evidence": "新日记中的反证", "interpretation": "旧记忆可能需要降权或增加条件", "confidence": 0.55, "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}]
 }
@@ -165,7 +165,7 @@ $feedbackBlock
 7. hypotheses 必须用“可能/看起来/也许”等谨慎措辞，并给 confidence；
 8. suggestions 必须可执行；
 9. 每条重要结论尽量带 evidence；
-10. profile_update_candidates 只能输出候选，不要直接改写用户画像；
+10. profile_update_candidates 只能输出候选，不要直接改写用户画像；field 必须选择最贴近的细分字段，不要把所有内容都放进 self_regulation；可选字段包括 self_regulation、emotion_regulation、stress_trigger、work_pattern、learning_pattern、social_pattern、relationship_pattern、health_pattern、exercise_pattern、sleep_pattern、food_pattern、motivation、values、goal、strength、risk、preference、identity、growth；
 11. relationship_updates 只记录本次互动或谨慎模式候选，不给关系下绝对结论；
 12. 多年今日可以作为成长对照，但只能引用上方列出的日记，不要编造农历节日；
 13. contradictions 只在新材料明显不同于历史记忆时输出；

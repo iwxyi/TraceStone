@@ -10,6 +10,7 @@ import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/entry_summary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/utils/ai_source_formatter.dart';
+import '../../../data/utils/profile_display_formatter.dart';
 import 'ai_feedback_bar.dart';
 
 class InsightPage extends StatefulWidget {
@@ -689,7 +690,7 @@ class _UpdateCandidateList extends StatelessWidget {
             for (final candidate in insight.profileUpdateCandidates)
               _CandidateDebugItem(
                 line:
-                    '${candidate.field}：${candidate.value}${_confidence(candidate.confidence)}',
+                    '${profileFieldLabel(candidate.field)}：${candidate.value}${_confidence(candidate.confidence)}',
                 evidence: candidate.evidence,
               ),
           ],

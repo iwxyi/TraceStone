@@ -9,6 +9,7 @@ import '../../../data/models/stone_task.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/services/ai_context_builder.dart';
 import '../../../data/utils/ai_source_formatter.dart';
+import '../../../data/utils/profile_display_formatter.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
@@ -573,11 +574,12 @@ class _ProfileResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return _ResultCard(
       icon: Icons.badge_outlined,
-      title: fact.field,
-      subtitle:
-          fact.userConfirmed ? '画像 · 已确认' : '画像 · ${_statusLabel(fact.status)}',
+      title: fact.value,
+      subtitle: fact.userConfirmed
+          ? '画像 · ${profileFieldLabel(fact.field)} · 已确认'
+          : '画像 · ${profileFieldLabel(fact.field)} · ${_statusLabel(fact.status)}',
       score: (fact.confidence * 10).round(),
-      body: fact.value,
+      body: '',
       reasons: [
         '${fact.evidenceCount} 条证据',
         '${fact.distinctDays} 天',
@@ -593,14 +595,7 @@ class _ProfileResultCard extends StatelessWidget {
   }
 
   String _statusLabel(ProfileFactStatus status) {
-    switch (status) {
-      case ProfileFactStatus.stable:
-        return '稳定';
-      case ProfileFactStatus.emerging:
-        return '形成中';
-      case ProfileFactStatus.weak:
-        return '待确认';
-    }
+    return profileStatusLabel(status);
   }
 }
 
@@ -732,8 +727,10 @@ class _ResultCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-            const SizedBox(height: 8),
-            Text(body),
+            if (body.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(body),
+            ],
             if (!developerMode && _visibleCautionReasons.isNotEmpty) ...[
               const SizedBox(height: 12),
               Wrap(
