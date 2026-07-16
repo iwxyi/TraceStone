@@ -1,12 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/routing/app_route_observer.dart';
 import '../../companion/presentation/companion_page.dart';
 import '../../../data/models/ai_profile.dart';
 import '../../../data/models/ai_profile_preference.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_profile_preference_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
+import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/ai_profile_decision_service.dart';
 import '../../../data/services/profile_projection_service.dart';
@@ -19,16 +24,65 @@ class RelationshipsPage extends StatefulWidget {
   State<RelationshipsPage> createState() => _RelationshipsPageState();
 }
 
-class _RelationshipsPageState extends State<RelationshipsPage> {
+class _RelationshipsPageState extends State<RelationshipsPage> with RouteAware {
   final _repository = const InsightRepository();
   final _developerSettings = const DeveloperSettingsRepository();
   final _profilePreferences = const AiProfilePreferenceRepository();
   final _projectionService = const ProfileProjectionService();
   final _decisionService = const AiProfileDecisionService();
   final _filterController = TextEditingController();
-  late Future<_RelationshipPageData> _dataFuture = _loadData();
-  late final Future<bool> _developerModeFuture =
-      _developerSettings.isDeveloperModeEnabled();
+  Timer? _refreshDebounce;
+  bool _routeSubscribed = false;
+  _RelationshipPageData _data = const _RelationshipPageData();
+  Future<_RelationshipPageData>? _loadingFuture;
+  bool _loadingInitial = true;
+
+  @override
+  void initState() {
+    super.initState();
+    AiAnalysisQueueBus.version.addListener(_scheduleDynamicRefresh);
+    DiaryChangeBus.version.addListener(_scheduleDynamicRefresh);
+    _refreshNow();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_routeSubscribed) return;
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+      _routeSubscribed = true;
+    }
+  }
+
+  @override
+  void didPopNext() {
+    _refreshNow();
+  }
+
+  void _scheduleDynamicRefresh() {
+    if (!mounted) return;
+    _refreshDebounce?.cancel();
+    _refreshDebounce = Timer(const Duration(milliseconds: 350), _refreshNow);
+  }
+
+  void _refreshNow() {
+    if (!mounted) return;
+    final future = _loadData();
+    _loadingFuture = future;
+    if (_data.isEmpty) setState(() => _loadingInitial = true);
+    future.then((data) {
+      if (!mounted || _loadingFuture != future) return;
+      setState(() {
+        _data = data;
+        _loadingInitial = false;
+      });
+    }).catchError((Object _) {
+      if (!mounted || _loadingFuture != future) return;
+      setState(() => _loadingInitial = false);
+    });
+  }
 
   Future<_RelationshipPageData> _loadData() async {
     final insights = await _repository.listInsights();
@@ -38,9 +92,11 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
         await _profilePreferences.listRelationshipMergeHistory();
     final visibleProfiles =
         await _profilePreferences.applyToRelationshipProfiles(profiles);
+    final developerMode = await _developerSettings.isDeveloperModeEnabled();
     return _RelationshipPageData(
       profiles: visibleProfiles,
       mergeHistory: mergeHistory,
+      developerMode: developerMode,
       decisions: _decisionService.buildRelationshipDecisions(
         profiles: visibleProfiles,
         preferences: preferences,
@@ -152,15 +208,17 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
 
   @override
   void dispose() {
+    _refreshDebounce?.cancel();
+    AiAnalysisQueueBus.version.removeListener(_scheduleDynamicRefresh);
+    DiaryChangeBus.version.removeListener(_scheduleDynamicRefresh);
+    if (_routeSubscribed) appRouteObserver.unsubscribe(this);
     _filterController.dispose();
     super.dispose();
   }
 
   Future<void> _refresh() async {
-    setState(() {
-      _dataFuture = _loadData();
-    });
-    await _dataFuture;
+    _refreshNow();
+    await _loadingFuture;
   }
 
   @override
@@ -169,60 +227,17 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
       appBar: AppBar(title: const Text('关系')),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<_RelationshipPageData>(
-          future: _dataFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final data = snapshot.data ?? const _RelationshipPageData();
-            final profiles = data.profiles;
-            if (profiles.isEmpty) return const _EmptyRelationships();
-            return FutureBuilder<bool>(
-              future: _developerModeFuture,
-              builder: (context, developerSnapshot) {
-                final developerMode = developerSnapshot.data ?? false;
-                final visibleProfiles = _visibleProfiles(profiles);
-                final showDeveloperCard = developerMode &&
-                    (data.decisions.isNotEmpty || data.mergeHistory.isNotEmpty);
-                final itemOffset = showDeveloperCard ? 2 : 1;
-                return ListView.separated(
-                  padding: const EdgeInsets.all(20),
-                  itemCount: visibleProfiles.length + itemOffset,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      return _RelationshipFilter(
-                        controller: _filterController,
-                        resultCount: visibleProfiles.length,
-                        onChanged: (_) => setState(() {}),
-                      );
-                    }
-                    if (showDeveloperCard && index == 1) {
-                      return _RelationshipDecisionCard(
-                        decisions: data.decisions,
-                        mergeHistory: data.mergeHistory,
-                      );
-                    }
-                    final profile = visibleProfiles[index - itemOffset];
-                    return _RelationshipCard(
-                      profile: profile,
-                      mergeCandidates: visibleProfiles
-                          .where(
-                              (item) => item.personName != profile.personName)
-                          .toList(growable: false),
-                      developerMode: developerMode,
-                      onConfirmedChanged: _setConfirmed,
-                      onHide: _hideProfile,
-                      onCorrect: _correctRelationship,
-                      onMerge: _mergeRelationship,
-                      onAsk: _askAboutRelationship,
-                    );
-                  },
-                );
-              },
-            );
-          },
+        child: _RelationshipContent(
+          data: _data,
+          loadingInitial: _loadingInitial,
+          filterController: _filterController,
+          visibleProfiles: _visibleProfiles(_data.profiles),
+          onFilterChanged: (_) => setState(() {}),
+          onConfirmedChanged: _setConfirmed,
+          onHide: _hideProfile,
+          onCorrect: _correctRelationship,
+          onMerge: _mergeRelationship,
+          onAsk: _askAboutRelationship,
         ),
       ),
     );
@@ -257,16 +272,96 @@ class _RelationshipsPageState extends State<RelationshipsPage> {
   }
 }
 
+class _RelationshipContent extends StatelessWidget {
+  const _RelationshipContent({
+    required this.data,
+    required this.loadingInitial,
+    required this.filterController,
+    required this.visibleProfiles,
+    required this.onFilterChanged,
+    required this.onConfirmedChanged,
+    required this.onHide,
+    required this.onCorrect,
+    required this.onMerge,
+    required this.onAsk,
+  });
+
+  final _RelationshipPageData data;
+  final bool loadingInitial;
+  final TextEditingController filterController;
+  final List<RelationshipProfile> visibleProfiles;
+  final ValueChanged<String> onFilterChanged;
+  final Future<void> Function(RelationshipProfile profile, bool confirmed)
+      onConfirmedChanged;
+  final Future<void> Function(RelationshipProfile profile) onHide;
+  final Future<void> Function(RelationshipProfile profile) onCorrect;
+  final Future<void> Function(
+    RelationshipProfile profile,
+    List<RelationshipProfile> candidates,
+  ) onMerge;
+  final ValueChanged<RelationshipProfile> onAsk;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loadingInitial) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (data.profiles.isEmpty) return const _EmptyRelationships();
+    final showDeveloperCard = data.developerMode &&
+        (data.decisions.isNotEmpty || data.mergeHistory.isNotEmpty);
+    final itemOffset = showDeveloperCard ? 2 : 1;
+    return ListView.separated(
+      padding: const EdgeInsets.all(20),
+      itemCount: visibleProfiles.length + itemOffset,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return _RelationshipFilter(
+            controller: filterController,
+            resultCount: visibleProfiles.length,
+            onChanged: onFilterChanged,
+          );
+        }
+        if (showDeveloperCard && index == 1) {
+          return _RelationshipDecisionCard(
+            decisions: data.decisions,
+            mergeHistory: data.mergeHistory,
+          );
+        }
+        final profile = visibleProfiles[index - itemOffset];
+        return _RelationshipCard(
+          profile: profile,
+          mergeCandidates: visibleProfiles
+              .where((item) => item.personName != profile.personName)
+              .toList(growable: false),
+          developerMode: data.developerMode,
+          onConfirmedChanged: onConfirmedChanged,
+          onHide: onHide,
+          onCorrect: onCorrect,
+          onMerge: onMerge,
+          onAsk: onAsk,
+        );
+      },
+    );
+  }
+}
+
 class _RelationshipPageData {
   const _RelationshipPageData({
     this.profiles = const [],
     this.decisions = const [],
     this.mergeHistory = const [],
+    this.developerMode = false,
   });
 
   final List<RelationshipProfile> profiles;
   final List<AiProfileDecision> decisions;
   final List<AiRelationshipMergeEvent> mergeHistory;
+  final bool developerMode;
+
+  bool get isEmpty =>
+      profiles.isEmpty &&
+      (!developerMode || (decisions.isEmpty && mergeHistory.isEmpty));
 }
 
 class _RelationshipFilter extends StatelessWidget {

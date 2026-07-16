@@ -1528,6 +1528,8 @@ void main() {
     expect(find.textContaining('preference=merged'), findsOneWidget);
     expect(find.text('合并历史'), findsOneWidget);
     expect(find.textContaining('合并：'), findsOneWidget);
+    await tester.ensureVisible(find.widgetWithText(TextButton, '复制审计'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, '复制审计'));
     await tester.pumpAndSettle();
     expect(copiedText, contains('## Relationship Decision Audit'));
