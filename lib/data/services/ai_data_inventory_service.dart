@@ -94,8 +94,8 @@ class AiDataInventoryService {
         prefixes: const ['ai.analysis.jobs.'],
         sensitivity: 'medium',
         backupPolicy: '不要求跨设备恢复，可本地保留',
-        deletePolicy: '任务完成、重建或来源删除时清理',
-        exportPolicy: '开发者导出任务状态和错误摘要',
+        deletePolicy: '后台整理完成、重建或来源删除时清理',
+        exportPolicy: '开发者导出整理状态和错误摘要',
         details: _queueDetails(prefs, keys),
       ),
       _section(
@@ -134,7 +134,7 @@ class AiDataInventoryService {
       ),
       _section(
         keys,
-        label: '塑石行动',
+        label: '成长线索',
         prefixes: const ['stone.tasks.'],
         sensitivity: 'high',
         backupPolicy: '随日记和行动记录备份',
@@ -1520,7 +1520,7 @@ class AiDataInventory {
     final exportTotal =
         exportSections.fold(0, (total, section) => total + section.count);
     return [
-      '## TraceStone AI Data Inventory',
+      '## 拾年 AI Data Inventory',
       'total=$exportTotal',
       if (scope != null && scope.isNotEmpty) 'scope=$scope',
       'policy=AI 衍生数据默认视为日记数据的一部分，应随日记一起备份、删除和保护。',

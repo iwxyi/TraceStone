@@ -52,7 +52,7 @@ class DiaryAnalysisService {
     final context = await _contextBuilder.buildForTodayInsight(entry);
     final feedback = await _feedbackRepository.getFeedback(entry.id);
     const systemPrompt =
-        '你是溯石的日记洞察助手。你必须结合今天的日记、最近日记和历史记忆分析，不做空洞说教，不虚构事实。输出必须是 JSON。';
+        '你是拾年的日记洞察助手。你要在轻松、不施压的氛围中，结合今天的日记、最近日记和历史记忆，帮助用户记录生活、理解变化、看见成长。不做空洞说教，不虚构事实。输出必须是 JSON。';
     final userPrompt = _buildPrompt(context, feedback: feedback);
     await _savePromptTrace(
       id: entry.id,
@@ -115,7 +115,7 @@ class DiaryAnalysisService {
   "emotion": "主要情绪",
   "keywords": ["关键词"],
   "people": ["人物名"],
-  "stone_suggestion": {"title": "明天就能做的微小行动", "description": "一步即可执行"},
+  "stone_suggestion": {"title": "可以轻轻尝试的一小步", "description": "低压力、可选择，不像任务"},
   "memory_update": {"summary": "这篇日记值得长期记住的摘要", "tags": ["长期标签"]},
   "profile_update_candidates": [],
   "relationship_updates": [{"person": "人物名", "relationship": "朋友/家人/同事/未知", "summary": "本次互动摘要", "emotion": "互动情绪", "pattern": "谨慎的互动模式候选", "confidence": 0.55, "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
@@ -149,7 +149,7 @@ ${context.profileFacts.isEmpty ? '无' : context.profileFacts.asMap().entries.ma
 关系档案：
 ${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.asMap().entries.map((entry) => _relationshipLine(entry.key, entry.value)).join('\n')}
 
-进行中的塑石行动：
+正在留意的成长线索：
 ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('\n')}
 
 用户反馈：
@@ -158,7 +158,7 @@ $feedbackBlock
 要求：
 1. related_memories 只能来自“最近日记摘要”或“相关历史记忆”；
 2. 如果历史材料不足，就诚实少引用，不要编造；
-3. stone_suggestion 必须微小、具体、明天可完成；
+3. stone_suggestion 必须微小、具体、可选择，不要像任务、打卡或要求用户必须完成；
 4. 如果今天日记包含多个事件，请先分别理解，再给整体读后感；
 5. facts 只能写当前日记或历史材料明确给出的事实；
 6. signals 写稳妥的情绪/主题观察；
@@ -169,8 +169,8 @@ $feedbackBlock
 11. relationship_updates 只记录本次互动或谨慎模式候选，不给关系下绝对结论；
 12. 多年今日可以作为成长对照，但只能引用上方列出的日记，不要编造农历节日；
 13. contradictions 只在新材料明显不同于历史记忆时输出；
-14. 稳定画像、关系档案和塑石行动只能作为辅助背景，不能替代今天日记；
-15. 如果今天提到正在推进的塑石行动，可以温和指出进展，不要批评未完成；
+14. 稳定画像、关系档案和成长线索只能作为辅助背景，不能替代今天日记；
+15. 如果今天提到曾经建议过的一小步，可以温和指出“这可能是一个变化线索”，不要批评未完成，不要制造压力；
 16. memory_update.summary 不超过 80 字；
 17. 如果“用户反馈”指出了上次洞察不准确，本次必须避开该错误，并优先重新核对当前日记原文和证据。''';
   }

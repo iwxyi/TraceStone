@@ -1,8 +1,8 @@
 class AppConstants {
   const AppConstants._();
 
-  static const appName = '溯石';
-  static const appNameEn = 'TraceStone';
+  static const appName = '拾年';
+  static const appNameEn = 'Shinen';
   static const defaultThemeName = '溪石';
 
   static const freeDailyAiLimit = 3;
@@ -12,4 +12,8 @@ class AppConstants {
   static const embeddingDimension = 384;
   static const embeddingModelName = 'all-MiniLM-L6-v2';
   static const diaryPreviewMaxLines = 3;
+
+  static String displayNameFor(String localeLanguageCode) {
+    return localeLanguageCode == 'en' ? appNameEn : appName;
+  }
 }

@@ -119,7 +119,7 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
     final count = await _queueRunner.enqueueOutdatedEmbeddingRebuild();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(count == 0 ? '没有需要重建的历史相似度' : '已加入重建队列：$count 篇日记'),
+      content: Text(count == 0 ? '没有需要重建的历史相似度' : '已加入后台整理：$count 篇日记'),
     ));
     unawaited(_queueRunner.processUntilIdle(maxJobs: 5));
     await _refreshAsync();
@@ -128,7 +128,7 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('AI 任务队列')),
+      appBar: AppBar(title: const Text('AI 整理进度')),
       body: RefreshIndicator(
         onRefresh: _refreshAsync,
         child: FutureBuilder<_AiTaskQueueData>(
@@ -260,11 +260,11 @@ class _DiaryQueueSection extends StatelessWidget {
                 runnableCount == 0 &&
                 incompleteCount == 0 &&
                 failedCount == 0)
-              Text('没有正在等待的日记分析任务。', style: theme.textTheme.bodyMedium)
+              Text('没有正在等待的日记分析。', style: theme.textTheme.bodyMedium)
             else ...[
               Text(
                 snapshot.isPaused
-                    ? '队列已暂停'
+                    ? '后台整理已暂停'
                     : current == null
                         ? '等待继续'
                         : current.stageLabel,
@@ -277,7 +277,7 @@ class _DiaryQueueSection extends StatelessWidget {
                   _CountChip(label: '运行/待处理', count: activeCount),
                   _CountChip(label: '待恢复', count: incompleteCount),
                   _CountChip(label: '失败', count: failedCount),
-                  _CountChip(label: '已完成', count: completedCount),
+                  _CountChip(label: '已整理', count: completedCount),
                 ],
               ),
               if (snapshot.estimatedRemainingLabel.isNotEmpty) ...[
@@ -299,7 +299,7 @@ class _DiaryQueueSection extends StatelessWidget {
               FilledButton.icon(
                 onPressed: snapshot.runnableCount > 0 ? onContinue : null,
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('继续处理队列'),
+                label: const Text('继续整理'),
               ),
             ],
           ],
@@ -380,7 +380,7 @@ class _EmbeddingQueueSection extends StatelessWidget {
                 _CountChip(label: '需要重建', count: outdatedCount),
                 _CountChip(label: '运行/待处理', count: runningOrPending),
                 _CountChip(label: '失败', count: failedCount),
-                _CountChip(label: '已完成', count: completedCount),
+                _CountChip(label: '已整理', count: completedCount),
               ],
             ),
             if (batches.isNotEmpty) ...[
@@ -454,7 +454,7 @@ class _PeriodQueueSection extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onContinue,
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('继续处理周期任务'),
+                label: const Text('继续整理周期总结'),
               ),
             ],
           ],

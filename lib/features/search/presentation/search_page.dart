@@ -77,7 +77,7 @@ class _SearchPageState extends State<SearchPage> {
                 ButtonSegment(
                     value: _SearchSourceFilter.profile, label: Text('画像')),
                 ButtonSegment(
-                    value: _SearchSourceFilter.stone, label: Text('塑石')),
+                    value: _SearchSourceFilter.stone, label: Text('成长')),
               ],
               selected: {_filter},
               onSelectionChanged: (value) {
@@ -282,7 +282,7 @@ class _SearchPageState extends State<SearchPage> {
       builder: (context) => AlertDialog(
         title: const Text('复制搜索调试上下文？'),
         content: const Text(
-          '调试上下文可能包含日记摘要、长期记忆、画像、关系、塑石行动和检索分数。'
+          '调试上下文可能包含日记摘要、长期记忆、画像、关系、成长线索和检索分数。'
           '这些内容只会复制到本机剪贴板，请确认不会粘贴到不可信的位置。',
         ),
         actions: [
@@ -652,7 +652,7 @@ class _StoneResultCard extends StatelessWidget {
     return _ResultCard(
       icon: Icons.self_improvement_outlined,
       title: task.title,
-      subtitle: task.isCompleted ? '塑石行动 · 已完成' : '塑石行动 · 进行中',
+      subtitle: task.isCompleted ? '成长线索 · 已有变化' : '成长线索 · 留意中',
       score: task.isCompleted ? 3 : 6,
       body: [
         task.description,

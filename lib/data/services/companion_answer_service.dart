@@ -126,7 +126,7 @@ class CompanionAnswerService {
     ));
     try {
       const systemPrompt =
-          '你是溯石的成长陪伴助手。你只能基于给定的用户历史材料回答，不诊断、不说教、不虚构。输出必须是 JSON。回答正文可以使用 Markdown。';
+          '你是拾年的成长陪伴助手。你只能基于给定的用户历史材料回答，在轻松、不施压的氛围中帮助用户记录生活、理解自己、看见变化；不诊断、不说教、不虚构。输出必须是 JSON。回答正文可以使用 Markdown。';
       final userPrompt = _buildPrompt(question, context, steps);
       final trace = AiPromptTrace(
         id: 'companion:last',
@@ -256,7 +256,7 @@ ${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.as
             ].join('、')}';
           }).join('\n')}
 
-塑石行动：
+成长线索：
 ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map((task) {
             return '- source_id=${formatAiSourceId('stone', task.id)}｜${task.title}｜${task.description}';
           }).join('\n')}
@@ -288,11 +288,11 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
           }).join('\n')}
 
 要求：
-1. 回答必须基于上面的相关记忆、日记摘要、日记片段、画像、关系档案或塑石行动；
+1. 回答必须基于上面的相关记忆、日记摘要、日记片段、画像、关系档案或成长线索；
 2. 如果材料不足，要明确说“不太够判断”；
 3. 语气温和、具体，不做医疗或心理诊断；
 4. 可以提出一个帮助用户继续理解自己的追问；
-5. 画像、关系档案和塑石行动只能作为辅助背景，不要当作绝对结论；
+5. 画像、关系档案和成长线索只能作为辅助背景，不要当作绝对结论；
 6. sources 必须使用给定材料中的 source_id；不能为没有出现在材料里的内容编造来源。
 7. 如果问题适合，回答可以使用 Markdown 表格、时间线、列表或行动计划，不要只限于纯段落。
 
@@ -357,7 +357,7 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
           for (final match in matches) '相关记录“${match.title}”：${match.summary}',
         ],
         if (stones.isNotEmpty) ...[
-          for (final task in stones) '塑石行动“${task.title}”：${task.description}',
+          for (final task in stones) '成长线索“${task.title}”：${task.description}',
         ],
         '这些只是本地检索到的线索，不足以直接下结论。配置自定义 AI 后，我可以把它们整理成更完整的分析。',
       ].join('\n'),
@@ -401,7 +401,7 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
         for (final task in stones)
           CompanionAnswerSource(
             title: task.title,
-            reason: '塑石行动',
+            reason: '成长线索',
             score: 1,
             sourceType: 'stone',
             sourceId: task.id,

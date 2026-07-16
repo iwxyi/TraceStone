@@ -277,7 +277,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('去任务队列'),
+            child: const Text('去整理进度'),
           ),
         ],
       ),
@@ -295,8 +295,8 @@ class _CustomAiPageState extends State<CustomAiPage> {
       builder: (context) => AlertDialog(
         title: const Text('使用第三方 AI？'),
         content: const Text(
-          '启用自定义接口后，日记原文、摘要、相关记忆、画像、关系和塑石行动等上下文会发送到你配置的模型服务。'
-          '请确认该服务可信，并理解 TraceStone 无法控制第三方如何处理这些数据。',
+          '启用自定义接口后，日记原文、摘要、相关记忆、画像、关系和成长线索等上下文会发送到你配置的模型服务。'
+          '请确认该服务可信，并理解 拾年 无法控制第三方如何处理这些数据。',
         ),
         actions: [
           TextButton(
@@ -437,7 +437,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
         },
         body: jsonEncode({
           'model': model,
-          'input': 'TraceStone embedding test',
+          'input': '拾年 embedding test',
         }),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {

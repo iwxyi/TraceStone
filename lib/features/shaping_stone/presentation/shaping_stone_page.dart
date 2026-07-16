@@ -96,7 +96,7 @@ class _ShapingStonePageState extends State<ShapingStonePage> {
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已加入塑石行动')),
+      const SnackBar(content: Text('已收藏这一步')),
     );
   }
 
@@ -128,7 +128,7 @@ class _ShapingStonePageState extends State<ShapingStonePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('塑石')),
+      appBar: AppBar(title: const Text('成长线索')),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<_StonePageData>(
@@ -148,7 +148,7 @@ class _ShapingStonePageState extends State<ShapingStonePage> {
                 if (data.tasks.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _SectionTitle(
-                      title: '行动', subtitle: '${data.tasks.length} 个本地行动'),
+                      title: '收藏的一小步', subtitle: '${data.tasks.length} 条'),
                   const SizedBox(height: 8),
                   for (final task in data.tasks) ...[
                     _StoneTaskCard(
@@ -164,8 +164,7 @@ class _ShapingStonePageState extends State<ShapingStonePage> {
                 if (data.candidates.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   _SectionTitle(
-                      title: '建议',
-                      subtitle: '${data.candidates.length} 个 AI 建议'),
+                      title: '可以轻轻尝试', subtitle: '${data.candidates.length} 条'),
                   const SizedBox(height: 8),
                   for (final candidate in data.candidates) ...[
                     _StoneCandidateCard(
@@ -268,7 +267,7 @@ class _StoneTaskCard extends StatelessWidget {
                   TextButton.icon(
                     onPressed: task.isCompleted ? null : onCheckIn,
                     icon: const Icon(Icons.add_task_outlined),
-                    label: const Text('记录进展'),
+                    label: const Text('写下变化'),
                   ),
                   TextButton.icon(
                     onPressed: onEdit,
@@ -423,7 +422,7 @@ class _StoneTaskEditDialogState extends State<_StoneTaskEditDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('编辑塑石行动'),
+      title: const Text('编辑这一小步'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -538,7 +537,7 @@ class _StoneProgressHintBox extends StatelessWidget {
               child: TextButton.icon(
                 onPressed: onCompleted,
                 icon: const Icon(Icons.check),
-                label: const Text('标记完成'),
+                label: const Text('记为有变化'),
               ),
             ),
           ],
@@ -558,10 +557,10 @@ class _StoneHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('主动雕刻自己',
+          Text('把变化留在日常里',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600)),
           SizedBox(height: 8),
-          Text('这些是 AI 从日记中整理出的微小行动建议，后续会支持编辑、提醒和打卡。'),
+          Text('这里收藏 AI 从日记中整理出的温和建议。它们不是任务，也不需要打卡，只是在合适的时候提醒你：有些小变化已经在发生。'),
         ],
       ),
     );
@@ -619,7 +618,7 @@ class _StoneCandidateCard extends StatelessWidget {
               child: FilledButton.icon(
                 onPressed: onAdd,
                 icon: const Icon(Icons.add),
-                label: const Text('加入行动'),
+                label: const Text('收藏这一步'),
               ),
             ),
           ],
@@ -644,7 +643,7 @@ class _EmptyStoneState extends StatelessWidget {
         Icon(Icons.self_improvement_outlined, size: 48),
         SizedBox(height: 16),
         Text(
-          '完成 AI 洞察后，这里会出现可以明天就去做的一小步。',
+          '完成 AI 洞察后，这里会出现可以轻轻尝试的一小步。没有任务，也不需要打卡。',
           textAlign: TextAlign.center,
         ),
       ],

@@ -103,7 +103,7 @@ class _DeveloperModeSectionState extends State<_DeveloperModeSection> {
               SwitchListTile(
                 secondary: const Icon(Icons.bug_report_outlined),
                 title: const Text('开发者模式'),
-                subtitle: const Text('显示 AI 队列、来源、错误和调试信息'),
+                subtitle: const Text('显示 AI 后台进度、来源、错误和调试信息'),
                 value: enabled,
                 onChanged: _setEnabled,
               ),
@@ -112,7 +112,7 @@ class _DeveloperModeSectionState extends State<_DeveloperModeSection> {
                 ListTile(
                   leading: const Icon(Icons.auto_awesome_motion_outlined),
                   title: const Text('AI 调试'),
-                  subtitle: const Text('查看后台队列、阶段日志和失败任务'),
+                  subtitle: const Text('查看后台进度、阶段日志和失败原因'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () =>
                       Navigator.of(context).pushNamed(AppRoutes.aiDebug),

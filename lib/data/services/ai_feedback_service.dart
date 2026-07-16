@@ -139,7 +139,7 @@ class AiFeedbackService {
       if (insight.suggestions.isNotEmpty)
         '建议：${insight.suggestions.take(3).map((item) => item.text).join('；')}',
       if (insight.stoneTitle.trim().isNotEmpty)
-        '塑石：${[
+        '成长线索：${[
           insight.stoneTitle.trim(),
           insight.stoneDescription.trim(),
         ].where((part) => part.isNotEmpty).join(' / ')}',

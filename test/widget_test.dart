@@ -544,7 +544,7 @@ void main() {
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
 
-    expect(find.text('AI 任务队列'), findsOneWidget);
+    expect(find.text('AI 整理进度'), findsOneWidget);
     expect(find.text('AI 记忆'), findsOneWidget);
     expect(find.text('纪念日'), findsOneWidget);
 
@@ -612,7 +612,7 @@ void main() {
     await tester.pumpWidget(const TraceStoneApp());
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('AI 任务队列'));
+    await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
 
     expect(find.text('日记 AI 分析'), findsOneWidget);
@@ -631,7 +631,7 @@ void main() {
     await tester.pumpWidget(const TraceStoneApp());
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('AI 任务队列'));
+    await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
 
     expect(find.text('周期总结'), findsOneWidget);
@@ -670,7 +670,7 @@ void main() {
     await tester.pumpWidget(const TraceStoneApp());
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('AI 任务队列'));
+    await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
 
     expect(find.text('历史相似度索引'), findsOneWidget);
@@ -1353,8 +1353,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('塑石'), findsOneWidget);
-    expect(find.text('建议'), findsOneWidget);
+    expect(find.text('成长线索'), findsOneWidget);
+    expect(find.text('可以轻轻尝试'), findsOneWidget);
     expect(find.text('候选'), findsNothing);
     expect(find.text('晚饭后散步 10 分钟'), findsOneWidget);
     expect(find.text('散步'), findsOneWidget);
@@ -1390,7 +1390,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('最近日记可能提到了这一步'), findsOneWidget);
-    expect(find.text('标记完成'), findsOneWidget);
+    expect(find.text('记为有变化'), findsOneWidget);
   });
 
   testWidgets('edits shaping stone task title', (tester) async {
@@ -1435,7 +1435,7 @@ void main() {
       const MaterialApp(home: ShapingStonePage()),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('记录进展'));
+    await tester.tap(find.text('写下变化'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '今天散步了 8 分钟');
     await tester.tap(find.text('保存'));
@@ -2479,7 +2479,7 @@ void main() {
     expect(find.text('向量索引 1'), findsOneWidget);
     expect(find.text('调试记录 2'), findsOneWidget);
     expect(find.text('纪念日 1'), findsOneWidget);
-    expect(find.text('塑石行动 1'), findsOneWidget);
+    expect(find.text('成长线索 1'), findsOneWidget);
     expect(find.text('日记摘要'), findsOneWidget);
     expect(find.text('summaryObjects=1'), findsOneWidget);
     expect(find.textContaining('averageQuality=0.32'), findsOneWidget);
@@ -2489,7 +2489,7 @@ void main() {
     expect(find.text('objects=1'), findsWidgets);
     expect(find.text('纪念日'), findsOneWidget);
     expect(find.textContaining('lunar=1'), findsOneWidget);
-    expect(find.text('塑石行动'), findsOneWidget);
+    expect(find.text('成长线索'), findsOneWidget);
     expect(find.textContaining('completed=1'), findsOneWidget);
     expect(find.textContaining('缺少 entry/type 索引'), findsOneWidget);
     expect(find.textContaining('高敏感类别'), findsOneWidget);
@@ -2500,7 +2500,7 @@ void main() {
     expect(find.text('日记摘要 1'), findsOneWidget);
     expect(find.text('向量索引 1'), findsOneWidget);
     expect(find.text('纪念日 1'), findsNothing);
-    expect(find.text('塑石行动 1'), findsNothing);
+    expect(find.text('成长线索 1'), findsNothing);
     expect(find.textContaining('缺少 entry/type 索引'), findsOneWidget);
     await tester
         .tap(find.byKey(const ValueKey('copy-filtered-ai-data-inventory')));
@@ -2512,13 +2512,13 @@ void main() {
     expect(copiedText, contains('### 日记摘要'));
     expect(copiedText, contains('### 向量索引'));
     expect(copiedText, isNot(contains('### 纪念日')));
-    expect(copiedText, isNot(contains('### 塑石行动')));
+    expect(copiedText, isNot(contains('### 成长线索')));
     expect(find.text('已复制需核对 AI 数据清单'), findsOneWidget);
     await tester.pump(const Duration(seconds: 5));
     await tester.tap(find.widgetWithText(ChoiceChip, '全部'));
     await tester.pumpAndSettle();
     expect(find.text('纪念日 1'), findsOneWidget);
-    expect(find.text('塑石行动 1'), findsOneWidget);
+    expect(find.text('成长线索 1'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.byTooltip('复制日记摘要清单'),
       160,
@@ -2546,7 +2546,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '复制'));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(copiedText, contains('TraceStone AI Data Inventory'));
+    expect(copiedText, contains('拾年 AI Data Inventory'));
     expect(copiedText, contains('policy=AI 衍生数据默认视为日记数据的一部分'));
     expect(copiedText, contains('### 日记摘要'));
     expect(copiedText, contains('summaryObjects=1'));
@@ -2559,7 +2559,7 @@ void main() {
     expect(copiedText, contains('lunar=1'));
     expect(copiedText, contains('disabled=1'));
     expect(copiedText, contains('topMonths=lunar-5:1'));
-    expect(copiedText, contains('### 塑石行动'));
+    expect(copiedText, contains('### 成长线索'));
     expect(copiedText, contains('completed=1'));
     expect(copiedText, contains('checkIns=1'));
     expect(copiedText, contains('topTags=恢复:1,运动:1'));

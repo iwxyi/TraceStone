@@ -233,8 +233,8 @@ class _ProfileAiToolsCard extends StatelessWidget {
         children: [
           ListTile(
             leading: const Icon(Icons.auto_awesome_motion_outlined),
-            title: const Text('AI 任务队列'),
-            subtitle: const Text('查看日记分析、月度总结和年度总结进度'),
+            title: const Text('AI 整理进度'),
+            subtitle: const Text('查看日记分析、月度总结和年度总结的后台进度'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).pushNamed(AppRoutes.aiTaskQueue),
           ),

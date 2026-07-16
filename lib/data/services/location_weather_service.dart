@@ -63,7 +63,7 @@ class LocationWeatherService {
     });
 
     final response = await client.get(uri, headers: const {
-      'User-Agent': 'TraceStone/0.1 location metadata',
+      'User-Agent': 'Shinen/0.1 location metadata',
     }).timeout(timeout);
     if (response.statusCode != 200) {
       return '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';

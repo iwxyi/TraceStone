@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/constants/app_constants.dart';
 import '../core/routing/app_route_observer.dart';
 import '../core/routing/app_routes.dart';
 import '../data/services/app_startup_service.dart';
@@ -44,8 +45,10 @@ class _TraceStoneAppState extends State<TraceStoneApp>
     return AnimatedBuilder(
       animation: themeController,
       builder: (context, _) {
+        final locale = Localizations.maybeLocaleOf(context) ??
+            WidgetsBinding.instance.platformDispatcher.locale;
         return MaterialApp(
-          title: '溯石',
+          title: AppConstants.displayNameFor(locale.languageCode),
           debugShowCheckedModeBanner: false,
           theme: themeController.lightTheme,
           darkTheme: themeController.darkTheme,

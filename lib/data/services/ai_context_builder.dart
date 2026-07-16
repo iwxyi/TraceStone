@@ -787,7 +787,7 @@ class AiContextBuilder {
             summary: task.description,
             score: task.status == StoneTaskStatus.active ? 6 : 3,
             reasons: [
-              task.status == StoneTaskStatus.active ? '进行中的塑石行动' : '历史塑石行动',
+              task.status == StoneTaskStatus.active ? '正在留意的成长线索' : '历史成长线索',
             ],
             matchedTokens: task.tags,
           ),

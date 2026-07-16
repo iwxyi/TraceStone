@@ -993,7 +993,7 @@ void main() {
             scenario: 'companion',
             createdAt: DateTime(2026, 7, 3),
             contextSummary: 'current_entry:entry-1; memory:memory-1',
-            systemPromptPreview: '你是 TraceStone 的陪伴式分析助手。',
+            systemPromptPreview: '你是 拾年 的陪伴式分析助手。',
             userPromptPreview: '请分析 entry-1。',
             systemPromptLength: 120,
             userPromptLength: 80,
@@ -1280,7 +1280,7 @@ void main() {
       expect(calendarSection.details, contains('disabled=1'));
       expect(calendarSection.details, contains('topMonths=lunar-5:1'));
       final stoneSection =
-          inventory.sections.firstWhere((section) => section.label == '塑石行动');
+          inventory.sections.firstWhere((section) => section.label == '成长线索');
       expect(stoneSection.details, contains('objects=1'));
       expect(stoneSection.details, contains('indexed=0'));
       expect(stoneSection.details, contains('active=0'));
@@ -1304,7 +1304,7 @@ void main() {
       expect(reviewDebugText, contains('### 日记摘要'));
       expect(reviewDebugText, contains('### 向量索引'));
       expect(reviewDebugText, isNot(contains('### 纪念日')));
-      expect(inventory.toDebugText(), contains('TraceStone AI Data Inventory'));
+      expect(inventory.toDebugText(), contains('拾年 AI Data Inventory'));
       expect(inventory.toDebugText(), contains('AI 衍生数据默认视为日记数据'));
       expect(inventory.toDebugText(), contains('sensitivity=critical'));
       expect(inventory.toDebugText(), contains('averageQuality=0.32'));
@@ -6198,9 +6198,9 @@ void main() {
       expect(summary.relationshipHighlights.join(' '), isNot(contains('小王')));
       expect(
           summary.relationshipHighlights.join(' '), isNot(contains('隐藏的协作摩擦')));
-      expect(summary.stoneHighlights, contains('新增塑石行动 1 个'));
-      expect(summary.stoneHighlights, contains('记录塑石进展 1 次'));
-      expect(summary.stoneHighlights, contains('完成塑石行动 1 个'));
+      expect(summary.stoneHighlights, contains('收藏成长线索 1 条'));
+      expect(summary.stoneHighlights, contains('记录微小变化 1 次'));
+      expect(summary.stoneHighlights, contains('标记已有变化 1 条'));
       expect(summary.stoneHighlights.join(' '), contains('晚饭后散步 10 分钟'));
     });
   });
@@ -6971,13 +6971,13 @@ void main() {
       final entry = _entry(
         id: 'today-stone-budget-entry',
         date: date,
-        content: '今天想看一下最近的塑石行动。',
+        content: '今天想看一下最近的成长线索。',
       );
       for (var index = 0; index < 7; index++) {
         await stoneRepository.saveTask(StoneTask(
           id: 'stone:budget-$index',
           sourceEntryId: 'stone-source-$index',
-          title: '塑石行动 $index',
+          title: '成长线索 $index',
           description: '一个可执行的小行动。',
           createdAt: date.subtract(Duration(days: index)),
           updatedAt: date.subtract(Duration(days: index)),
@@ -7178,7 +7178,7 @@ void main() {
       final entry = _entry(
         id: 'trash-stone-source',
         date: DateTime(2026, 7, 3),
-        content: '这篇日记生成了一个塑石行动。',
+        content: '这篇日记生成了一个成长线索。',
       );
       await diaryRepository.saveEntry(entry);
       await stoneRepository.saveTask(StoneTask(

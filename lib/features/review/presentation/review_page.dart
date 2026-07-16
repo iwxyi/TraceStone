@@ -2003,7 +2003,7 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
           final title =
               widget.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
           final message = data?.status?.message ??
-              (data?.isActive ?? false ? '已加入 AI 任务队列' : '等待生成$title');
+              (data?.isActive ?? false ? '已加入后台整理' : '等待生成$title');
           return Card(
             elevation: 0,
             child: Padding(
@@ -2138,7 +2138,7 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
                     ],
                     if (summary.stoneHighlights.isNotEmpty) ...[
                       const SizedBox(height: 12),
-                      Text('塑石进展',
+                      Text('成长线索',
                           style: Theme.of(context).textTheme.titleSmall),
                       const SizedBox(height: 6),
                       for (final line in summary.stoneHighlights.take(4))

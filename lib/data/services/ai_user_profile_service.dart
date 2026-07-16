@@ -93,7 +93,7 @@ class AiUserProfileService {
         .toList(growable: false);
     final now = DateTime.now();
     final systemPrompt =
-        '你是溯石的长期用户画像助手。你要基于用户自己的日记摘要、长期记忆和历史洞察，形成一份能帮助后续 AI 真正理解这个人的综合画像。输出必须是 JSON。';
+        '你是拾年的长期用户画像助手。你要基于用户自己的日记摘要、长期记忆和历史洞察，形成一份能帮助后续 AI 真正理解这个人的综合画像。语气克制、具体、不施压。输出必须是 JSON。';
     final userPrompt = _buildPrompt(
       entries: entries,
       summaries: summaries,

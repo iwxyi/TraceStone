@@ -166,7 +166,7 @@ class PeriodSummaryService {
     required AiContextPackage context,
   }) async {
     final systemPrompt =
-        '你是溯石的周期回顾助手。你必须基于日记摘要、用户画像、关系档案、相关记忆和塑石进展生成具体回顾，不做统计报表式堆砌，不虚构事实。输出必须是 JSON。';
+        '你是拾年的周期总结助手。你必须基于日记摘要、用户画像、关系档案、相关记忆和成长线索生成具体回顾，帮助用户看见生活脉络和真实变化；不做统计报表式堆砌，不制造任务压力，不虚构事实。输出必须是 JSON。';
     final monthlySummaries = type == PeriodSummaryType.year
         ? await _monthSummariesForYear(start.year)
         : const <PeriodSummary>[];
@@ -404,7 +404,7 @@ class PeriodSummaryService {
   "growth_highlights": ["成长、恢复、尝试或新的理解"],
   "notable_changes": ["和过去相比的变化，必须有来源支撑"],
   "relationship_highlights": ["重要关系互动变化"],
-  "stone_highlights": ["塑石行动进展"],
+  "stone_highlights": ["成长线索和微小变化"],
   "outlook": "${isYear ? '下一年的温和提醒，80字以内' : '下个月的温和提醒，60字以内'}",
   "representative_entry_ids": ["只能填下方出现过的 entry id"]
 }
@@ -431,7 +431,7 @@ ${context.profileFacts.isEmpty ? '无' : context.profileFacts.asMap().entries.ma
 关系档案：
 ${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.asMap().entries.map((entry) => _relationshipLine(entry.key, entry.value)).join('\n')}
 
-塑石行动：
+成长线索：
 ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('\n')}
 
 要求：
@@ -682,9 +682,9 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
       );
     }
     final lines = <String>[
-      if (created.isNotEmpty) '新增塑石行动 ${created.length} 个',
-      if (checkIns.isNotEmpty) '记录塑石进展 ${checkIns.length} 次',
-      if (completed.isNotEmpty) '完成塑石行动 ${completed.length} 个',
+      if (created.isNotEmpty) '收藏成长线索 ${created.length} 条',
+      if (checkIns.isNotEmpty) '记录微小变化 ${checkIns.length} 次',
+      if (completed.isNotEmpty) '标记已有变化 ${completed.length} 条',
       for (final task in completed.take(3)) '完成：${task.title}',
       if (completed.isEmpty)
         for (final task in created.take(3)) '进行中：${task.title}',

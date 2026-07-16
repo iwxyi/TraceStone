@@ -219,7 +219,7 @@ class _InsightBody extends StatelessWidget {
             insight.stoneDescription.isNotEmpty) ...[
           const SizedBox(height: 12),
           _SectionCard(
-            title: '塑石建议',
+            title: '可以轻轻尝试',
             icon: Icons.self_improvement_outlined,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
