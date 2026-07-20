@@ -1396,7 +1396,7 @@ class _MetaPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final enabled = onTap != null;
     final outline = shinen.cardBorderSide(theme.colorScheme.outlineVariant);
     final bg = switch (shinen.chipStyle) {
@@ -1475,7 +1475,7 @@ class _ReadMetaTags extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final style = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant.withValues(
         alpha: shinen.navStyle == ShinenNavStyle.dot ? 0.9 : 0.78,

@@ -345,7 +345,7 @@ class _StoneCheckInPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: shinen.cardColor(
@@ -501,7 +501,7 @@ class _StoneProgressHintBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final latest = hints.first;
     return DecoratedBox(
       decoration: BoxDecoration(

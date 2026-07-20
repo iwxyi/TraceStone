@@ -354,7 +354,7 @@ class _MetricChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: switch (shinen.chipStyle) {

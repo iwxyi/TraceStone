@@ -686,7 +686,7 @@ class _EntryPreviewPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final meta = [
       if (entry.location.trim().isNotEmpty &&
           entry.location != '未选择地点' &&
@@ -2642,7 +2642,7 @@ class _TimelineMonthHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     return Padding(
       padding: EdgeInsets.only(left: indentLeft ? 56 : 0),
       child: SizedBox(
@@ -2939,7 +2939,7 @@ class _TimelineEntry extends StatelessWidget {
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final radius = shinen.cardRadius;
     final isDark = theme.brightness == Brightness.dark;
 

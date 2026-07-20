@@ -232,7 +232,7 @@ class _ThemePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final isDark = theme.brightness == Brightness.dark;
 
     return DecoratedBox(

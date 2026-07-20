@@ -774,3 +774,9 @@ class TraceStoneColors extends ThemeExtension<TraceStoneColors> {
     );
   }
 }
+
+extension ShinenThemeDataExtension on ThemeData {
+  TraceStoneColors get shinenColors =>
+      extension<TraceStoneColors>() ??
+      AppTheme.themeFrom(AppTheme.decadePaper).extension<TraceStoneColors>()!;
+}

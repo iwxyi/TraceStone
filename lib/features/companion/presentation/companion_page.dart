@@ -424,8 +424,7 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final shinen = theme.extension<TraceStoneColors>() ??
-        AppTheme.themeFrom(AppTheme.decadePaper).extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final isDark = theme.brightness == Brightness.dark;
     final radius = switch (shinen.cardStyle) {
       ShinenCardStyle.glass => 18.0,

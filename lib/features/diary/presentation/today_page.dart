@@ -767,7 +767,7 @@ class _HomeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     return Card(
       elevation: theme.cardTheme.elevation ?? 0,
       color: theme.cardTheme.color,

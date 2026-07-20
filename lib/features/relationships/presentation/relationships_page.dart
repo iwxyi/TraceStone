@@ -430,8 +430,7 @@ class _RelationshipDecisionCardState extends State<_RelationshipDecisionCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>() ??
-        AppTheme.themeFrom(AppTheme.decadePaper).extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final visibleDecisions = _filter == null
         ? widget.decisions
         : widget.decisions
@@ -681,8 +680,7 @@ class _RelationshipCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shinen = theme.extension<TraceStoneColors>() ??
-        AppTheme.themeFrom(AppTheme.decadePaper).extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final latest = profile.recentInteractions.firstOrNull;
     final aliasNames = _aliasNames(profile);
 

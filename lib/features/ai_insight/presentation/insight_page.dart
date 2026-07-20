@@ -918,7 +918,7 @@ class _SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final shinen = theme.extension<TraceStoneColors>()!;
+    final shinen = theme.shinenColors;
     final iconRadius = shinen.shapeScale == ShinenShapeScale.large ? 12.0 : 8.0;
     return Card(
       elevation: theme.cardTheme.elevation ?? 0,
