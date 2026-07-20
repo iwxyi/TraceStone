@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import '../models/ai_context_package.dart';
 import '../models/ai_prompt_trace.dart';
-import '../models/ai_profile.dart';
 import '../models/ai_research_session.dart';
 import '../models/companion_answer.dart';
 import '../models/stone_task.dart';
@@ -14,23 +13,6 @@ import 'ai_context_builder.dart';
 import 'ai_search_service.dart';
 
 typedef CompanionResearchProgress = void Function(CompanionResearchStep step);
-
-const _genericNameStops = {
-  '领导',
-  '对象',
-  '伴侣',
-  '同事',
-  '朋友',
-  '今天',
-  '昨天',
-  '去年',
-  '今年',
-  '给过什',
-  '是什么',
-  '怎么样',
-  '怎么办',
-  '为什么',
-};
 
 class CompanionAnswerService {
   const CompanionAnswerService({
@@ -86,45 +68,44 @@ class CompanionAnswerService {
       await _researchSessionRepository.saveSession(session);
     }
 
-    await addStep(const CompanionResearchStep(
-      title: '理解问题',
-      status: '正在分析问题需要哪些资料',
-      detail: '识别人物、时间、地点、事件和可能的多跳线索。',
-    ));
-    final context = await _contextBuilder.buildForQuestion(question);
-    final primaryEvidence = _evidenceFromContext(context);
-    await addStep(CompanionResearchStep(
-      title: '检索基础资料',
-      status: '已完成基础检索',
-      detail:
-          '找到 ${context.searchMatches.length} 条搜索命中、${context.relatedMemories.length} 条记忆、${context.relationshipProfiles.length} 条关系档案。',
-      evidence: primaryEvidence.take(12).toList(growable: false),
-      developerDetail: context.debugSummary,
-    ));
-    final researchResult = await _runDynamicResearch(
-      question: question,
-      context: context,
-      addStep: addStep,
-    );
-    final expandedEvidence = researchResult.evidence;
-    await addStep(CompanionResearchStep(
-      title: '评估证据覆盖',
-      status: researchResult.coverageStatus,
-      detail: researchResult.coverageDetail,
-      evidence: _dedupeEvidence([...primaryEvidence, ...expandedEvidence])
-          .take(10)
-          .toList(growable: false),
-      developerDetail: researchResult.developerDetail,
-    ));
-    await addStep(CompanionResearchStep(
-      title: '生成回答',
-      status: '正在基于证据组织 Markdown 回答',
-      detail: '会优先说明能确定的结论、不确定性和关键来源。',
-      evidence: _dedupeEvidence([...primaryEvidence, ...expandedEvidence])
-          .take(12)
-          .toList(growable: false),
-    ));
     try {
+      await addStep(const CompanionResearchStep(
+        title: '理解问题',
+        status: '正在让 AI 规划需要核对的资料',
+        detail: '由模型拆分子问题、确定检索线索和停止条件。',
+      ));
+      final context = await _contextBuilder.buildForQuestion(question);
+      final primaryEvidence = _evidenceFromContext(context);
+      await addStep(CompanionResearchStep(
+        title: '检索基础资料',
+        status: '已完成基础检索',
+        detail:
+            '找到 ${context.searchMatches.length} 条搜索命中、${context.relatedMemories.length} 条记忆、${context.relationshipProfiles.length} 条关系档案。',
+        evidence: primaryEvidence.take(12).toList(growable: false),
+        developerDetail: context.debugSummary,
+      ));
+      final researchResult = await _runDynamicResearch(
+        question: question,
+        context: context,
+        primaryEvidence: primaryEvidence,
+        addStep: addStep,
+      );
+      final expandedEvidence = researchResult.evidence;
+      final allEvidence =
+          _dedupeEvidence([...primaryEvidence, ...expandedEvidence]);
+      await addStep(CompanionResearchStep(
+        title: '评估证据覆盖',
+        status: researchResult.coverageStatus,
+        detail: researchResult.coverageDetail,
+        evidence: allEvidence.take(10).toList(growable: false),
+        developerDetail: researchResult.developerDetail,
+      ));
+      await addStep(CompanionResearchStep(
+        title: '生成回答',
+        status: '正在基于证据组织 Markdown 回答',
+        detail: '会优先说明能确定的结论、不确定性和关键来源。',
+        evidence: allEvidence.take(12).toList(growable: false),
+      ));
       const systemPrompt =
           '你是拾年的成长陪伴助手。你只能基于给定的用户历史材料回答，在轻松、不施压的氛围中帮助用户记录生活、理解自己、看见变化；不诊断、不说教、不虚构。输出必须是 JSON。回答正文可以使用 Markdown。';
       final userPrompt = _buildPrompt(question, context, steps);
@@ -162,12 +143,17 @@ class CompanionAnswerService {
         rawResponse: jsonText,
       ));
       final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+      final verified = await _verifyAnswer(
+        question: question,
+        context: context,
+        researchSteps: steps,
+        answerJson: parsed,
+      );
       final sourceFilter = _CompanionSourceFilter(
         context,
-        extraEvidence:
-            _dedupeEvidence([...primaryEvidence, ...expandedEvidence]),
+        extraEvidence: allEvidence,
       );
-      final sources = sourceFilter.sources(parsed['sources']);
+      final sources = sourceFilter.sources(verified['sources']);
       if (sourceFilter.filteredCount > 0) {
         await _promptTraceRepository.saveTrace(AiPromptTrace(
           id: trace.id,
@@ -187,8 +173,8 @@ class CompanionAnswerService {
         ));
       }
       final answer = CompanionAnswer(
-        answer: (parsed['answer'] as String? ?? '').trim(),
-        followUp: (parsed['follow_up'] as String? ?? '').trim(),
+        answer: (verified['answer'] as String? ?? '').trim(),
+        followUp: (verified['follow_up'] as String? ?? '').trim(),
         sources: sources,
         usedFallback: false,
         researchSteps: steps,
@@ -202,20 +188,16 @@ class CompanionAnswerService {
       );
       await _researchSessionRepository.saveSession(session);
       return answer;
-    } on Object {
-      final answer = _fallbackAnswer(question, context, steps);
+    } on Object catch (error) {
       session = session.copyWith(
         updatedAt: DateTime.now(),
-        state: answer.usedFallback
-            ? AiResearchSessionState.completed
-            : AiResearchSessionState.failed,
+        state: AiResearchSessionState.failed,
         completedAt: DateTime.now(),
-        error: answer.usedFallback ? null : 'companion answer failed',
-        answerPreview: _preview(answer.answer),
+        error: error.toString(),
         steps: List.unmodifiable(steps),
       );
       await _researchSessionRepository.saveSession(session);
-      return answer;
+      rethrow;
     }
   }
 
@@ -317,101 +299,6 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
         .toList(growable: false);
   }
 
-  CompanionAnswer _fallbackAnswer(
-    String question,
-    AiContextPackage context,
-    List<CompanionResearchStep> researchSteps,
-  ) {
-    final memories = context.relatedMemories.take(3).toList();
-    final matches = context.searchMatches.take(3).toList();
-    final profiles = context.profileFacts.take(2).toList();
-    final relationships = context.relationshipProfiles.take(2).toList();
-    final stones = context.stoneTasks.take(2).toList();
-    if (memories.isEmpty &&
-        matches.isEmpty &&
-        profiles.isEmpty &&
-        relationships.isEmpty &&
-        stones.isEmpty) {
-      return CompanionAnswer(
-        answer: '我暂时没有找到足够相关的历史记录来回答“$question”。可以换一种更具体的问法，比如加上时间、人物或事件。',
-        followUp: '这件事大概发生在什么时候？',
-        sources: const [],
-        usedFallback: true,
-        researchSteps: researchSteps,
-      );
-    }
-    return CompanionAnswer(
-      answer: [
-        '我先根据本地资料给你一个简短回答：',
-        if (relationships.isNotEmpty) ...[
-          for (final relationship in relationships)
-            _relationshipFallbackLine(relationship),
-        ],
-        if (profiles.isNotEmpty) ...[
-          for (final profile in profiles)
-            '关于你自己，已有候选观察是“${profile.field}”：${profile.value}。',
-        ],
-        if (memories.isNotEmpty || matches.isNotEmpty) ...[
-          for (final result in memories)
-            '历史记忆“${result.memory.title}”：${result.memory.summary}',
-          for (final match in matches) '相关记录“${match.title}”：${match.summary}',
-        ],
-        if (stones.isNotEmpty) ...[
-          for (final task in stones) '成长线索“${task.title}”：${task.description}',
-        ],
-        '这些只是本地检索到的线索，不足以直接下结论。配置自定义 AI 后，我可以把它们整理成更完整的分析。',
-      ].join('\n'),
-      followUp: '这些记录里，哪一条最接近你现在想问的感觉？',
-      sources: [
-        for (final result in memories)
-          CompanionAnswerSource(
-            title: result.memory.title,
-            reason: result.reasons.join('；'),
-            score: result.score,
-            sourceType: 'memory',
-            sourceId: result.memory.id,
-          ),
-        for (final match in matches)
-          CompanionAnswerSource(
-            title: match.title,
-            reason: match.reasons.join('；'),
-            score: match.score,
-            sourceType: match.sourceType,
-            sourceId: match.sourceId,
-          ),
-        for (final profile in profiles)
-          CompanionAnswerSource(
-            title: profile.field,
-            reason: '${profile.evidenceCount} 条证据',
-            score: (profile.confidence * 10).round(),
-            sourceType: 'profile',
-            sourceId:
-                _profileSourceId(profiles.indexOf(profile)).split(':').last,
-          ),
-        for (final relationship in relationships)
-          CompanionAnswerSource(
-            title: relationship.personName,
-            reason: '${relationship.interactionCount} 次互动',
-            score: (relationship.confidence * 10).round(),
-            sourceType: 'relationship',
-            sourceId: _relationshipSourceId(relationships.indexOf(relationship))
-                .split(':')
-                .last,
-          ),
-        for (final task in stones)
-          CompanionAnswerSource(
-            title: task.title,
-            reason: '成长线索',
-            score: 1,
-            sourceType: 'stone',
-            sourceId: task.id,
-          ),
-      ],
-      usedFallback: true,
-      researchSteps: researchSteps,
-    );
-  }
-
   List<CompanionResearchEvidence> _evidenceFromContext(
     AiContextPackage context,
   ) {
@@ -468,33 +355,31 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
   Future<_DynamicResearchResult> _runDynamicResearch({
     required String question,
     required AiContextPackage context,
+    required List<CompanionResearchEvidence> primaryEvidence,
     required Future<void> Function(CompanionResearchStep step) addStep,
   }) async {
-    final subquestions = _splitSubquestions(question);
-    final budget = _ResearchBudget.forQuestion(question, subquestions.length);
-    final seeds = _seedQueries(question, context);
-    final queues = [
-      for (final subquestion in subquestions)
-        _ResearchSubquestion(
-          text: subquestion,
-          queue: _ResearchQueryQueue([
-            ..._localSeedQueries(subquestion, context),
-            ..._seedQueries(subquestion, context),
-            ...seeds,
-          ]),
-        ),
-    ];
-    if (queues.isEmpty) {
-      return const _DynamicResearchResult(evidence: []);
-    }
+    final plan = await _createResearchPlan(question, context, primaryEvidence);
+    final budget = _ResearchBudget.forPlan(plan);
+    final queues = plan.items
+        .map(
+          (item) => _ResearchSubquestion(
+            text: item.question,
+            queue: _ResearchQueryQueue(item.queries),
+          ),
+        )
+        .toList(growable: false);
+    if (queues.isEmpty) throw const AiClientException('AI 未生成研究计划');
 
     await addStep(CompanionResearchStep(
       title: '规划研究路径',
       status:
           '拆成 ${queues.length} 个子问题，最多 ${budget.maxRounds} 轮、${budget.maxQueries} 次检索',
-      detail: queues.map((item) => item.text).join('；'),
+      detail:
+          plan.items.map((item) => '${item.question}：${item.reason}').join('；'),
       developerDetail:
-          'budget(rounds=${budget.maxRounds}, queries=${budget.maxQueries}, evidence=${budget.maxEvidence}) seeds=${seeds.join(' | ')}',
+          'aiPlan confidence=${plan.confidence.toStringAsFixed(2)} '
+          'budget(rounds=${budget.maxRounds}, queries=${budget.maxQueries}, evidence=${budget.maxEvidence}) '
+          'stop=${plan.stopCondition}',
     ));
 
     final expandedEvidence = <CompanionResearchEvidence>[];
@@ -546,13 +431,6 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
         }
         roundNewEvidence += newEvidence.length;
         plannedQuery.subquestion.evidenceCount += newEvidence.length;
-        final followUps = _followUpQueriesFromEvidence(
-          plannedQuery.subquestion.text,
-          plannedQuery.query,
-          evidence,
-        );
-        plannedQuery.subquestion.queue.addAll(followUps);
-
         await addStep(CompanionResearchStep(
           title: '整理“${plannedQuery.query}”',
           status: '找到 ${evidence.length} 条候选，新增 ${newEvidence.length} 条证据',
@@ -562,12 +440,35 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
           evidence: newEvidence.take(8).toList(growable: false),
           batchSummaries: batches,
           developerDetail:
-              'subquestion=${plannedQuery.subquestion.text} query=${plannedQuery.query} matches=${matches.length} followUps=${followUps.join(' | ')} sourceTypes=${_sourceTypeSummary(matches)}',
+              'subquestion=${plannedQuery.subquestion.text} query=${plannedQuery.query} matches=${matches.length} sourceTypes=${_sourceTypeSummary(matches)}',
         ));
         if (expandedEvidence.length >= budget.maxEvidence) break;
       }
       if (expandedEvidence.length >= budget.maxEvidence) break;
-      if (roundNewEvidence == 0 && round >= 2) {
+      final decision = await _planNextResearchRound(
+        question: question,
+        plan: plan,
+        round: round,
+        queues: queues,
+        evidence: _dedupeEvidence([...primaryEvidence, ...expandedEvidence]),
+        remainingQueries: budget.remaining(queryCount),
+      );
+      for (final item in decision.queries) {
+        final target = queues.firstWhere(
+          (queue) => queue.text == item.subquestion,
+          orElse: () => queues.first,
+        );
+        target.queue.addAll([item.query]);
+      }
+      await addStep(CompanionResearchStep(
+        title: 'AI 判断下一步',
+        status: decision.shouldContinue ? '继续追踪新线索' : '证据已经收敛',
+        detail: decision.reason,
+        developerDetail:
+            'round=$round next=${decision.queries.map((item) => '${item.subquestion}:${item.query}').join(' | ')}',
+      ));
+      if (!decision.shouldContinue) break;
+      if (roundNewEvidence == 0 && decision.queries.isEmpty && round >= 2) {
         await addStep(CompanionResearchStep(
           title: '研究收敛',
           status: '连续扩展没有新增关键证据',
@@ -590,334 +491,211 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
       subquestionEvidenceCounts: {
         for (final item in queues) item.text: item.evidenceCount,
       },
+      coverageNote: plan.stopCondition,
       queryCount: queryCount,
       budget: budget,
     );
   }
 
-  List<String> _splitSubquestions(String question) {
-    final parts = question
-        .split(RegExp(r'[？?；;。]\s*|(?:还有|以及|另外|同时|并且)'))
-        .map((item) => item.trim())
-        .where((item) => item.length >= 2)
+  Future<_ResearchPlan> _createResearchPlan(
+    String question,
+    AiContextPackage context,
+    List<CompanionResearchEvidence> primaryEvidence,
+  ) async {
+    const systemPrompt = '你是拾年的研究规划器。你必须为用户问题规划可验证的个人历史检索路径，不要回答问题。输出必须是 JSON。';
+    final userPrompt = '''用户问题：
+$question
+
+已有基础资料：
+${_evidencePromptLines(primaryEvidence.take(16).toList(growable: false))}
+
+请生成研究计划。要求：
+1. 不要依赖固定模板，按问题实际复杂度拆分 1-6 个子问题；
+2. 每个子问题给出 1-5 个检索查询，查询应是用户历史中可能出现的自然关键词、人物、地点、事件或时间组合；
+3. 如果问题需要多跳，请先查能定位下一跳的信息，例如“领导”可能先查真实姓名，再查姓名相关记录；
+4. 不要回答问题，不要编造资料中没有的人名；
+5. stop_condition 写清楚什么情况下可以停止检索；
+6. confidence 表示计划本身的把握，0-1。
+
+输出 JSON：
+{
+  "subquestions": [
+    {
+      "question": "需要回答的子问题",
+      "reason": "为什么需要查这条线",
+      "queries": ["检索词1", "检索词2"]
+    }
+  ],
+  "stop_condition": "停止检索条件",
+  "confidence": 0.7
+}''';
+    final jsonText = await _client.completeJson(
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
+      maxTokens: 900,
+    );
+    final parsed = _mapValue(jsonDecode(jsonText));
+    final items = _listValue(parsed['subquestions'])
+        .map(_mapValue)
+        .map((item) {
+          final queries = _stringList(item['queries'])
+              .map((query) => query.trim())
+              .where((query) => query.length >= 2)
+              .take(5)
+              .toList(growable: false);
+          return _ResearchPlanItem(
+            question: _stringValue(item['question']).trim(),
+            reason: _stringValue(item['reason']).trim(),
+            queries: queries,
+          );
+        })
+        .where((item) => item.question.isNotEmpty && item.queries.isNotEmpty)
+        .take(6)
         .toList(growable: false);
-    if (parts.isEmpty) return [question.trim()];
-    return parts.take(6).toList(growable: false);
+    if (items.isEmpty) {
+      throw const AiClientException('AI 研究计划为空');
+    }
+    return _ResearchPlan(
+      items: items,
+      stopCondition: _stringValue(parsed['stop_condition']).trim(),
+      confidence: _doubleValue(parsed['confidence'], fallback: 0.5),
+    );
   }
 
-  List<String> _seedQueries(String question, AiContextPackage context) {
-    final queries = <String>[];
-    void add(String value) {
-      final normalized = value.trim();
-      if (normalized.length < 2) return;
-      if (queries.contains(normalized)) return;
-      queries.add(normalized);
+  Future<_NextResearchDecision> _planNextResearchRound({
+    required String question,
+    required _ResearchPlan plan,
+    required int round,
+    required List<_ResearchSubquestion> queues,
+    required List<CompanionResearchEvidence> evidence,
+    required int remainingQueries,
+  }) async {
+    if (remainingQueries <= 0) {
+      return const _NextResearchDecision(
+        shouldContinue: false,
+        reason: '检索预算已用完。',
+      );
     }
+    const systemPrompt =
+        '你是拾年的研究控制器。你要根据已找到的证据判断是否需要继续检索，以及下一轮该查什么。输出必须是 JSON。';
+    final userPrompt = '''用户问题：
+$question
 
-    for (final query in _expansionQueries(question, context)) {
-      add(query);
-    }
-    for (final term in _topicTerms(question).take(8)) {
-      add(term);
-    }
-    if (queries.isEmpty) add(question);
-    return queries.take(12).toList(growable: false);
+原始研究计划：
+${plan.items.map((item) => '- ${item.question}｜${item.reason}｜queries=${item.queries.join('、')}').join('\n')}
+
+当前轮次：$round
+剩余检索次数：$remainingQueries
+停止条件：${plan.stopCondition}
+
+当前证据：
+${_evidencePromptLines(evidence.take(28).toList(growable: false))}
+
+子问题覆盖：
+${queues.map((item) => '- ${item.text}：${item.evidenceCount} 条证据，待查 ${item.queue.pendingCount} 条').join('\n')}
+
+请判断下一步。要求：
+1. 如果证据已经足够回答，should_continue=false；
+2. 如果证据不足，给出 1-5 条新的检索 query；
+3. 新 query 必须基于已出现的证据、用户问题或明确缺口，不要凭空发明人物或事件；
+4. queries[].subquestion 必须使用上方某个子问题原文。
+
+输出 JSON：
+{
+  "should_continue": true,
+  "reason": "为什么继续或停止",
+  "queries": [
+    {"subquestion": "子问题原文", "query": "下一轮检索词", "reason": "为什么查"}
+  ]
+}''';
+    final jsonText = await _client.completeJson(
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
+      maxTokens: 800,
+    );
+    final parsed = _mapValue(jsonDecode(jsonText));
+    final queries = _listValue(parsed['queries'])
+        .map(_mapValue)
+        .map((item) => _NextResearchQuery(
+              subquestion: _stringValue(item['subquestion']).trim(),
+              query: _stringValue(item['query']).trim(),
+              reason: _stringValue(item['reason']).trim(),
+            ))
+        .where((item) => item.subquestion.isNotEmpty && item.query.length >= 2)
+        .take(5)
+        .toList(growable: false);
+    return _NextResearchDecision(
+      shouldContinue:
+          _boolValue(parsed['should_continue']) && queries.isNotEmpty,
+      reason: _stringValue(parsed['reason']).trim(),
+      queries: queries,
+    );
   }
 
-  List<String> _localSeedQueries(String question, AiContextPackage context) {
-    final queries = <String>[];
-    void add(String value) {
-      final normalized = value.trim();
-      if (normalized.length < 2) return;
-      if (queries.contains(normalized)) return;
-      queries.add(normalized);
-    }
+  Future<Map<String, dynamic>> _verifyAnswer({
+    required String question,
+    required AiContextPackage context,
+    required List<CompanionResearchStep> researchSteps,
+    required Map<String, dynamic> answerJson,
+  }) async {
+    const systemPrompt =
+        '你是拾年的回答校验器。你只检查回答是否严格基于证据、是否遗漏子问题、是否把推测说成事实。输出必须是 JSON。';
+    final userPrompt = '''用户问题：
+$question
 
-    if (_containsAny(question, const ['领导', '对象', '伴侣', '女朋友', '男朋友', '同事'])) {
-      for (final relationship in context.relationshipProfiles) {
-        add(relationship.personName);
-        add('${relationship.personName} ${_intentKeywords(question).take(3).join(' ')}');
-      }
-      for (final match in context.searchMatches.take(8)) {
-        for (final name in _namesFromText('${match.title} ${match.summary}')) {
-          add(name);
-          add('$name ${_intentKeywords(question).take(3).join(' ')}');
-        }
-      }
+候选回答 JSON：
+${jsonEncode(answerJson)}
+
+可用证据与研究过程：
+${_buildPrompt(question, context, researchSteps)}
+
+请校验候选回答。要求：
+1. 如果回答没有超出证据，status=ok，并原样返回 answer/follow_up/sources；
+2. 如果有轻微超证据、遗漏不确定性或结构不清，status=revise，并给出修正版；
+3. 如果回答严重编造或无法基于证据回答，status=reject，并说明 issues；
+4. sources 只能保留上方可用 source_id。
+
+输出 JSON：
+{
+  "status": "ok",
+  "issues": ["问题"],
+  "answer": "校验后的 Markdown 回答",
+  "follow_up": "追问",
+  "sources": [{"source_id": "entry_summary:xxx", "title": "来源标题", "reason": "引用原因"}]
+}''';
+    final jsonText = await _client.completeJson(
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
+      maxTokens: 1400,
+    );
+    final parsed = _mapValue(jsonDecode(jsonText));
+    final status = _stringValue(parsed['status']).trim().toLowerCase();
+    if (status == 'reject') {
+      final issues = _stringList(parsed['issues']).join('；');
+      throw AiClientException(issues.isEmpty ? 'AI 回答校验未通过' : issues);
     }
-    for (final name in _namesFromText(question)) {
-      add(name);
-      add('$name ${_intentKeywords(question).take(3).join(' ')}');
+    if (status != 'ok' && status != 'revise') {
+      throw const AiClientException('AI 回答校验返回无效状态');
     }
-    for (final term in _topicTerms(question).take(4)) {
-      add(term);
+    final answer = _stringValue(parsed['answer']).trim();
+    if (answer.isEmpty) {
+      throw const AiClientException('AI 回答校验返回空回答');
     }
-    for (final relationship in context.relationshipProfiles) {
-      if (question.contains(relationship.personName) ||
-          relationship.names.any(question.contains)) {
-        add(relationship.personName);
-      }
-    }
-    return queries;
+    return parsed;
   }
 
-  List<String> _followUpQueriesFromEvidence(
-    String subquestion,
-    String currentQuery,
-    List<CompanionResearchEvidence> evidence,
-  ) {
-    if (evidence.isEmpty) return const [];
-    final queries = <String>[];
-    void add(String value) {
-      final normalized = value.trim();
-      if (normalized.length < 2) return;
-      if (normalized == currentQuery.trim()) return;
-      if (queries.contains(normalized)) return;
-      queries.add(normalized);
-    }
-
-    final intents = _intentKeywords(subquestion);
-    for (final item in evidence.take(10)) {
-      final text = '${item.title} ${item.summary} ${item.reason}';
-      for (final name in _namesFromText(text)) {
-        add(name);
-        add('$name ${intents.take(3).join(' ')}');
-      }
-      for (final topic in _topicTerms(text).take(4)) {
-        if (_isLowValueToken(topic)) continue;
-        add('$topic ${intents.take(2).join(' ')}');
-      }
-    }
-    return queries.take(8).toList(growable: false);
+  String _evidencePromptLines(List<CompanionResearchEvidence> evidence) {
+    if (evidence.isEmpty) return '无';
+    return evidence.map((item) {
+      final sourceId = item.sourceType == null || item.sourceId == null
+          ? ''
+          : formatAiSourceId(item.sourceType!, item.sourceId!);
+      return '- source_id=$sourceId｜entry=${item.entryId ?? ''}｜score ${item.score}｜${item.title}｜${item.summary}｜${item.reason}';
+    }).join('\n');
   }
 
   String _evidenceKey(CompanionResearchEvidence item) {
     return '${item.sourceType}:${item.sourceId}:${item.entryId}:${item.title}';
-  }
-
-  List<String> _expansionQueries(String question, AiContextPackage context) {
-    final queries = <String>[];
-    final lower = question.toLowerCase();
-    void add(String value) {
-      final normalized = value.trim();
-      if (normalized.length < 2) return;
-      if (queries.contains(normalized)) return;
-      queries.add(normalized);
-    }
-
-    for (final relationship in context.relationshipProfiles) {
-      if (question.contains(relationship.personName) ||
-          relationship.names.any(question.contains) ||
-          _containsAny(
-              question, const ['领导', '对象', '伴侣', '女朋友', '男朋友', '同事'])) {
-        add(relationship.personName);
-        add('${relationship.personName} ${_intentKeywords(question).join(' ')}');
-      }
-    }
-    for (final match in context.searchMatches.take(8)) {
-      for (final name in _namesFromText('${match.title} ${match.summary}')) {
-        add(name);
-        add('$name ${_intentKeywords(question).join(' ')}');
-      }
-    }
-    for (final query in _questionClueQueries(question)) {
-      add(query);
-    }
-    if (lower.contains('singapore') || question.contains('新加坡')) {
-      add('新加坡 樟宜 Bugis 滨海湾');
-    }
-    if (question.contains('杭州') && question.contains('梅')) {
-      add('杭州 梅花 灵峰 探梅 盛开');
-    }
-    if (_containsAny(question, const ['月经', '姨妈', '生理期', '周期'])) {
-      add('姨妈 生理期 周期 痛经');
-    }
-    if (_containsAny(question, const ['升职', '晋升', '向上管理', '领导'])) {
-      add('升职 晋升 领导 汇报 向上管理');
-    }
-    return queries.take(8).toList(growable: false);
-  }
-
-  List<String> _questionClueQueries(String question) {
-    final queries = <String>[];
-    void add(String value) {
-      final normalized = value.trim();
-      if (normalized.length < 2) return;
-      if (queries.contains(normalized)) return;
-      queries.add(normalized);
-    }
-
-    final names = _namesFromText(question);
-    final intents = _intentKeywords(question);
-    for (final name in names) {
-      add(name);
-      add('$name ${intents.join(' ')}');
-    }
-    final timeTerms = _timeTerms(question);
-    final topicTerms = _topicTerms(question);
-    for (final time in timeTerms) {
-      for (final topic in topicTerms.take(4)) {
-        add('$time $topic');
-      }
-    }
-    for (final topic in topicTerms.take(6)) {
-      add(topic);
-    }
-    if (topicTerms.length >= 2) {
-      for (var i = 0; i < topicTerms.length - 1 && i < 4; i++) {
-        add('${topicTerms[i]} ${topicTerms[i + 1]}');
-      }
-    }
-    return queries;
-  }
-
-  List<String> _intentKeywords(String question) {
-    final keywords = <String>[];
-    for (final item in const [
-      '第一次',
-      '最早',
-      '最近',
-      '去年',
-      '升职',
-      '晋升',
-      '向上管理',
-      '领导',
-      '月经',
-      '姨妈',
-      '周期',
-      '新加坡',
-      '杭州',
-      '梅花',
-      '旅行',
-      '酒店',
-      '情绪',
-      '压力',
-      '睡眠',
-      '健身',
-      '饮食',
-      '关系',
-      '沟通',
-    ]) {
-      if (question.contains(item)) keywords.add(item);
-    }
-    return keywords.isEmpty ? [question] : keywords;
-  }
-
-  List<String> _timeTerms(String question) {
-    final terms = <String>[];
-    for (final item in const [
-      '今天',
-      '昨天',
-      '前天',
-      '最近',
-      '上周',
-      '本周',
-      '上个月',
-      '这个月',
-      '去年',
-      '今年',
-      '前年',
-      '过去一年',
-      '最近三个月',
-    ]) {
-      if (question.contains(item)) terms.add(item);
-    }
-    for (final match
-        in RegExp(r'20\d{2}年?(?:\d{1,2}月?)?').allMatches(question)) {
-      terms.add(match.group(0)!);
-    }
-    return terms;
-  }
-
-  List<String> _topicTerms(String question) {
-    final stops = {
-      '什么',
-      '哪些',
-      '怎么',
-      '如何',
-      '是不是',
-      '有没有',
-      '时候',
-      '可以',
-      '可能',
-      '适合',
-      '最近',
-      '去年',
-      '今年',
-      '今天',
-      '这个',
-      '那个',
-      '自己',
-      '我的',
-      '我和',
-      '以及',
-      '还是',
-    };
-    final terms = <String>[];
-    final cleaned = question.replaceAll(
-      RegExp(r'[\s\n\r\t，。！？；：、“”‘’（）《》【】,.!?;:#>*_`\[\](){}/\\-]+'),
-      ' ',
-    );
-    for (final part in cleaned.split(' ')) {
-      final value = part.trim();
-      if (value.length >= 2 && value.length <= 12 && !stops.contains(value)) {
-        terms.add(value);
-      }
-      if (value.length >= 5) {
-        for (var i = 0; i <= value.length - 2; i += 2) {
-          final token = value.substring(i, i + 2);
-          if (!stops.contains(token)) terms.add(token);
-        }
-      }
-    }
-    for (final item in const [
-      '新加坡',
-      '杭州',
-      '梅花',
-      '升职',
-      '晋升',
-      '向上管理',
-      '领导',
-      '月经',
-      '姨妈',
-      '生理期',
-      '周期',
-      '旅行',
-      '酒店',
-      '健身',
-      '睡眠',
-      '饮食',
-      '压力',
-      '情绪',
-      '沟通',
-      '关系',
-    ]) {
-      if (question.contains(item)) terms.add(item);
-    }
-    return terms.toSet().toList(growable: false);
-  }
-
-  List<String> _namesFromText(String text) {
-    final names = <String>{};
-    final patterns = [
-      RegExp(r'(?:领导是|新领导是|直属领导|领导)([\u4e00-\u9fa5]{2,3})'),
-      RegExp(r'(?:和|跟|见到|认识|对象|伴侣)([\u4e00-\u9fa5]{2,3})'),
-      RegExp(r'(周岚|陈砚|小红|阿哲|林澈)'),
-    ];
-    for (final pattern in patterns) {
-      for (final match in pattern.allMatches(text)) {
-        final value = match.group(1)?.trim();
-        if (value == null || value.length < 2) continue;
-        if (_genericNameStops.contains(value)) continue;
-        if (value.endsWith('怎') || value.endsWith('什')) continue;
-        names.add(value);
-      }
-    }
-    return names.toList(growable: false);
-  }
-
-  bool _containsAny(String text, List<String> terms) {
-    return terms.any(text.contains);
   }
 
   List<CompanionResearchEvidence> _dedupeEvidence(
@@ -976,15 +754,7 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
 
   String _batchKey(String query, CompanionResearchEvidence item) {
     final source = item.sourceType ?? 'unknown';
-    final text = '${item.title} ${item.summary} ${item.reason}';
-    for (final term in _intentKeywords(query)) {
-      if (term.trim().isNotEmpty && text.contains(term)) {
-        return '$source / $term';
-      }
-    }
-    final name = _namesFromText(text).firstOrNull;
-    if (name != null) return '$source / $name';
-    return source;
+    return '$source / $query';
   }
 
   List<String> _topTerms(List<CompanionResearchEvidence> evidence) {
@@ -1063,30 +833,45 @@ ${researchSteps.isEmpty ? '无' : researchSteps.map((step) {
     return match.sourceType != 'profile' && match.sourceType != 'relationship';
   }
 
-  String _relationshipFallbackLine(RelationshipProfile relationship) {
-    final latest = relationship.recentInteractions.isEmpty
-        ? null
-        : relationship.recentInteractions.first;
-    final parts = [
-      '关于“${relationship.personName}”',
-      if (relationship.relationship?.isNotEmpty ?? false)
-        '关系类型记录为 ${relationship.relationship}',
-      '共有 ${relationship.interactionCount} 次互动线索',
-      if (relationship.emotions.isNotEmpty)
-        '常见情绪有 ${relationship.emotions.take(2).join('、')}',
-      if (relationship.patterns.isNotEmpty)
-        '可能的互动模式是 ${relationship.patterns.take(2).join('；')}',
-      if (latest != null && latest.summary.isNotEmpty)
-        '最近一次是：${latest.summary}',
-    ];
-    return '${parts.join('，')}。';
-  }
-
   String _preview(String text) {
     final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
     return normalized.length <= 600
         ? normalized
         : '${normalized.substring(0, 600)}…';
+  }
+
+  Map<String, dynamic> _mapValue(Object? value) {
+    if (value is! Map) return const {};
+    return {
+      for (final entry in value.entries)
+        if (entry.key is String) entry.key as String: entry.value,
+    };
+  }
+
+  List<Object?> _listValue(Object? value) {
+    if (value is List) return value;
+    return const [];
+  }
+
+  List<String> _stringList(Object? value) {
+    return _listValue(value)
+        .map((item) => _stringValue(item).trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  String _stringValue(Object? value) =>
+      value is String ? value : value?.toString() ?? '';
+
+  bool _boolValue(Object? value) {
+    if (value is bool) return value;
+    if (value is String) return value.toLowerCase() == 'true';
+    return false;
+  }
+
+  double _doubleValue(Object? value, {required double fallback}) {
+    if (value is num) return value.toDouble().clamp(0, 1);
+    return (double.tryParse(value?.toString() ?? '') ?? fallback).clamp(0, 1);
   }
 
   static String _profileSourceId(int index) => 'profile:p${index + 1}';
@@ -1246,6 +1031,54 @@ class _AllowedCompanionSource {
   final int score;
 }
 
+class _ResearchPlan {
+  const _ResearchPlan({
+    required this.items,
+    required this.stopCondition,
+    required this.confidence,
+  });
+
+  final List<_ResearchPlanItem> items;
+  final String stopCondition;
+  final double confidence;
+}
+
+class _ResearchPlanItem {
+  const _ResearchPlanItem({
+    required this.question,
+    required this.reason,
+    required this.queries,
+  });
+
+  final String question;
+  final String reason;
+  final List<String> queries;
+}
+
+class _NextResearchDecision {
+  const _NextResearchDecision({
+    required this.shouldContinue,
+    required this.reason,
+    this.queries = const [],
+  });
+
+  final bool shouldContinue;
+  final String reason;
+  final List<_NextResearchQuery> queries;
+}
+
+class _NextResearchQuery {
+  const _NextResearchQuery({
+    required this.subquestion,
+    required this.query,
+    required this.reason,
+  });
+
+  final String subquestion;
+  final String query;
+  final String reason;
+}
+
 class _ResearchBudget {
   const _ResearchBudget({
     required this.maxRounds,
@@ -1259,25 +1092,28 @@ class _ResearchBudget {
   final int maxEvidence;
   final int enoughEvidencePerSubquestion;
 
-  factory _ResearchBudget.forQuestion(String question, int subquestionCount) {
-    final complexity = _complexityScore(question, subquestionCount);
+  factory _ResearchBudget.forPlan(_ResearchPlan plan) {
+    final subquestions = plan.items.length;
+    final querySeeds =
+        plan.items.fold<int>(0, (sum, item) => sum + item.queries.length);
+    final complexity = (subquestions * 2 + querySeeds).clamp(3, 14);
     return _ResearchBudget(
-      maxRounds: complexity >= 8
+      maxRounds: complexity >= 11
           ? 5
-          : complexity >= 5
+          : complexity >= 7
               ? 4
               : 3,
-      maxQueries: complexity >= 8
+      maxQueries: complexity >= 11
           ? 18
-          : complexity >= 5
+          : complexity >= 7
               ? 12
               : 7,
-      maxEvidence: complexity >= 8
+      maxEvidence: complexity >= 11
           ? 36
-          : complexity >= 5
+          : complexity >= 7
               ? 28
               : 18,
-      enoughEvidencePerSubquestion: complexity >= 8 ? 8 : 5,
+      enoughEvidencePerSubquestion: complexity >= 11 ? 8 : 5,
     );
   }
 
@@ -1295,42 +1131,20 @@ class _ResearchBudget {
     if (length >= 12) return 64;
     return 48;
   }
-
-  static int _complexityScore(String question, int subquestionCount) {
-    var score = subquestionCount;
-    for (final item in const [
-      '为什么',
-      '怎么',
-      '如何',
-      '变化',
-      '关系',
-      '建议',
-      '比较',
-      '第一次',
-      '什么时候',
-      '可能',
-      '适合',
-      '影响',
-      '周期',
-      '趋势',
-    ]) {
-      if (question.contains(item)) score++;
-    }
-    score += RegExp(r'[？?；;，,、]').allMatches(question).length.clamp(0, 4);
-    return score;
-  }
 }
 
 class _DynamicResearchResult {
   const _DynamicResearchResult({
     required this.evidence,
     this.subquestionEvidenceCounts = const {},
+    this.coverageNote = '',
     this.queryCount = 0,
     this.budget,
   });
 
   final List<CompanionResearchEvidence> evidence;
   final Map<String, int> subquestionEvidenceCounts;
+  final String coverageNote;
   final int queryCount;
   final _ResearchBudget? budget;
 
@@ -1343,10 +1157,11 @@ class _DynamicResearchResult {
 
   String get coverageDetail {
     if (subquestionEvidenceCounts.isEmpty) return '会根据基础资料直接回答。';
-    return subquestionEvidenceCounts.entries
+    final detail = subquestionEvidenceCounts.entries
         .map((entry) =>
             '${entry.key}：${entry.value > 0 ? '${entry.value} 条证据' : '证据不足'}')
         .join('；');
+    return coverageNote.isEmpty ? detail : '$detail。停止条件：$coverageNote';
   }
 
   String get developerDetail {
@@ -1390,7 +1205,6 @@ class _ResearchQueryQueue {
     for (final value in values) {
       final normalized = value.trim();
       if (normalized.length < 2) continue;
-      if (_isWeakResearchQuery(normalized)) continue;
       if (!_seen.add(normalized)) continue;
       _pending.add(normalized);
     }
@@ -1405,23 +1219,4 @@ class _ResearchQueryQueue {
     if (_pending.length <= keep) return;
     _pending.removeRange(keep, _pending.length);
   }
-}
-
-bool _isWeakResearchQuery(String query) {
-  final value = query.trim();
-  if (value.length <= 3 && (value.endsWith('什') || value.endsWith('怎'))) {
-    return true;
-  }
-  if (RegExp(r'^[我你他她它]什$').hasMatch(value)) return true;
-  if (RegExp(r'^[\u4e00-\u9fa5]{2,3}[怎什]$').hasMatch(value)) return true;
-  return const {
-    '什么',
-    '怎么',
-    '如何',
-    '哪些',
-    '有没有',
-    '是不是',
-    '怎么样',
-    '给过什',
-  }.contains(value);
 }

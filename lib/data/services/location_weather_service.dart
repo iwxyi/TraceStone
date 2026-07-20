@@ -7,10 +7,36 @@ class LocationWeatherService {
   const LocationWeatherService({http.Client? client}) : _client = client;
 
   static const timeout = Duration(seconds: 8);
+  static LocationWeather? _cachedCurrent;
+  static Future<LocationWeather>? _currentRequest;
 
   final http.Client? _client;
 
   Future<LocationWeather> getCurrent() async {
+    return _loadCurrent();
+  }
+
+  Future<LocationWeather> getCachedCurrent() async {
+    final cached = _cachedCurrent;
+    if (cached != null) return cached;
+
+    final existingRequest = _currentRequest;
+    if (existingRequest != null) return existingRequest;
+
+    final request = _loadCurrent();
+    _currentRequest = request;
+    try {
+      final value = await request;
+      _cachedCurrent = value;
+      return value;
+    } finally {
+      if (identical(_currentRequest, request)) {
+        _currentRequest = null;
+      }
+    }
+  }
+
+  Future<LocationWeather> _loadCurrent() async {
     final client = _client ?? http.Client();
 
     try {
@@ -159,6 +185,11 @@ class LocationWeather {
   final String weather;
   final String temperature;
   final Map<String, dynamic> details;
+
+  bool get isMissing =>
+      locationName.trim().isEmpty ||
+      locationName == '未选择地点' ||
+      (weather.trim().isEmpty && temperature.trim().isEmpty);
 
   LocationWeather copyWith({
     String? locationName,

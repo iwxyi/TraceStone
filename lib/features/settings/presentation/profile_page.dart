@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import '../../../core/routing/app_route_observer.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
+import '../../../data/repositories/ai_analysis_queue_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/diary_change_bus.dart';
+import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../../data/services/ai_user_profile_service.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -19,6 +21,8 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> with RouteAware {
   final _developerSettings = const DeveloperSettingsRepository();
   final _userProfileService = const AiUserProfileService();
+  final _queueRepository = const AiAnalysisQueueRepository();
+  final _queueRunner = const AiAnalysisQueueRunner();
   Timer? _refreshDebounce;
   bool _routeSubscribed = false;
   _ProfilePageData _data = const _ProfilePageData();
@@ -98,12 +102,13 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
     if (_rebuildingProfile) return;
     setState(() => _rebuildingProfile = true);
     try {
-      await _userProfileService.rebuildProfile();
+      await _queueRepository.enqueueUserProfile();
+      unawaited(_queueRunner.processNext());
       if (!mounted) return;
       await _refresh();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('用户画像已重新生成')),
+        const SnackBar(content: Text('用户画像已加入 AI 队列')),
       );
     } on Object catch (error) {
       if (!mounted) return;

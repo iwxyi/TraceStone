@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/routing/app_route_observer.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../companion/presentation/companion_page.dart';
 import '../../../data/models/ai_profile.dart';
 import '../../../data/models/ai_profile_preference.dart';
@@ -429,13 +430,17 @@ class _RelationshipDecisionCardState extends State<_RelationshipDecisionCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>() ??
+        AppTheme.themeFrom(AppTheme.decadePaper).extension<TraceStoneColors>()!;
     final visibleDecisions = _filter == null
         ? widget.decisions
         : widget.decisions
             .where((decision) => decision.kind == _filter)
             .toList(growable: false);
     return Card(
-      elevation: 0,
+      elevation: theme.cardTheme.elevation ?? 0,
+      color: theme.cardTheme.color,
+      shape: theme.cardTheme.shape,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -443,7 +448,26 @@ class _RelationshipDecisionCardState extends State<_RelationshipDecisionCard> {
           children: [
             Row(
               children: [
-                const Icon(Icons.rule_outlined, size: 22),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: switch (shinen.chipStyle) {
+                      ShinenChipStyle.outline ||
+                      ShinenChipStyle.ghost =>
+                        Colors.transparent,
+                      ShinenChipStyle.softFill =>
+                        theme.colorScheme.primary.withValues(alpha: 0.08),
+                      ShinenChipStyle.tinted =>
+                        theme.colorScheme.primary.withValues(alpha: 0.14),
+                    },
+                    borderRadius: BorderRadius.circular(shinen.controlRadius),
+                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(7),
+                    child: Icon(Icons.rule_outlined,
+                        size: 18, color: theme.colorScheme.primary),
+                  ),
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text('关系决策', style: theme.textTheme.titleLarge),
@@ -657,11 +681,15 @@ class _RelationshipCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>() ??
+        AppTheme.themeFrom(AppTheme.decadePaper).extension<TraceStoneColors>()!;
     final latest = profile.recentInteractions.firstOrNull;
     final aliasNames = _aliasNames(profile);
 
     return Card(
-      elevation: 0,
+      elevation: theme.cardTheme.elevation ?? 0,
+      color: theme.cardTheme.color,
+      shape: theme.cardTheme.shape,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -670,6 +698,10 @@ class _RelationshipCard extends StatelessWidget {
             Row(
               children: [
                 CircleAvatar(
+                  backgroundColor: theme.colorScheme.primary.withValues(
+                    alpha:
+                        shinen.chipStyle == ShinenChipStyle.ghost ? 0.08 : 0.16,
+                  ),
                   child: Text(profile.personName.characters.first),
                 ),
                 const SizedBox(width: 12),

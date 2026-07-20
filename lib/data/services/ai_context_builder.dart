@@ -177,7 +177,8 @@ class AiContextBuilder {
     final relatedMemories = await _withUserProfileMemory(
       await _memoryRepository.findRelatedWithReasons(entry: entry, limit: 12),
     );
-    final searchMatches = await _searchService.search(query);
+    final searchResponse = await _searchService.searchWithDiagnostics(query);
+    final searchMatches = searchResponse.matches;
     final searchMemoryIds = searchMatches
         .where((match) => match.sourceType == 'memory')
         .map((match) => match.sourceId)
@@ -231,7 +232,8 @@ class AiContextBuilder {
       relationshipProfiles: relationshipProfiles,
       stoneTasks: stoneTasks,
       scenario: package.scenario.name,
-      contextSummary: package.debugSummary,
+      contextSummary:
+          '${package.debugSummary} ${searchResponse.diagnostics.debugSummary}',
       sourceCount: package.sourceCount,
     );
     await _retrievalTraceRepository.saveTrace(trace);

@@ -166,7 +166,7 @@ class PeriodSummaryService {
     required AiContextPackage context,
   }) async {
     final systemPrompt =
-        '你是拾年的周期总结助手。你必须基于日记摘要、用户画像、关系档案、相关记忆和成长线索生成具体回顾，帮助用户看见生活脉络和真实变化；不做统计报表式堆砌，不制造任务压力，不虚构事实。输出必须是 JSON。';
+        '你是拾年的周期总结助手。你必须基于当期日记摘要和代表性来源生成阶段回望，再谨慎参考用户画像、关系档案、相关记忆和成长线索，帮助用户看见生活脉络、情绪潮汐、关系温度和真实变化；不做统计报表式堆砌，不制造任务压力，不虚构事实。输出必须是 JSON。';
     final monthlySummaries = type == PeriodSummaryType.year
         ? await _monthSummariesForYear(start.year)
         : const <PeriodSummary>[];
@@ -394,17 +394,17 @@ class PeriodSummaryService {
   }) {
     final isYear = type == PeriodSummaryType.year;
     final label = isYear ? '${start.year}年' : '${start.year}年${start.month}月';
-    return '''请为用户生成$label${isYear ? '年度总结' : '月度总结'}。
+    return '''请为用户生成$label${isYear ? '年度总结' : '月度总结'}。这不是冷统计，而是一份基于用户自己记录的阶段回望。
 
 输出 JSON 格式：
 {
-  "brief": "${isYear ? '350字以内，像年度回望，强调阶段变化、主线、成长和未完成的问题' : '220字以内，像月度回顾，强调这个月具体发生了什么、状态变化和重要线索'}",
+  "brief": "${isYear ? '350字以内，像年度回望，强调阶段主线、转折、成长和仍未完成的问题' : '220字以内，像月度回顾，强调这个月具体发生了什么、状态变化、关系温度和重要线索'}",
   "themes": ["主题词"],
   "emotions": ["情绪词"],
-  "growth_highlights": ["成长、恢复、尝试或新的理解"],
+  "growth_highlights": ["有证据支撑的成长、恢复、尝试、力量来源或新的理解"],
   "notable_changes": ["和过去相比的变化，必须有来源支撑"],
   "relationship_highlights": ["重要关系互动变化"],
-  "stone_highlights": ["成长线索和微小变化"],
+  "stone_highlights": ["成长线索、微小变化或可延续的经验，不写任务完成率"],
   "outlook": "${isYear ? '下一年的温和提醒，80字以内' : '下个月的温和提醒，60字以内'}",
   "representative_entry_ids": ["只能填下方出现过的 entry id"]
 }
@@ -435,20 +435,23 @@ ${context.relationshipProfiles.isEmpty ? '无' : context.relationshipProfiles.as
 ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('\n')}
 
 要求：
-1. 以当期日记摘要为主体，画像、关系、记忆只能辅助解释；
+1. 以当期日记摘要和代表性来源为主体，画像、关系、记忆只能辅助解释；
 2. 不要写空泛鸡汤，不要只列统计；
 3. 如果资料不足，要承认资料有限；
 4. representative_entry_ids 只能使用“当期原始日记索引”里的 entry id；
-5. 月度总结关注具体事件、情绪波动、关系互动和下月可延续的小线索；
-6. 年度总结关注阶段性主线、跨月变化、反复出现的模式和成长，不要逐月流水账；
-7. 不要编造没有出现过的人、地点、事件或节日。''';
+5. 月度总结关注具体事件、情绪波动、关系互动、重复模式和下月可自然延续的小线索；
+6. 年度总结关注阶段性主线、转折点、跨月变化、反复出现的模式、力量来源、模式陷阱和突破时刻，不要逐月流水账；
+7. 年度总结可以参考已生成月度总结，但仍要结合代表性日记摘要，避免把月报中的错误逐层放大；
+8. 成长相关结论必须来自来源，不要把普通状态写成励志口号；
+9. 不要输出成长评分、完成率、打卡、任务催促或“你应该”；
+10. 不要编造没有出现过的人、地点、事件、节日或趋势。''';
   }
 
   String _monthInstruction() =>
-      '月度定位：帮助用户看清这个月的生活纹理，包括重要事件、反复出现的情绪/主题、关系变化和可以带到下个月的一两个线索。';
+      '月度定位：帮助用户看清这个月的生活纹理，包括具体事件、情绪潮汐、关注点变化、关系温度、反复出现的模式，以及可以轻轻带到下个月的一两个线索。';
 
   String _yearInstruction() =>
-      '年度定位：优先参考已生成的月度总结和高重要度日记摘要，把一年写成阶段变化与成长主线，而不是 12 个月流水账。';
+      '年度定位：优先参考已生成的月度总结和高重要度日记摘要，把一年写成阶段变化、转折、力量来源、模式陷阱、突破时刻和未完成问题，而不是 12 个月流水账。';
 
   Future<List<PeriodSummary>> _monthSummariesForYear(int year) async {
     final summaries = await _periodSummaryRepository.listSummaries();

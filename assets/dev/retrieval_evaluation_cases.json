@@ -1,0 +1,59 @@
+{
+  "name": "Shinen AI retrieval evaluation cases",
+  "version": 1,
+  "cases": [
+    {
+      "id": "first-met-xiaohong",
+      "question": "我第一次见小红是什么时候？",
+      "expectedSourceIds": ["dev-seed-2024-01-20-xiaohong-first"],
+      "minimumRecall": 1.0
+    },
+    {
+      "id": "singapore-arrival",
+      "question": "我什么时候实际到的新加坡，不是计划？",
+      "expectedSourceIds": ["dev-seed-2024-06-09-singapore-arrival"],
+      "minimumRecall": 1.0
+    },
+    {
+      "id": "hangzhou-plum-2025",
+      "question": "去年杭州的梅花大概什么时候开？",
+      "expectedSourceIds": [
+        "dev-seed-2025-02-22-hangzhou-plum-early",
+        "dev-seed-2025-03-02-hangzhou-plum-full",
+        "dev-seed-2026-03-01-hangzhou-plum"
+      ],
+      "minimumRecall": 0.5
+    },
+    {
+      "id": "upward-management",
+      "question": "我应该怎么向上管理周岚或者陈总？",
+      "expectedSourceIds": [
+        "dev-seed-2024-04-12-promotion-feedback",
+        "dev-seed-2024-07-02-upward-management",
+        "dev-seed-2025-09-04-upward-management"
+      ],
+      "minimumRecall": 0.67
+    },
+    {
+      "id": "relationship-boundary",
+      "question": "我和小红的关系里反复出现了什么边界问题？",
+      "expectedSourceIds": [
+        "dev-seed-2024-02-14-xiaohong-coffee",
+        "dev-seed-2024-08-16-xiaohong-conflict",
+        "dev-seed-2025-06-06-xiaohong-boundary"
+      ],
+      "minimumRecall": 0.67
+    },
+    {
+      "id": "period-cycle",
+      "question": "对象的月经周期相关记录有哪些？",
+      "expectedSourceIds": [
+        "dev-seed-2024-03-18-period-note",
+        "dev-seed-2024-05-17-period-note",
+        "dev-seed-2025-03-18-period-note",
+        "dev-seed-2026-02-18-period-note"
+      ],
+      "minimumRecall": 0.5
+    }
+  ]
+}

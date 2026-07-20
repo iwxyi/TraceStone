@@ -52,10 +52,32 @@ class AiSearchService {
   final EmbeddingService _embeddingService;
 
   Future<List<AiSearchMatch>> search(String query, {int limit = 12}) async {
+    return (await searchWithDiagnostics(query, limit: limit)).matches;
+  }
+
+  Future<AiSearchResponse> searchWithDiagnostics(
+    String query, {
+    int limit = 12,
+  }) async {
     final queryTokens = _tokens(query);
-    if (queryTokens.isEmpty) return const [];
-    final vectorMatches = await _vectorMatches(query, queryTokens);
-    final keywordMatches = await _keywordMatches(queryTokens);
+    if (queryTokens.isEmpty) {
+      return const AiSearchResponse(
+        matches: [],
+        diagnostics: AiSearchDiagnostics(),
+      );
+    }
+    final diagnostics = _AiSearchDiagnosticsBuilder();
+    final vectorMatches = await _vectorMatches(
+      query,
+      queryTokens,
+      limit: limit,
+      diagnostics: diagnostics,
+    );
+    final keywordMatches = await _keywordMatches(
+      queryTokens,
+      limit: limit,
+      diagnostics: diagnostics,
+    );
     final merged = <String, AiSearchMatch>{};
     for (final match in [...vectorMatches, ...keywordMatches]) {
       final key = '${match.sourceType}:${match.sourceId}';
@@ -72,169 +94,192 @@ class AiSearchService {
         if (byScore != 0) return byScore;
         return a.title.compareTo(b.title);
       });
-    return matches.take(limit).toList(growable: false);
+    return AiSearchResponse(
+      matches: matches.take(limit).toList(growable: false),
+      diagnostics: diagnostics.build(
+        vectorCandidatesKept: vectorMatches.length,
+        keywordCandidatesKept: keywordMatches.length,
+        finalMatches: matches.length,
+        returnedMatches: matches.take(limit).length,
+      ),
+    );
   }
 
   Future<List<AiSearchMatch>> _vectorMatches(
     String query,
-    Set<String> queryTokens,
-  ) async {
+    Set<String> queryTokens, {
+    required int limit,
+    required _AiSearchDiagnosticsBuilder diagnostics,
+  }) async {
     final AiEmbeddingResult queryEmbedding;
-    final List<AiEmbedding> embeddings;
-    try {
-      queryEmbedding = await _embeddingService.embedForAi(query);
-      final profileSources = await _profileSearchSources();
-      final stoneSources = await _stoneSearchSources();
-      await _ensureProfileEmbeddings(profileSources);
-      await _ensureStoneEmbeddings(stoneSources);
-      embeddings = <AiEmbedding>[
-        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.summary),
-        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.segment),
-        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.entry),
-        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.memory),
-        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.profile),
-        ...await _embeddingRepository
-            .listByType(AiEmbeddingSourceType.relationship),
-        ...await _embeddingRepository.listByType(AiEmbeddingSourceType.stone),
-      ];
-    } on Object {
-      return const [];
-    }
+    queryEmbedding = await _embeddingService.embedForAi(query);
+    final profileSources = await _profileSearchSources();
+    final stoneSources = await _stoneSearchSources();
+    await _ensureProfileEmbeddings(profileSources);
+    await _ensureStoneEmbeddings(stoneSources);
     final memories = {
       for (final memory in await _memoryRepository.listMemories())
         memory.id: memory,
     };
-    final profileSources = await _profileSearchSources();
-    final stoneSources = await _stoneSearchSources();
     final candidates = <AiSearchMatch>[];
-    for (final embedding in embeddings) {
-      if (embedding.modelId != queryEmbedding.modelId ||
-          embedding.modelVersion != queryEmbedding.modelVersion ||
-          embedding.dimensions != queryEmbedding.dimensions) {
-        continue;
+    final candidateBudget = _vectorCandidateBudget(limit);
+    final stream = _embeddingRepository.scanByTypes(
+      const [
+        AiEmbeddingSourceType.summary,
+        AiEmbeddingSourceType.segment,
+        AiEmbeddingSourceType.entry,
+        AiEmbeddingSourceType.memory,
+        AiEmbeddingSourceType.profile,
+        AiEmbeddingSourceType.relationship,
+        AiEmbeddingSourceType.stone,
+      ],
+    );
+    await for (final page in stream) {
+      diagnostics.vectorPages++;
+      diagnostics.vectorEmbeddingsScanned += page.length;
+      for (final embedding in page) {
+        if (embedding.modelId != queryEmbedding.modelId ||
+            embedding.modelVersion != queryEmbedding.modelVersion ||
+            embedding.dimensions != queryEmbedding.dimensions) {
+          continue;
+        }
+        final similarity = _embeddingService.cosineSimilarity(
+          queryEmbedding.vector,
+          embedding.vector,
+        );
+        if (similarity < 0.18) continue;
+        final source = await _sourceForEmbedding(
+          embedding,
+          memories: memories,
+          profileSources: profileSources,
+          stoneSources: stoneSources,
+        );
+        if (source == null) continue;
+        final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
+        final structuredScore = _structuredScore(queryTokens, source);
+        final importanceBonus = _importanceBonus(source.importance);
+        final recencyBonus = _recencyBonus(source.date);
+        final lifecycleScore = _memoryLifecycleScore(source);
+        final score = (similarity * 12).round() +
+            keywordScore +
+            structuredScore +
+            importanceBonus +
+            recencyBonus +
+            lifecycleScore;
+        candidates.add(AiSearchMatch(
+          sourceType: source.sourceType,
+          sourceId: source.sourceId,
+          entryId: source.entryId,
+          title: source.title,
+          summary: source.summary,
+          score: score,
+          reasons: [
+            '向量相似度 ${similarity.toStringAsFixed(2)}',
+            if (keywordScore > 0) '关键词校准 +$keywordScore',
+            ..._structuredReasons(queryTokens, source),
+            if (importanceBonus > 0)
+              '摘要重要度 ${source.importance.toStringAsFixed(2)}',
+            if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
+            ..._memoryLifecycleReasons(source),
+          ],
+          matchedTokens:
+              _matchedTokens(queryTokens, _tokens(_searchableText(source))),
+          rerankSignals: _signals(
+            semantic: similarity,
+            keyword: keywordScore,
+            structured: _structuredSignals(queryTokens, source),
+            importance: importanceBonus,
+            recency: recencyBonus,
+            lifecycle: _memoryLifecycleSignals(source),
+          ),
+        ));
       }
-      final similarity = _embeddingService.cosineSimilarity(
-        queryEmbedding.vector,
-        embedding.vector,
-      );
-      if (similarity < 0.18) continue;
-      final source = await _sourceForEmbedding(
-        embedding,
-        memories: memories,
-        profileSources: profileSources,
-        stoneSources: stoneSources,
-      );
-      if (source == null) continue;
-      final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
-      final structuredScore = _structuredScore(queryTokens, source);
-      final importanceBonus = _importanceBonus(source.importance);
-      final recencyBonus = _recencyBonus(source.date);
-      final lifecycleScore = _memoryLifecycleScore(source);
-      final score = (similarity * 12).round() +
-          keywordScore +
-          structuredScore +
-          importanceBonus +
-          recencyBonus +
-          lifecycleScore;
-      candidates.add(AiSearchMatch(
-        sourceType: source.sourceType,
-        sourceId: source.sourceId,
-        entryId: source.entryId,
-        title: source.title,
-        summary: source.summary,
-        score: score,
-        reasons: [
-          '向量相似度 ${similarity.toStringAsFixed(2)}',
-          if (keywordScore > 0) '关键词校准 +$keywordScore',
-          ..._structuredReasons(queryTokens, source),
-          if (importanceBonus > 0)
-            '摘要重要度 ${source.importance.toStringAsFixed(2)}',
-          if (recencyBonus > 0) '近期记录校准 +$recencyBonus',
-          ..._memoryLifecycleReasons(source),
-        ],
-        matchedTokens:
-            _matchedTokens(queryTokens, _tokens(_searchableText(source))),
-        rerankSignals: _signals(
-          semantic: similarity,
-          keyword: keywordScore,
-          structured: _structuredSignals(queryTokens, source),
-          importance: importanceBonus,
-          recency: recencyBonus,
-          lifecycle: _memoryLifecycleSignals(source),
-        ),
-      ));
+      diagnostics.vectorCandidatesTrimmed +=
+          _trimVectorCandidates(candidates, candidateBudget);
     }
+    diagnostics.vectorCandidatesTrimmed +=
+        _trimVectorCandidates(candidates, candidateBudget);
     return candidates;
   }
 
-  Future<List<AiSearchMatch>> _keywordMatches(Set<String> queryTokens) async {
-    final entries = await _diaryRepository.listEntries();
+  Future<List<AiSearchMatch>> _keywordMatches(
+    Set<String> queryTokens, {
+    required int limit,
+    required _AiSearchDiagnosticsBuilder diagnostics,
+  }) async {
     final matches = <AiSearchMatch>[];
-    for (final entry in entries) {
-      final summary = await _summaryRepository.getSummary(entry.id);
-      if (summary != null) {
-        final text = [
-          summary.title,
-          summary.brief,
-          ...summary.keyPoints,
-          ...summary.topics,
-          ...summary.people,
-          ...summary.places,
-          summary.emotion,
-          ...summary.importantQuotes,
-        ].join(' ');
-        final match = _matchText(
-          queryTokens: queryTokens,
-          sourceType: 'entry_summary',
-          sourceId: entry.id,
-          entryId: entry.id,
-          title: entry.title ?? summary.brief,
-          summary: summary.brief,
-          importance: summary.importance,
-          date: entry.date,
-          topics: summary.topics,
-          people: summary.people,
-          emotion: summary.emotion,
-          text: text,
-        );
-        if (match != null) matches.add(match);
-      } else {
-        final match = _matchText(
-          queryTokens: queryTokens,
-          sourceType: 'entry',
-          sourceId: entry.id,
-          entryId: entry.id,
-          title: entry.title ?? entry.excerpt,
-          summary: entry.excerpt,
-          importance: 0,
-          date: entry.date,
-          text: entry.bodyPreview,
-        );
-        if (match != null) matches.add(match);
-      }
+    final candidateBudget = _keywordCandidateBudget(limit);
+    await for (final page in _diaryRepository.scanEntries()) {
+      diagnostics.keywordPages++;
+      diagnostics.keywordEntriesScanned += page.length;
+      for (final entry in page) {
+        final summary = await _summaryRepository.getSummary(entry.id);
+        if (summary != null) {
+          final text = [
+            summary.title,
+            summary.brief,
+            ...summary.keyPoints,
+            ...summary.topics,
+            ...summary.people,
+            ...summary.places,
+            summary.emotion,
+            ...summary.importantQuotes,
+          ].join(' ');
+          final match = _matchText(
+            queryTokens: queryTokens,
+            sourceType: 'entry_summary',
+            sourceId: entry.id,
+            entryId: entry.id,
+            title: entry.title ?? summary.brief,
+            summary: summary.brief,
+            importance: summary.importance,
+            date: entry.date,
+            topics: summary.topics,
+            people: summary.people,
+            emotion: summary.emotion,
+            text: text,
+          );
+          if (match != null) matches.add(match);
+        } else {
+          final match = _matchText(
+            queryTokens: queryTokens,
+            sourceType: 'entry',
+            sourceId: entry.id,
+            entryId: entry.id,
+            title: entry.title ?? entry.excerpt,
+            summary: entry.excerpt,
+            importance: 0,
+            date: entry.date,
+            text: entry.bodyPreview,
+          );
+          if (match != null) matches.add(match);
+        }
 
-      final segments = await _summaryRepository.listSegments(entry.id);
-      for (final segment in segments) {
-        final match = _matchText(
-          queryTokens: queryTokens,
-          sourceType: 'segment',
-          sourceId: segment.id,
-          entryId: entry.id,
-          title: segment.summary,
-          summary: segment.text,
-          importance: 0,
-          date: entry.date,
-          topics: segment.topics,
-          people: segment.people,
-          text: [
-            segment.summary,
-            segment.text,
-            ...segment.topics,
-            ...segment.people,
-          ].join(' '),
-        );
-        if (match != null) matches.add(match);
+        final segments = await _summaryRepository.listSegments(entry.id);
+        for (final segment in segments) {
+          final match = _matchText(
+            queryTokens: queryTokens,
+            sourceType: 'segment',
+            sourceId: segment.id,
+            entryId: entry.id,
+            title: segment.summary,
+            summary: segment.text,
+            importance: 0,
+            date: entry.date,
+            topics: segment.topics,
+            people: segment.people,
+            text: [
+              segment.summary,
+              segment.text,
+              ...segment.topics,
+              ...segment.people,
+            ].join(' '),
+          );
+          if (match != null) matches.add(match);
+        }
       }
+      diagnostics.keywordCandidatesTrimmed +=
+          _trimCandidates(matches, candidateBudget);
     }
     for (final memory in await _memoryRepository.listMemories()) {
       final source = _sourceForMemory(memory);
@@ -244,6 +289,8 @@ class AiSearchService {
     }
     matches.addAll(await _profileMatches(queryTokens));
     matches.addAll(await _stoneMatches(queryTokens));
+    diagnostics.keywordCandidatesTrimmed +=
+        _trimCandidates(matches, candidateBudget);
     return matches;
   }
 
@@ -762,6 +809,36 @@ class AiSearchService {
     );
   }
 
+  int _vectorCandidateBudget(int limit) {
+    var budget = limit * 8;
+    if (budget < 48) budget = 48;
+    if (budget > 160) budget = 160;
+    return budget;
+  }
+
+  int _keywordCandidateBudget(int limit) {
+    var budget = limit * 10;
+    if (budget < 60) budget = 60;
+    if (budget > 180) budget = 180;
+    return budget;
+  }
+
+  int _trimVectorCandidates(List<AiSearchMatch> candidates, int budget) {
+    return _trimCandidates(candidates, budget);
+  }
+
+  int _trimCandidates(List<AiSearchMatch> candidates, int budget) {
+    if (candidates.length <= budget) return 0;
+    final removed = candidates.length - budget;
+    candidates.sort((a, b) {
+      final byScore = b.score.compareTo(a.score);
+      if (byScore != 0) return byScore;
+      return a.title.compareTo(b.title);
+    });
+    candidates.removeRange(budget, candidates.length);
+    return removed;
+  }
+
   int _keywordScore(Set<String> queryTokens, Set<String> sourceTokens) {
     var score = 0;
     for (final token in queryTokens) {
@@ -1037,4 +1114,81 @@ class _ProfileSearchSources {
 
   final Map<String, ProfileFact> profileFacts;
   final Map<String, RelationshipProfile> relationshipProfiles;
+}
+
+class AiSearchResponse {
+  const AiSearchResponse({
+    required this.matches,
+    required this.diagnostics,
+  });
+
+  final List<AiSearchMatch> matches;
+  final AiSearchDiagnostics diagnostics;
+}
+
+class AiSearchDiagnostics {
+  const AiSearchDiagnostics({
+    this.vectorPages = 0,
+    this.vectorEmbeddingsScanned = 0,
+    this.vectorCandidatesKept = 0,
+    this.vectorCandidatesTrimmed = 0,
+    this.keywordPages = 0,
+    this.keywordEntriesScanned = 0,
+    this.keywordCandidatesKept = 0,
+    this.keywordCandidatesTrimmed = 0,
+    this.finalMatches = 0,
+    this.returnedMatches = 0,
+  });
+
+  final int vectorPages;
+  final int vectorEmbeddingsScanned;
+  final int vectorCandidatesKept;
+  final int vectorCandidatesTrimmed;
+  final int keywordPages;
+  final int keywordEntriesScanned;
+  final int keywordCandidatesKept;
+  final int keywordCandidatesTrimmed;
+  final int finalMatches;
+  final int returnedMatches;
+
+  String get debugSummary => 'searchDiagnostics='
+      'vectorPages=$vectorPages '
+      'vectorEmbeddings=$vectorEmbeddingsScanned '
+      'vectorKept=$vectorCandidatesKept '
+      'vectorTrimmed=$vectorCandidatesTrimmed '
+      'keywordPages=$keywordPages '
+      'keywordEntries=$keywordEntriesScanned '
+      'keywordKept=$keywordCandidatesKept '
+      'keywordTrimmed=$keywordCandidatesTrimmed '
+      'merged=$finalMatches '
+      'returned=$returnedMatches';
+}
+
+class _AiSearchDiagnosticsBuilder {
+  int vectorPages = 0;
+  int vectorEmbeddingsScanned = 0;
+  int vectorCandidatesTrimmed = 0;
+  int keywordPages = 0;
+  int keywordEntriesScanned = 0;
+  int keywordCandidatesTrimmed = 0;
+
+  AiSearchDiagnostics build({
+    required int vectorCandidatesKept,
+    required int keywordCandidatesKept,
+    required int finalMatches,
+    required int returnedMatches,
+  }) {
+    return AiSearchDiagnostics(
+      vectorPages: vectorPages,
+      vectorEmbeddingsScanned: vectorEmbeddingsScanned,
+      vectorCandidatesKept: vectorCandidatesKept,
+      vectorCandidatesTrimmed: vectorCandidatesTrimmed,
+      keywordPages: keywordPages,
+      keywordEntriesScanned: keywordEntriesScanned,
+      keywordCandidatesKept: keywordCandidatesKept,
+      keywordCandidatesTrimmed: keywordCandidatesTrimmed,
+      finalMatches: finalMatches,
+      returnedMatches: returnedMatches,
+    );
+  }
 }

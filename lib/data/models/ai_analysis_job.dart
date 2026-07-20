@@ -1,6 +1,12 @@
 enum AiAnalysisJobState { pending, running, incomplete, failed, completed }
 
-enum AiAnalysisJobType { diary, embeddingRebuild, monthSummary, yearSummary }
+enum AiAnalysisJobType {
+  diary,
+  embeddingRebuild,
+  monthSummary,
+  yearSummary,
+  userProfile,
+}
 
 enum AiAnalysisStage {
   queued,
@@ -101,6 +107,24 @@ class AiAnalysisJob {
         case AiAnalysisStage.generatingInsight:
         case AiAnalysisStage.updatingMemory:
           return '整理周期上下文';
+      }
+    }
+    if (type == AiAnalysisJobType.userProfile) {
+      switch (currentStage) {
+        case AiAnalysisStage.queued:
+          return '等待更新用户画像';
+        case AiAnalysisStage.preparing:
+          return '准备画像资料';
+        case AiAnalysisStage.generatingSummary:
+          return '生成用户画像';
+        case AiAnalysisStage.completed:
+          return '用户画像已更新';
+        case AiAnalysisStage.segmenting:
+        case AiAnalysisStage.embedding:
+        case AiAnalysisStage.retrieving:
+        case AiAnalysisStage.generatingInsight:
+        case AiAnalysisStage.updatingMemory:
+          return '整理画像上下文';
       }
     }
     switch (currentStage) {
@@ -338,19 +362,26 @@ class AiAnalysisQueueSnapshot {
     required this.jobs,
     this.currentJob,
     this.isPaused = false,
+    this.dependencyReasons = const {},
   });
 
   final List<AiAnalysisJob> jobs;
   final AiAnalysisJob? currentJob;
   final bool isPaused;
+  final Map<String, String> dependencyReasons;
 
-  int get pendingCount => jobs.where((job) => job.canRun).length;
+  int get pendingCount => jobs
+      .where((job) => job.canRun && !dependencyReasons.containsKey(job.id))
+      .length;
 
-  int get runnableCount => jobs.where((job) => job.canRun).length;
+  int get runnableCount => jobs
+      .where((job) => job.canRun && !dependencyReasons.containsKey(job.id))
+      .length;
 
   int get waitingCount => jobs
       .where((job) =>
           job.canRun &&
+          !dependencyReasons.containsKey(job.id) &&
           job.id != currentJob?.id &&
           job.state != AiAnalysisJobState.running)
       .length;
@@ -489,7 +520,10 @@ class AiAnalysisQueueSnapshot {
   }
 
   bool get hasVisibleWork =>
-      currentJob != null || pendingCount > 0 || failedCount > 0;
+      currentJob != null ||
+      pendingCount > 0 ||
+      dependencyReasons.isNotEmpty ||
+      failedCount > 0;
 
   List<AiAnalysisBatchSnapshot> get batches {
     final grouped = <String, List<AiAnalysisJob>>{};
@@ -638,8 +672,25 @@ class AiAnalysisQueueSnapshot {
         switch (stage) {
           case AiAnalysisStage.generatingSummary:
             return const Duration(seconds: 45);
+          case AiAnalysisStage.embedding:
+            return const Duration(seconds: 12);
+          case AiAnalysisStage.segmenting:
+            return const Duration(seconds: 8);
           case AiAnalysisStage.preparing:
             return const Duration(seconds: 5);
+          case AiAnalysisStage.queued:
+          case AiAnalysisStage.retrieving:
+          case AiAnalysisStage.generatingInsight:
+          case AiAnalysisStage.updatingMemory:
+          case AiAnalysisStage.completed:
+            return const Duration(seconds: 5);
+        }
+      case AiAnalysisJobType.userProfile:
+        switch (stage) {
+          case AiAnalysisStage.generatingSummary:
+            return const Duration(seconds: 60);
+          case AiAnalysisStage.preparing:
+            return const Duration(seconds: 8);
           case AiAnalysisStage.queued:
           case AiAnalysisStage.segmenting:
           case AiAnalysisStage.embedding:
@@ -672,6 +723,13 @@ class AiAnalysisQueueSnapshot {
         };
       case AiAnalysisJobType.monthSummary:
       case AiAnalysisJobType.yearSummary:
+        return const {
+          AiAnalysisStage.preparing,
+          AiAnalysisStage.segmenting,
+          AiAnalysisStage.embedding,
+          AiAnalysisStage.generatingSummary,
+        };
+      case AiAnalysisJobType.userProfile:
         return const {
           AiAnalysisStage.preparing,
           AiAnalysisStage.generatingSummary,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../../../data/models/memory_entry.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
@@ -165,7 +166,9 @@ class _MemoryCard extends StatelessWidget {
     ];
 
     return Card(
-      elevation: 0,
+      elevation: theme.cardTheme.elevation ?? 0,
+      color: theme.cardTheme.color,
+      shape: theme.cardTheme.shape,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -350,9 +353,32 @@ class _MetricChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Chip(
-      visualDensity: VisualDensity.compact,
-      label: Text(label),
+    final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>()!;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: switch (shinen.chipStyle) {
+          ShinenChipStyle.outline ||
+          ShinenChipStyle.ghost =>
+            Colors.transparent,
+          ShinenChipStyle.softFill =>
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          ShinenChipStyle.tinted =>
+            theme.colorScheme.primary.withValues(alpha: 0.1),
+        },
+        borderRadius: BorderRadius.circular(
+          shinen.chipStyle == ShinenChipStyle.softFill ? 8 : 999,
+        ),
+        border: Border.all(
+          color: shinen.chipStyle == ShinenChipStyle.ghost
+              ? Colors.transparent
+              : theme.colorScheme.outlineVariant,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(label, style: theme.textTheme.labelSmall),
+      ),
     );
   }
 }

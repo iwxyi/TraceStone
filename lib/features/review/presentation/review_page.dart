@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/diary_entry.dart';
@@ -21,6 +22,15 @@ import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../ai_insight/presentation/ai_feedback_bar.dart';
+
+String? _temperatureLabel(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  final normalized = trimmed
+      .replaceFirst(RegExp(r'\s*(℃|°C|C|°)$', caseSensitive: false), '')
+      .trim();
+  return normalized.isEmpty ? null : '$normalized℃';
+}
 
 class ReviewPage extends StatefulWidget {
   const ReviewPage({super.key});
@@ -675,6 +685,8 @@ class _EntryPreviewPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>()!;
     final meta = [
       if (entry.location.trim().isNotEmpty &&
           entry.location != '未选择地点' &&
@@ -682,15 +694,21 @@ class _EntryPreviewPage extends StatelessWidget {
         entry.location,
       if (entry.weather.trim().isNotEmpty && entry.weather != '天气')
         entry.weather,
-      if (entry.temperature?.trim().isNotEmpty ?? false) entry.temperature!,
+      if (_temperatureLabel(entry.temperature) != null)
+        _temperatureLabel(entry.temperature)!,
     ].join(' · ');
 
     return Card(
-      elevation: 10,
-      shadowColor: Colors.black.withValues(alpha: 0.18),
+      elevation: shinen.cardStyle == ShinenCardStyle.glass ? 1 : 0,
+      shadowColor: Colors.black.withValues(alpha: 0.16),
       clipBehavior: Clip.antiAlias,
       margin: EdgeInsets.zero,
-      color: colorScheme.surface,
+      color: shinen.cardColor(
+          colorScheme.surface, theme.brightness == Brightness.dark),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(shinen.cardRadius),
+        side: shinen.cardBorderSide(colorScheme.outlineVariant),
+      ),
       child: Column(
         children: [
           Padding(
@@ -1949,7 +1967,7 @@ class _PeriodSummaryCardState extends State<_PeriodSummaryCard> {
       if (!mounted) return;
       final title = widget.type == PeriodSummaryType.month ? '月度总结' : '年度总结';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已重新生成$title')),
+        SnackBar(content: Text('已加入后台重新生成：$title')),
       );
     } finally {
       if (mounted) {
@@ -2624,6 +2642,7 @@ class _TimelineMonthHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final shinen = theme.extension<TraceStoneColors>()!;
     return Padding(
       padding: EdgeInsets.only(left: indentLeft ? 56 : 0),
       child: SizedBox(
@@ -2669,9 +2688,24 @@ class _TimelineMonthHeader extends StatelessWidget {
                 const Spacer(),
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.44),
-                    borderRadius: BorderRadius.circular(999),
+                    color: switch (shinen.chipStyle) {
+                      ShinenChipStyle.outline ||
+                      ShinenChipStyle.ghost =>
+                        Colors.transparent,
+                      ShinenChipStyle.softFill => colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.44),
+                      ShinenChipStyle.tinted =>
+                        colorScheme.primary.withValues(alpha: 0.1),
+                    },
+                    borderRadius: BorderRadius.circular(
+                      shinen.chipStyle == ShinenChipStyle.softFill ? 8 : 999,
+                    ),
+                    border: Border.all(
+                      color: shinen.chipStyle == ShinenChipStyle.ghost
+                          ? Colors.transparent
+                          : colorScheme.outlineVariant,
+                    ),
                   ),
                   child: Padding(
                     padding:
@@ -2899,32 +2933,40 @@ class _TimelineEntry extends StatelessWidget {
         entry.location,
       if (entry.weather.trim().isNotEmpty && entry.weather != '天气')
         entry.weather,
-      if (entry.temperature?.trim().isNotEmpty ?? false) entry.temperature!,
+      if (_temperatureLabel(entry.temperature) != null)
+        _temperatureLabel(entry.temperature)!,
     ].join(' · ');
 
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final shinen = theme.extension<TraceStoneColors>()!;
+    final radius = shinen.cardRadius;
+    final isDark = theme.brightness == Brightness.dark;
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.86),
-        borderRadius: BorderRadius.circular(10),
+        color: selected
+            ? colorScheme.primary.withValues(alpha: isDark ? 0.1 : 0.055)
+            : shinen.cardColor(colorScheme.surface, isDark),
+        borderRadius: BorderRadius.circular(radius),
         border: Border.all(
           color: selected
-              ? colorScheme.primary.withValues(alpha: 0.34)
-              : colorScheme.outlineVariant.withValues(alpha: 0.54),
+              ? colorScheme.primary.withValues(alpha: isDark ? 0.46 : 0.34)
+              : shinen
+                  .cardBorderSide(colorScheme.outlineVariant)
+                  .color
+                  .withValues(alpha: 0.72),
         ),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(radius),
         onTap: () => onOpenEntry(entry.id),
         onLongPress: () => onLongSelectEntry(entry.id),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.fromLTRB(14, 13, 13, 13),
-          color: selected
-              ? colorScheme.primary.withValues(alpha: 0.045)
-              : Colors.transparent,
+          color: Colors.transparent,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

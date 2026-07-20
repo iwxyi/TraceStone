@@ -52,7 +52,7 @@ class DiaryAnalysisService {
     final context = await _contextBuilder.buildForTodayInsight(entry);
     final feedback = await _feedbackRepository.getFeedback(entry.id);
     const systemPrompt =
-        '你是拾年的日记洞察助手。你要在轻松、不施压的氛围中，结合今天的日记、最近日记和历史记忆，帮助用户记录生活、理解变化、看见成长。不做空洞说教，不虚构事实。输出必须是 JSON。';
+        '你是拾年的日记洞察助手。你要先读懂今天这篇日记，再谨慎参考历史记忆、关系档案、长期画像和成长线索，帮助用户看见真实感受、生活脉络和可能的变化。当前日记永远优先，历史只能辅助；不做成长评分、任务催促或空洞说教，不虚构事实。输出必须是 JSON。';
     final userPrompt = _buildPrompt(context, feedback: feedback);
     await _savePromptTrace(
       id: entry.id,
@@ -102,16 +102,16 @@ class DiaryAnalysisService {
   String _buildPrompt(AiContextPackage context, {AiFeedback? feedback}) {
     final entry = context.currentEntry!;
     final feedbackBlock = _feedbackBlock(feedback);
-    return '''请分析用户刚写完的日记。分析必须优先尊重原文，只能引用已给出的历史材料。
+    return '''请分析用户刚写完的日记。分析必须优先尊重原文，只能引用已给出的历史材料。你回答的是“今天这篇日记在说什么”，不是给用户做评判。
 
 输出 JSON 格式：
 {
-  "reflection": "200字以内，温和、具体、能呼应过往经历的读后感",
+  "reflection": "200字以内，温和、具体，优先回应今天；有证据时再写与过去相比的变化",
   "related_memories": [{"title": "过往经历标题", "reason": "为什么和今天有关", "entry_id": "必须来自上方 entry/sourceEntry/evidenceEntries 中的一个 ID"}],
   "facts": [{"text": "明确发生的事实", "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
   "signals": [{"text": "较稳妥的情绪或主题信号", "evidence": [{"type": "current_entry", "id": "entryId#s1"}]}],
   "hypotheses": [{"text": "谨慎表达的模式推测", "confidence": 0.6, "evidence": [{"type": "memory", "id": "memoryId"}]}],
-  "suggestions": [{"text": "可执行建议", "evidence": [{"type": "current_entry", "id": "entryId"}]}],
+  "suggestions": [{"text": "低压力、可选择、具体的一小步", "evidence": [{"type": "current_entry", "id": "entryId"}]}],
   "emotion": "主要情绪",
   "keywords": ["关键词"],
   "people": ["人物名"],
@@ -156,23 +156,24 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
 $feedbackBlock
 
 要求：
-1. related_memories 只能来自“最近日记摘要”或“相关历史记忆”；
-2. 如果历史材料不足，就诚实少引用，不要编造；
+1. 先理解今天日记本身；历史记忆、画像、关系档案和成长线索只能辅助解释，不能覆盖今天的表达；
+2. related_memories 只能来自“最近日记摘要”或“相关历史记忆”；如果历史材料不足，就诚实少引用，不要编造；
 3. stone_suggestion 必须微小、具体、可选择，不要像任务、打卡或要求用户必须完成；
-4. 如果今天日记包含多个事件，请先分别理解，再给整体读后感；
+4. 如果今天日记包含多个事件，请先分别理解，再给整体读后感，不要让其中一个事件代表整篇日记；
 5. facts 只能写当前日记或历史材料明确给出的事实；
 6. signals 写稳妥的情绪/主题观察；
 7. hypotheses 必须用“可能/看起来/也许”等谨慎措辞，并给 confidence；
-8. suggestions 必须可执行；
+8. suggestions 必须可执行，并尽量用“如果你愿意/也许可以/可以轻轻试试”这类不施压表达；
 9. 每条重要结论尽量带 evidence；
 10. profile_update_candidates 已废弃，保持空数组；长期用户画像由单独的大模型综合流程生成，不要在单篇日记里输出画像候选；
 11. relationship_updates 只记录本次互动或谨慎模式候选，不给关系下绝对结论；
 12. 多年今日可以作为成长对照，但只能引用上方列出的日记，不要编造农历节日；
 13. contradictions 只在新材料明显不同于历史记忆时输出；
 14. 稳定画像、关系档案和成长线索只能作为辅助背景，不能替代今天日记；
-15. 如果今天提到曾经建议过的一小步，可以温和指出“这可能是一个变化线索”，不要批评未完成，不要制造压力；
+15. 如果今天提到曾经有效的一小步或相似经历，可以温和做成长归因，但必须有来源支撑；没有来源就不要说“你一直以来”；
 16. memory_update.summary 不超过 80 字；
-17. 如果“用户反馈”指出了上次洞察不准确，本次必须避开该错误，并优先重新核对当前日记原文和证据。''';
+17. 如果“用户反馈”指出了上次洞察不准确，本次必须避开该错误，并优先重新核对当前日记原文和证据；
+18. 不输出成长评分、完成率、打卡、任务催促或“你应该”。''';
   }
 
   String _feedbackBlock(AiFeedback? feedback) {

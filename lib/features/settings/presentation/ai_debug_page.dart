@@ -27,6 +27,7 @@ import '../../../data/services/ai_analysis_queue_runner.dart';
 import '../../../data/services/ai_artifact_rebuild_service.dart';
 import '../../../data/services/ai_data_inventory_service.dart';
 import '../../../data/services/ai_embedding_text_builder.dart';
+import '../../../data/services/ai_retrieval_evaluation_service.dart';
 import '../../../data/services/dev_seed_data_service.dart';
 import '../../../data/services/embedding_service.dart';
 import '../../../data/utils/ai_source_formatter.dart';
@@ -174,6 +175,8 @@ class _AiDebugPageState extends State<AiDebugPage> {
                     _CompanionTraceCard(
                       key: ValueKey('companion-$_debugRecordsVersion'),
                     ),
+                    const SizedBox(height: 16),
+                    const _RetrievalEvaluationCard(),
                     const SizedBox(height: 16),
                     if (queue.jobs.isEmpty)
                       const Center(child: Text('暂无 AI 队列任务')),
@@ -523,6 +526,137 @@ class _CompanionTraceCardState extends State<_CompanionTraceCard> {
   }
 }
 
+class _RetrievalEvaluationCard extends StatefulWidget {
+  const _RetrievalEvaluationCard();
+
+  @override
+  State<_RetrievalEvaluationCard> createState() =>
+      _RetrievalEvaluationCardState();
+}
+
+class _RetrievalEvaluationCardState extends State<_RetrievalEvaluationCard> {
+  Future<AiRetrievalEvaluationReport?>? _future;
+
+  void _run() {
+    setState(() {
+      _future = const AiRetrievalEvaluationService().evaluateDefaultCases();
+    });
+  }
+
+  Future<void> _copy(
+    BuildContext context,
+    AiRetrievalEvaluationReport report,
+  ) async {
+    final confirmed = await _confirmDebugContextCopy(context);
+    if (!confirmed) return;
+    await Clipboard.setData(ClipboardData(text: report.toDebugText()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制检索评测报告')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.fact_check_outlined),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '检索基准评测',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                FutureBuilder<AiRetrievalEvaluationReport?>(
+                  future: _future,
+                  builder: (context, snapshot) {
+                    final running =
+                        snapshot.connectionState == ConnectionState.waiting;
+                    final report = snapshot.data;
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (report != null)
+                          TextButton.icon(
+                            onPressed: () => _copy(context, report),
+                            icon: const Icon(Icons.copy_all_outlined),
+                            label: const Text('复制'),
+                          ),
+                        TextButton.icon(
+                          key: const ValueKey('run-retrieval-evaluation'),
+                          onPressed: running ? null : _run,
+                          icon: running
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.play_arrow),
+                          label: Text(running ? '评测中' : '运行'),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '用固定问题校验历史日记召回质量，适合调整向量模型、分段策略和排序权重后回归验证。',
+              style: theme.textTheme.bodySmall,
+            ),
+            if (_future != null) ...[
+              const SizedBox(height: 12),
+              FutureBuilder<AiRetrievalEvaluationReport?>(
+                future: _future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const LinearProgressIndicator(minHeight: 3);
+                  }
+                  if (snapshot.hasError) {
+                    return Text(
+                      '评测失败：${snapshot.error}',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.error),
+                    );
+                  }
+                  final report = snapshot.data;
+                  if (report == null) return const SizedBox.shrink();
+                  final visibleResults = [
+                    ...report.results.where((result) => !result.passed),
+                    ...report.results.where((result) => result.passed),
+                  ].take(5);
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _DebugLine(label: 'summary', value: report.summary),
+                      for (final result in visibleResults)
+                        _DebugLine(
+                          label: result.passed ? 'case.pass' : 'case.fail',
+                          value:
+                              '${result.caseId} recall=${result.recall.toStringAsFixed(2)} precision=${result.precision.toStringAsFixed(2)} hit=${result.hitSourceIds.length}/${result.expectedSourceIds.length}',
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 Future<bool> _confirmDebugContextCopy(BuildContext context) async {
   final confirmed = await showDialog<bool>(
     context: context,
@@ -642,6 +776,14 @@ class _QueueSummaryCard extends StatelessWidget {
                 label: 'stageDurations',
                 value: queue.stageCalibrationSummary,
               ),
+            if (queue.dependencyReasons.isNotEmpty)
+              _DebugLine(
+                label: 'dependencies',
+                value: queue.dependencyReasons.entries
+                    .take(3)
+                    .map((entry) => '${entry.key}=${entry.value}')
+                    .join('；'),
+              ),
             if (queue.batches.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text('批次进度', style: Theme.of(context).textTheme.titleSmall),
@@ -708,6 +850,12 @@ class _QueueSummaryCard extends StatelessWidget {
       'averageStageDuration=${queue.averageStageDurationLabel}',
       if (queue.stageCalibrationSummary.isNotEmpty)
         'stageDurations=${queue.stageCalibrationSummary}',
+      if (queue.dependencyReasons.isNotEmpty) ...[
+        '',
+        '## Dependencies',
+        for (final entry in queue.dependencyReasons.entries)
+          '- ${entry.key}: ${entry.value}',
+      ],
       'states=${stateCounts.entries.map((entry) => '${entry.key.name}:${entry.value}').join(',')}',
       if (queue.batches.isNotEmpty) ...[
         '',

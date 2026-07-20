@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
@@ -218,8 +219,11 @@ class _StoneTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Card(
-      elevation: 0,
+      elevation: theme.cardTheme.elevation ?? 0,
+      color: theme.cardTheme.color,
+      shape: theme.cardTheme.shape,
       child: CheckboxListTile(
         value: task.isCompleted,
         onChanged: (value) => onCompletedChanged(value ?? false),
@@ -341,10 +345,17 @@ class _StoneCheckInPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>()!;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(8),
+        color: shinen.cardColor(
+          theme.colorScheme.surfaceContainerHighest,
+          theme.brightness == Brightness.dark,
+        ),
+        borderRadius: BorderRadius.circular(shinen.cardRadius - 2),
+        border: Border.all(
+            color:
+                shinen.cardBorderSide(theme.colorScheme.outlineVariant).color),
       ),
       child: Padding(
         padding: const EdgeInsets.all(10),
@@ -490,11 +501,15 @@ class _StoneProgressHintBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>()!;
     final latest = hints.first;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(8),
+        color: theme.colorScheme.secondaryContainer.withValues(
+          alpha: shinen.chipStyle == ShinenChipStyle.ghost ? 0.2 : 0.45,
+        ),
+        borderRadius: BorderRadius.circular(shinen.controlRadius),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),

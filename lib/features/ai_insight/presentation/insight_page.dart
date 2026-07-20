@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/diary_insight.dart';
 import '../../../data/models/entry_summary.dart';
@@ -915,8 +916,14 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final shinen = theme.extension<TraceStoneColors>()!;
+    final iconRadius = shinen.shapeScale == ShinenShapeScale.large ? 12.0 : 8.0;
     return Card(
-      elevation: 0,
+      elevation: theme.cardTheme.elevation ?? 0,
+      color: theme.cardTheme.color,
+      shape: theme.cardTheme.shape,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -924,12 +931,34 @@ class _SectionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, size: 20),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: switch (shinen.chipStyle) {
+                      ShinenChipStyle.outline ||
+                      ShinenChipStyle.ghost =>
+                        Colors.transparent,
+                      ShinenChipStyle.softFill =>
+                        colors.primary.withValues(alpha: 0.08),
+                      ShinenChipStyle.tinted =>
+                        colors.primary.withValues(alpha: 0.14),
+                    },
+                    borderRadius: BorderRadius.circular(iconRadius),
+                    border: Border.all(
+                      color: shinen.chipStyle == ShinenChipStyle.ghost
+                          ? Colors.transparent
+                          : colors.outlineVariant,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(7),
+                    child: Icon(icon, size: 18, color: colors.primary),
+                  ),
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     title,
-                    style: Theme.of(context).textTheme.titleMedium,
+                    style: theme.textTheme.titleMedium,
                   ),
                 ),
                 if (trailing != null) trailing!,

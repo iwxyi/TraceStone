@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/diary_analysis_status.dart';
@@ -16,6 +17,7 @@ import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/location_weather_service.dart';
 import '../../ai_insight/presentation/ai_feedback_bar.dart';
 
 class TodayPage extends StatefulWidget {
@@ -34,10 +36,13 @@ class _TodayPageState extends State<TodayPage> {
   final insightRepository = const InsightRepository();
   final queueRepository = const AiAnalysisQueueRepository();
   final queueRunner = const AiAnalysisQueueRunner();
+  final locationWeatherService = const LocationWeatherService();
   late Future<List<DiaryEntry>> _entriesFuture =
       repository.getEntriesForDate(DateTime.now());
   late Future<AiAnalysisQueueSnapshot> _queueSnapshotFuture =
       queueRepository.snapshot();
+  late final Future<LocationWeather> _locationWeatherFuture =
+      locationWeatherService.getCachedCurrent();
 
   @override
   void initState() {
@@ -158,7 +163,12 @@ class _TodayPageState extends State<TodayPage> {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Scaffold(
-            appBar: AppBar(title: _TodayTitle(date: DateTime.now())),
+            appBar: AppBar(
+              title: _TodayTitle(
+                date: DateTime.now(),
+                locationWeatherFuture: _locationWeatherFuture,
+              ),
+            ),
             body: Center(
               child: FilledButton.icon(
                 onPressed: _refreshEntries,
@@ -173,7 +183,10 @@ class _TodayPageState extends State<TodayPage> {
 
         return Scaffold(
           appBar: AppBar(
-            title: _TodayTitle(date: DateTime.now()),
+            title: _TodayTitle(
+              date: DateTime.now(),
+              locationWeatherFuture: _locationWeatherFuture,
+            ),
             actions: [
               IconButton(
                 tooltip: '搜索',
@@ -220,24 +233,52 @@ class _AnalysisData {
 }
 
 class _TodayTitle extends StatelessWidget {
-  const _TodayTitle({required this.date});
+  const _TodayTitle({required this.date, required this.locationWeatherFuture});
 
   final DateTime date;
+  final Future<LocationWeather> locationWeatherFuture;
 
   @override
   Widget build(BuildContext context) {
     const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     final title = '${date.month}月${date.day}日 ${weekdays[date.weekday - 1]}';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(title),
-        const SizedBox(height: 2),
-        Text('🌧 小雨 · 18°', style: Theme.of(context).textTheme.bodySmall),
-      ],
+    return FutureBuilder<LocationWeather>(
+      future: locationWeatherFuture,
+      builder: (context, snapshot) {
+        final metaLabel = switch (snapshot.connectionState) {
+          ConnectionState.waiting || ConnectionState.active => '定位中',
+          _ => _locationWeatherLabel(snapshot.data),
+        };
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title),
+            if (metaLabel != null) ...[
+              const SizedBox(height: 2),
+              Text(metaLabel, style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ],
+        );
+      },
     );
+  }
+
+  String? _locationWeatherLabel(LocationWeather? value) {
+    if (value == null || value.isMissing) return '地点天气未获取';
+    final location = value.locationName.trim();
+    final weather = [
+      value.weather.trim(),
+      if (value.temperature.trim().isNotEmpty) value.temperature.trim(),
+    ].where((item) => item.isNotEmpty && item != '天气').join(' ');
+    final parts = [
+      if (location.isNotEmpty && location != '未选择地点') location,
+      if (weather.isNotEmpty) weather,
+    ];
+    if (parts.isEmpty) return '地点天气未获取';
+    return parts.join(' · ');
   }
 }
 
@@ -725,11 +766,19 @@ class _HomeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>()!;
     return Card(
-      elevation: 0,
+      elevation: theme.cardTheme.elevation ?? 0,
+      color: theme.cardTheme.color,
       clipBehavior: Clip.antiAlias,
+      shape: theme.cardTheme.shape ??
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(shinen.cardRadius),
+            side: shinen.cardBorderSide(theme.colorScheme.outline),
+          ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(shinen.cardRadius),
         onTap: onTap,
         child: Padding(padding: const EdgeInsets.all(18), child: child),
       ),

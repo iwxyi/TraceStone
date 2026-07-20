@@ -44,6 +44,37 @@ class AiEmbeddingRepository {
     return _loadMany(prefs, ids, indexKey: key);
   }
 
+  Stream<List<AiEmbedding>> scanByType(
+    AiEmbeddingSourceType type, {
+    int pageSize = 128,
+  }) async* {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_typeIndexPrefix${type.name}';
+    final ids = (_safeGetStringList(prefs, key) ?? []).toSet().toList()..sort();
+    final validIds = <String>[];
+    final effectivePageSize = pageSize <= 0 ? 128 : pageSize;
+    for (var offset = 0; offset < ids.length; offset += effectivePageSize) {
+      final nextOffset = offset + effectivePageSize;
+      final end = nextOffset > ids.length ? ids.length : nextOffset;
+      final embeddings = await _loadMany(
+        prefs,
+        ids.sublist(offset, end),
+        validIds: validIds,
+      );
+      if (embeddings.isNotEmpty) yield embeddings;
+    }
+    await prefs.setStringList(key, validIds);
+  }
+
+  Stream<List<AiEmbedding>> scanByTypes(
+    Iterable<AiEmbeddingSourceType> types, {
+    int pageSize = 128,
+  }) async* {
+    for (final type in types) {
+      yield* scanByType(type, pageSize: pageSize);
+    }
+  }
+
   Future<List<String>> listOutdatedEntryIds({
     required String modelId,
     required String modelVersion,
@@ -194,8 +225,12 @@ class AiEmbeddingRepository {
     );
   }
 
-  Future<List<AiEmbedding>> _loadMany(SharedPreferences prefs, List<String> ids,
-      {String? indexKey}) async {
+  Future<List<AiEmbedding>> _loadMany(
+    SharedPreferences prefs,
+    List<String> ids, {
+    String? indexKey,
+    List<String>? validIds,
+  }) async {
     final embeddings = <AiEmbedding>[];
     for (final id in ids) {
       final key = '$_prefix$id';
@@ -207,6 +242,7 @@ class AiEmbeddingRepository {
         continue;
       }
       embeddings.add(embedding);
+      validIds?.add(embedding.id);
     }
     embeddings.sort((a, b) => a.sourceId.compareTo(b.sourceId));
     if (indexKey != null) {

@@ -4,16 +4,30 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ai_analysis_job.dart';
 import '../models/diary_entry.dart';
+import 'diary_repository.dart';
+import 'entry_summary_repository.dart';
 import 'period_summary_repository.dart';
 import 'ai_analysis_queue_bus.dart';
 
 class AiAnalysisQueueRepository {
-  const AiAnalysisQueueRepository();
+  const AiAnalysisQueueRepository({
+    DiaryRepository? diaryRepository,
+    EntrySummaryRepository? summaryRepository,
+    PeriodSummaryRepository? periodSummaryRepository,
+  })  : _diaryRepository = diaryRepository ?? const DiaryRepository(),
+        _summaryRepository =
+            summaryRepository ?? const EntrySummaryRepository(),
+        _periodSummaryRepository =
+            periodSummaryRepository ?? const PeriodSummaryRepository();
 
   static const _indexKey = 'ai.analysis.jobs.index';
   static const _pausedKey = 'ai.analysis.jobs.paused';
   static const _prefix = 'ai.analysis.jobs.';
   static const _staleRunningAge = Duration(minutes: 10);
+
+  final DiaryRepository _diaryRepository;
+  final EntrySummaryRepository _summaryRepository;
+  final PeriodSummaryRepository _periodSummaryRepository;
 
   Future<AiAnalysisJob> enqueueEntry(
     DiaryEntry entry, {
@@ -81,15 +95,26 @@ class AiAnalysisQueueRepository {
     int? pipelineVersion,
     String? batchId,
     String? batchLabel,
-  }) {
+  }) async {
     final target = DateTime(month.year, month.month);
+    final targetPipelineVersion =
+        pipelineVersion ?? DateTime.now().microsecondsSinceEpoch;
+    final targetBatchId = batchId ??
+        'period:${PeriodSummaryRepository.monthId(target)}:$targetPipelineVersion';
+    final targetBatchLabel =
+        batchLabel ?? '月度总结前置资料 ${_dateTimeLabel(DateTime.now())}';
+    await _enqueueDiaryDependenciesForMonth(
+      target,
+      batchId: targetBatchId,
+      batchLabel: targetBatchLabel,
+    );
     return _enqueuePeriodSummary(
       id: PeriodSummaryRepository.monthId(target),
       type: AiAnalysisJobType.monthSummary,
       targetId: PeriodSummaryRepository.monthId(target),
-      pipelineVersion: pipelineVersion ?? DateTime.now().microsecondsSinceEpoch,
-      batchId: batchId,
-      batchLabel: batchLabel,
+      pipelineVersion: targetPipelineVersion,
+      batchId: targetBatchId,
+      batchLabel: targetBatchLabel,
     );
   }
 
@@ -98,11 +123,46 @@ class AiAnalysisQueueRepository {
     int? pipelineVersion,
     String? batchId,
     String? batchLabel,
-  }) {
+  }) async {
+    final targetPipelineVersion =
+        pipelineVersion ?? DateTime.now().microsecondsSinceEpoch;
+    final monthBatchId = batchId ?? 'period:$year';
+    final monthBatchLabel =
+        batchLabel ?? '年度总结前置月度总结 ${_dateTimeLabel(DateTime.now())}';
+    final entries = await _diaryRepository.listEntries();
+    final monthsWithEntries = entries
+        .where((entry) => entry.date.year == year)
+        .map((entry) => entry.date.month)
+        .toSet()
+        .toList()
+      ..sort();
+    for (final month in monthsWithEntries) {
+      await enqueueMonthSummary(
+        DateTime(year, month),
+        pipelineVersion: targetPipelineVersion,
+        batchId: monthBatchId,
+        batchLabel: monthBatchLabel,
+      );
+    }
     return _enqueuePeriodSummary(
       id: PeriodSummaryRepository.yearId(year),
       type: AiAnalysisJobType.yearSummary,
       targetId: PeriodSummaryRepository.yearId(year),
+      pipelineVersion: targetPipelineVersion,
+      batchId: monthBatchId,
+      batchLabel: monthBatchLabel,
+    );
+  }
+
+  Future<AiAnalysisJob> enqueueUserProfile({
+    int? pipelineVersion,
+    String? batchId,
+    String? batchLabel,
+  }) {
+    return _enqueuePeriodSummary(
+      id: 'user-profile',
+      type: AiAnalysisJobType.userProfile,
+      targetId: 'ai-user-profile',
       pipelineVersion: pipelineVersion ?? DateTime.now().microsecondsSinceEpoch,
       batchId: batchId,
       batchLabel: batchLabel,
@@ -141,6 +201,40 @@ class AiAnalysisQueueRepository {
     }
     AiAnalysisQueueBus.bump();
     return job;
+  }
+
+  Future<void> _enqueueDiaryDependenciesForMonth(
+    DateTime month, {
+    required String batchId,
+    required String batchLabel,
+  }) async {
+    final entries = await _diaryRepository.listEntries();
+    final scoped = entries.where((entry) {
+      return entry.date.year == month.year &&
+          entry.date.month == month.month &&
+          entry.content.trim().isNotEmpty;
+    }).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+    for (final entry in scoped) {
+      if (!await _entryNeedsDiaryJob(entry)) continue;
+      await enqueueEntry(entry, batchId: batchId, batchLabel: batchLabel);
+    }
+  }
+
+  Future<bool> _entryNeedsDiaryJob(DiaryEntry entry) async {
+    final existing = await getJob(entry.id);
+    final summary = await _summaryRepository.getSummary(entry.id);
+    final summaryReady = summary != null &&
+        summary.entryUpdatedAt.isAtSameMomentAs(entry.updatedAt);
+    if (summaryReady) return false;
+    if (existing != null &&
+        (existing.state == AiAnalysisJobState.pending ||
+            existing.state == AiAnalysisJobState.running ||
+            existing.state == AiAnalysisJobState.incomplete ||
+            existing.state == AiAnalysisJobState.failed)) {
+      return true;
+    }
+    return true;
   }
 
   Future<void> saveJob(AiAnalysisJob job) async {
@@ -225,17 +319,20 @@ class AiAnalysisQueueRepository {
   Future<AiAnalysisQueueSnapshot> snapshot() async {
     final jobs = await listJobs();
     final paused = await isPaused();
+    final dependencyReasons = await _dependencyReasons(jobs);
     final currentJob = paused
         ? jobs
             .where((job) => job.state == AiAnalysisJobState.running)
             .firstOrNull
         : jobs.where((job) {
-            return job.state == AiAnalysisJobState.running || job.canRun;
+            return job.state == AiAnalysisJobState.running ||
+                (job.canRun && !dependencyReasons.containsKey(job.id));
           }).firstOrNull;
     return AiAnalysisQueueSnapshot(
       jobs: jobs,
       currentJob: currentJob,
       isPaused: paused,
+      dependencyReasons: dependencyReasons,
     );
   }
 
@@ -243,7 +340,10 @@ class AiAnalysisQueueRepository {
     await markStaleRunningIncomplete();
     if (await isPaused()) return null;
     final jobs = await listJobs();
-    return jobs.where((job) => job.canRun).firstOrNull;
+    final dependencyReasons = await _dependencyReasons(jobs);
+    return jobs
+        .where((job) => job.canRun && !dependencyReasons.containsKey(job.id))
+        .firstOrNull;
   }
 
   Future<bool> isPaused() async {
@@ -343,7 +443,97 @@ class AiAnalysisQueueRepository {
         return 1;
       case AiAnalysisJobType.yearSummary:
         return 2;
+      case AiAnalysisJobType.userProfile:
+        return 3;
     }
+  }
+
+  Future<Map<String, String>> _dependencyReasons(
+      List<AiAnalysisJob> jobs) async {
+    final reasons = <String, String>{};
+    final entries = {
+      for (final entry in await _diaryRepository.listEntries()) entry.id: entry,
+    };
+    final monthJobs = <String, AiAnalysisJob>{
+      for (final job
+          in jobs.where((job) => job.type == AiAnalysisJobType.monthSummary))
+        job.targetId: job,
+    };
+    for (final job in jobs) {
+      if (job.type == AiAnalysisJobType.monthSummary) {
+        final month = _monthFromId(job.targetId);
+        if (month == null) continue;
+        var blockedEntries = 0;
+        for (final entry in entries.values.where((entry) =>
+            entry.date.year == month.year && entry.date.month == month.month)) {
+          final summary = await _summaryRepository.getSummary(entry.id);
+          if (summary == null ||
+              !summary.entryUpdatedAt.isAtSameMomentAs(entry.updatedAt)) {
+            blockedEntries++;
+          }
+        }
+        if (blockedEntries > 0) {
+          reasons[job.id] = '等待 $blockedEntries 篇日记整理完成';
+        }
+      } else if (job.type == AiAnalysisJobType.yearSummary) {
+        final year = _yearFromId(job.targetId);
+        if (year == null) continue;
+        final monthIndexes = entries.values
+            .where((entry) => entry.date.year == year)
+            .map((entry) => entry.date.month)
+            .toSet()
+            .toList()
+          ..sort();
+        final blockedMonths = <DateTime>[];
+        for (final monthIndex in monthIndexes) {
+          final month = DateTime(year, monthIndex);
+          final monthId = PeriodSummaryRepository.monthId(month);
+          final monthJob = monthJobs[monthId];
+          if (monthJob != null &&
+              monthJob.state != AiAnalysisJobState.completed) {
+            blockedMonths.add(month);
+            continue;
+          }
+          final summary = await _periodSummaryRepository.getSummary(monthId);
+          if (summary == null) {
+            blockedMonths.add(month);
+          }
+        }
+        if (blockedMonths.isNotEmpty) {
+          final labels = blockedMonths
+              .map((item) {
+                return '${item.year}年${item.month}月';
+              })
+              .take(3)
+              .toList(growable: false);
+          reasons[job.id] =
+              '等待 ${blockedMonths.length} 个月度总结完成${labels.isEmpty ? '' : '（${labels.join('、')}）'}';
+        }
+      }
+    }
+    return reasons;
+  }
+
+  DateTime? _monthFromId(String id) {
+    if (!id.startsWith('month:')) return null;
+    final value = id.substring('month:'.length);
+    final parts = value.split('-');
+    if (parts.length != 2) return null;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    if (year == null || month == null) return null;
+    return DateTime(year, month);
+  }
+
+  int? _yearFromId(String id) {
+    if (!id.startsWith('year:')) return null;
+    return int.tryParse(id.substring('year:'.length));
+  }
+
+  String _dateTimeLabel(DateTime date) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${date.year}-${two(date.month)}-${two(date.day)} '
+        '${two(date.hour)}:${two(date.minute)}';
   }
 
   String? _safeGetString(SharedPreferences prefs, String key) {

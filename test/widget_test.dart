@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -36,6 +37,7 @@ import 'package:trace_stone/data/repositories/stone_task_repository.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
+import 'package:trace_stone/data/services/companion_answer_service.dart';
 import 'package:trace_stone/data/services/embedding_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
@@ -81,6 +83,83 @@ void main() {
     await tester.pump();
 
     expect(resumeCount, 1);
+  });
+
+  testWidgets('companion page shows progress before revealing answer',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final service = _ControllableCompanionAnswerService();
+    await tester.pumpWidget(MaterialApp(
+      home: CompanionPage(
+        answerService: service,
+        developerModeFuture: Future.value(false),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '最近我在担心什么？');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.text('正在查找相关日记'), findsOneWidget);
+    expect(find.text('睡眠'), findsOneWidget);
+
+    service.complete();
+    await tester.pumpAndSettle(const Duration(milliseconds: 20));
+
+    expect(
+      find.textContaining('你最近反复提到睡眠和工作节奏', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.text('7月3日日记'), findsOneWidget);
+    expect(find.text('正在查找相关日记'), findsNothing);
+  });
+
+  testWidgets('companion page shows an error when answer generation fails',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(MaterialApp(
+      home: CompanionPage(
+        answerService: const _FailingCompanionAnswerService(),
+        developerModeFuture: Future.value(false),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '这次为什么失败？');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('洞察生成失败', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.text('正在查找相关日记'), findsNothing);
+  });
+
+  testWidgets('companion page shows research steps in developer mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final service = _ControllableCompanionAnswerService();
+    await tester.pumpWidget(MaterialApp(
+      home: CompanionPage(
+        answerService: service,
+        developerModeFuture: Future.value(true),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '帮我看看睡眠');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    service.complete();
+    await tester.pumpAndSettle(const Duration(milliseconds: 20));
+
+    expect(find.text('研究过程'), findsOneWidget);
+    expect(find.text('检索基础资料'), findsWidgets);
+    expect(find.text('完成'), findsOneWidget);
   });
 
   testWidgets('review page ignores invalid stored tab preference',
@@ -3239,6 +3318,65 @@ void main() {
     expect(copiedText, contains('summary:debug-summary-entry'));
     expect(copiedText, contains('entry:debug-summary-entry'));
   });
+}
+
+class _ControllableCompanionAnswerService extends CompanionAnswerService {
+  _ControllableCompanionAnswerService();
+
+  final Completer<void> _completer = Completer<void>();
+
+  void complete() {
+    if (!_completer.isCompleted) _completer.complete();
+  }
+
+  @override
+  Future<CompanionAnswer> answer(
+    String question, {
+    CompanionResearchProgress? onProgress,
+  }) async {
+    onProgress?.call(const CompanionResearchStep(
+      title: '检索基础资料',
+      status: '正在查找相关日记',
+      detail: '睡眠；工作节奏',
+    ));
+    await _completer.future;
+    return const CompanionAnswer(
+      answer: '你最近反复提到睡眠和工作节奏，可以先从今晚的休息开始。',
+      followUp: '要不要继续看看这些担心最早从什么时候开始？',
+      usedFallback: false,
+      sources: [
+        CompanionAnswerSource(
+          title: '7月3日日记',
+          reason: '提到睡眠和工作节奏',
+          score: 8,
+        ),
+      ],
+      researchSteps: [
+        CompanionResearchStep(
+          title: '检索基础资料',
+          status: '完成',
+          detail: '睡眠；工作节奏',
+        ),
+      ],
+    );
+  }
+}
+
+class _FailingCompanionAnswerService extends CompanionAnswerService {
+  const _FailingCompanionAnswerService();
+
+  @override
+  Future<CompanionAnswer> answer(
+    String question, {
+    CompanionResearchProgress? onProgress,
+  }) async {
+    onProgress?.call(const CompanionResearchStep(
+      title: '检索基础资料',
+      status: '正在查找相关日记',
+      detail: '睡眠',
+    ));
+    throw StateError('测试失败');
+  }
 }
 
 Future<void> _expandFirstAiDebugJob(WidgetTester tester) async {

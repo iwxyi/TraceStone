@@ -3,7 +3,7 @@ class AppConstants {
 
   static const appName = '拾年';
   static const appNameEn = 'Shinen';
-  static const defaultThemeName = '溪石';
+  static const defaultThemeName = '十年纸页';
 
   static const freeDailyAiLimit = 3;
   static const memberDailyAiLimit = 20;

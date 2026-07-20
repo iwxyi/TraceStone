@@ -64,6 +64,7 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
         summary: summary,
         status: statusById[summary.id],
         job: jobById[summary.id],
+        dependencyReason: snapshot.dependencyReasons[summary.id],
       ));
     }
     final existingIds = periodItems.map((item) => item.id).toSet();
@@ -73,13 +74,18 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
         id: status.id,
         status: status,
         job: jobById[status.id],
+        dependencyReason: snapshot.dependencyReasons[status.id],
       ));
       existingIds.add(status.id);
       if (periodItems.length >= 8) break;
     }
     for (final job in periodJobs) {
       if (existingIds.contains(job.targetId)) continue;
-      periodItems.add(_PeriodTaskItem(id: job.targetId, job: job));
+      periodItems.add(_PeriodTaskItem(
+        id: job.targetId,
+        job: job,
+        dependencyReason: snapshot.dependencyReasons[job.targetId],
+      ));
       existingIds.add(job.targetId);
       if (periodItems.length >= 8) break;
     }
@@ -183,13 +189,19 @@ class _AiTaskQueueData {
 }
 
 class _PeriodTaskItem {
-  const _PeriodTaskItem(
-      {required this.id, this.summary, this.status, this.job});
+  const _PeriodTaskItem({
+    required this.id,
+    this.summary,
+    this.status,
+    this.job,
+    this.dependencyReason,
+  });
 
   final String id;
   final PeriodSummary? summary;
   final PeriodSummaryStatus? status;
   final AiAnalysisJob? job;
+  final String? dependencyReason;
 }
 
 class _DiaryQueueSection extends StatelessWidget {
@@ -484,6 +496,7 @@ class _PeriodTaskTile extends StatelessWidget {
         : periodType == PeriodSummaryType.month
             ? '${summary.startDate.year}年${summary.startDate.month}月'
             : '${summary.startDate.year}年';
+    final dependencyReason = item.dependencyReason;
     final state = status?.state ??
         (job == null
             ? PeriodSummaryState.completed
@@ -507,6 +520,15 @@ class _PeriodTaskTile extends StatelessWidget {
                 status?.message ?? (summary == null ? '等待生成' : '已生成'),
                 style: theme.textTheme.bodySmall,
               ),
+              if ((dependencyReason ?? '').isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  dependencyReason!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ],
               if (job != null) ...[
                 const SizedBox(height: 2),
                 Text(job.stageLabel, style: theme.textTheme.bodySmall),

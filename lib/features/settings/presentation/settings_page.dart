@@ -163,14 +163,28 @@ class _ThemeModeSection extends StatelessWidget {
   }
 }
 
-class _PaletteSection extends StatelessWidget {
+class _PaletteSection extends StatefulWidget {
   const _PaletteSection();
+
+  @override
+  State<_PaletteSection> createState() => _PaletteSectionState();
+}
+
+class _PaletteSectionState extends State<_PaletteSection> {
+  static const _defaultVisibleCount = 3;
+
+  bool _showAll = false;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: themeController,
       builder: (context, _) {
+        final palettes = _showAll
+            ? AppTheme.palettes
+            : AppTheme.palettes.take(_defaultVisibleCount);
+        final hiddenCount = AppTheme.palettes.length - _defaultVisibleCount;
+
         return Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -181,16 +195,148 @@ class _PaletteSection extends StatelessWidget {
                     style:
                         TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 12),
-                for (final palette in AppTheme.palettes)
+                _ThemePreview(palette: themeController.palette),
+                const SizedBox(height: 14),
+                for (final palette in palettes)
                   _PaletteTile(
                     palette: palette,
                     selected: palette.name == themeController.palette.name,
                   ),
+                if (hiddenCount > 0) ...[
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => setState(() => _showAll = !_showAll),
+                      icon: Icon(
+                          _showAll ? Icons.expand_less : Icons.expand_more),
+                      label: Text(_showAll ? '收起更多主题' : '展开更多主题'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         );
       },
+    );
+  }
+}
+
+class _ThemePreview extends StatelessWidget {
+  const _ThemePreview({required this.palette});
+
+  final ThemePalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final shinen = theme.extension<TraceStoneColors>()!;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: shinen.cardColor(colors.surface, isDark),
+        borderRadius: BorderRadius.circular(shinen.cardRadius + 4),
+        border: Border.all(
+          color: shinen.cardBorderSide(colors.outlineVariant).color,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    palette.name,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                _PreviewPill(label: '日'),
+                const SizedBox(width: 6),
+                _PreviewPill(label: '夜'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '今晚整理了几段旧事，也看见了一点新的节奏。',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: const [
+                Chip(label: Text('回顾')),
+                Chip(label: Text('关系')),
+                Chip(label: Text('变化')),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              enabled: false,
+              decoration: const InputDecoration(
+                hintText: '写下一句今天想留下的话',
+                prefixIcon: Icon(Icons.edit_note_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colors.primaryContainer.withValues(
+                    alpha: isDark ? 0.62 : 0.82,
+                  ),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(shinen.cardRadius + 6),
+                    topRight: Radius.circular(shinen.cardRadius + 6),
+                    bottomLeft: Radius.circular(shinen.cardRadius + 6),
+                    bottomRight: const Radius.circular(8),
+                  ),
+                  border: Border.all(
+                    color: colors.primary.withValues(alpha: 0.16),
+                  ),
+                ),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  child: Text(
+                    '慢慢写就好',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewPill extends StatelessWidget {
+  const _PreviewPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        child: Text(label, style: theme.textTheme.labelSmall),
+      ),
     );
   }
 }
@@ -205,19 +351,79 @@ class _PaletteTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: Row(
-        mainAxisSize: MainAxisSize.min,
+      leading: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _ColorDot(color: palette.lightBackground),
-          _ColorDot(color: palette.seed),
-          _ColorDot(color: palette.accent),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _ColorDot(color: palette.lightBackground),
+              _ColorDot(color: palette.seed),
+              _ColorDot(color: palette.accent),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _ColorDot(color: palette.darkBackground),
+              _ColorDot(color: palette.darkPrimary),
+              _ColorDot(color: palette.darkAccent),
+            ],
+          ),
         ],
       ),
       title: Text(palette.name),
-      subtitle: Text(palette.description),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(palette.description),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _StyleTag(label: '卡片 ${_cardStyleLabel(palette.cardStyle)}'),
+              _StyleTag(label: 'Chip ${_chipStyleLabel(palette.chipStyle)}'),
+              _StyleTag(label: '输入 ${_inputStyleLabel(palette.inputStyle)}'),
+            ],
+          ),
+        ],
+      ),
       trailing: selected ? const Icon(Icons.check_circle) : null,
       onTap: () => themeController.setPalette(palette),
     );
+  }
+
+  String _cardStyleLabel(ShinenCardStyle style) {
+    return switch (style) {
+      ShinenCardStyle.paper => '纯白卡片',
+      ShinenCardStyle.clean => '清透卡片',
+      ShinenCardStyle.archive => '纸感卡片',
+      ShinenCardStyle.glass => '玻璃卡片',
+      ShinenCardStyle.outline => '边框卡片',
+      ShinenCardStyle.letter => '信笺卡片',
+    };
+  }
+
+  String _chipStyleLabel(ShinenChipStyle style) {
+    return switch (style) {
+      ShinenChipStyle.softFill => '柔和底色',
+      ShinenChipStyle.tinted => '强调底色',
+      ShinenChipStyle.outline => '空心边框',
+      ShinenChipStyle.ghost => '透明气泡',
+    };
+  }
+
+  String _inputStyleLabel(ShinenInputStyle style) {
+    return switch (style) {
+      ShinenInputStyle.paper => '纸页输入',
+      ShinenInputStyle.filled => '浅底输入',
+      ShinenInputStyle.underlined => '下划线',
+      ShinenInputStyle.glow => '发光边框',
+      ShinenInputStyle.outline => '纯边框',
+    };
   }
 }
 
@@ -229,13 +435,38 @@ class _ColorDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 18,
-      height: 18,
+      width: 14,
+      height: 14,
       margin: const EdgeInsets.only(right: 4),
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
         border: Border.all(color: Theme.of(context).colorScheme.outline),
+      ),
+    );
+  }
+}
+
+class _StyleTag extends StatelessWidget {
+  const _StyleTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(
+          label,
+          style: theme.textTheme.labelSmall,
+        ),
       ),
     );
   }

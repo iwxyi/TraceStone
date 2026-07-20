@@ -62,17 +62,7 @@ class DiaryRepository {
 
   Future<List<DiaryEntry>> listEntries() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = _safeGetStringList(prefs, _indexKey) ?? [];
-    final storedIds = prefs
-        .getKeys()
-        .where((key) =>
-            key.startsWith(_entryPrefix) && !key.startsWith(_recoveryPrefix))
-        .map((key) => key.substring(_entryPrefix.length));
-    final reconciledIndex = {...index, ...storedIds}.toList();
-    if (reconciledIndex.length != index.length) {
-      await prefs.setStringList(_indexKey, reconciledIndex);
-    }
-
+    final reconciledIndex = await _activeEntryIds(prefs);
     final entries = <DiaryEntry>[];
     for (final id in reconciledIndex) {
       final raw = _safeGetString(prefs, '$_entryPrefix$id');
@@ -85,6 +75,29 @@ class DiaryRepository {
       return b.createdAt.compareTo(a.createdAt);
     });
     return entries;
+  }
+
+  Stream<List<DiaryEntry>> scanEntries({int pageSize = 64}) async* {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = await _activeEntryIds(prefs);
+    final effectivePageSize = pageSize <= 0 ? 64 : pageSize;
+    for (var offset = 0; offset < ids.length; offset += effectivePageSize) {
+      final nextOffset = offset + effectivePageSize;
+      final end = nextOffset > ids.length ? ids.length : nextOffset;
+      final entries = <DiaryEntry>[];
+      for (final id in ids.sublist(offset, end)) {
+        final raw = _safeGetString(prefs, '$_entryPrefix$id');
+        if (raw == null) continue;
+        entries
+            .add(DiaryEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>));
+      }
+      entries.sort((a, b) {
+        final byDate = b.date.compareTo(a.date);
+        if (byDate != 0) return byDate;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+      if (entries.isNotEmpty) yield entries;
+    }
   }
 
   Future<DiaryEntry?> getEntry(DateTime date) async {
@@ -253,6 +266,20 @@ class DiaryRepository {
         .toList();
     await prefs.setStringList(_trashIndexKey, ids);
     return ids;
+  }
+
+  Future<List<String>> _activeEntryIds(SharedPreferences prefs) async {
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    final storedIds = prefs
+        .getKeys()
+        .where((key) =>
+            key.startsWith(_entryPrefix) && !key.startsWith(_recoveryPrefix))
+        .map((key) => key.substring(_entryPrefix.length));
+    final reconciledIndex = {...index, ...storedIds}.toList();
+    if (reconciledIndex.length != index.length) {
+      await prefs.setStringList(_indexKey, reconciledIndex);
+    }
+    return reconciledIndex;
   }
 
   Future<DiaryTrashItem?> _trashItem(SharedPreferences prefs, String id) async {

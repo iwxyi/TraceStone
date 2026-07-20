@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/widgets/simple_markdown_text.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../data/models/diary_analysis_status.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
@@ -880,7 +881,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   Future<void> _loadCurrentLocationWeather() async {
     setState(() => _isLoadingLocation = true);
     try {
-      final value = await _locationWeatherService.getCurrent();
+      final value = await _locationWeatherService.getCachedCurrent();
       if (!mounted) return;
       setState(() {
         if (!_hasManualLocation) {
@@ -1295,9 +1296,10 @@ class _DiaryMetaBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final baseWeather = weather.trim().isEmpty ? '天气' : weather;
-    final weatherLabel = temperature == null || temperature!.isEmpty
+    final temperatureLabel = _temperatureLabel(temperature);
+    final weatherLabel = temperatureLabel == null
         ? baseWeather
-        : '$baseWeather ${temperature!.replaceAll('℃', '°')}';
+        : '$baseWeather $temperatureLabel';
 
     final locationLabel = location.trim().isEmpty ? '未选择地点' : location;
 
@@ -1367,6 +1369,15 @@ class _DiaryMetaBar extends StatelessWidget {
     if (weather.contains('晴')) return Icons.wb_sunny_outlined;
     return Icons.thermostat_outlined;
   }
+
+  String? _temperatureLabel(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    final normalized = trimmed
+        .replaceFirst(RegExp(r'\s*(℃|°C|C|°)$', caseSensitive: false), '')
+        .trim();
+    return normalized.isEmpty ? null : '$normalized℃';
+  }
 }
 
 class _MetaPill extends StatelessWidget {
@@ -1385,15 +1396,28 @@ class _MetaPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>()!;
     final enabled = onTap != null;
+    final outline = shinen.cardBorderSide(theme.colorScheme.outlineVariant);
+    final bg = switch (shinen.chipStyle) {
+      ShinenChipStyle.softFill => theme.colorScheme.surface,
+      ShinenChipStyle.tinted =>
+        theme.colorScheme.primary.withValues(alpha: 0.08),
+      ShinenChipStyle.outline => Colors.transparent,
+      ShinenChipStyle.ghost => Colors.transparent,
+    };
     return Material(
-      color: theme.colorScheme.surface,
+      color: bg,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(999),
-        side: BorderSide(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(
+          shinen.chipStyle == ShinenChipStyle.tinted ? 14 : 999,
+        ),
+        side: outline,
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(
+          shinen.chipStyle == ShinenChipStyle.tinted ? 14 : 999,
+        ),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
@@ -1451,8 +1475,11 @@ class _ReadMetaTags extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final shinen = theme.extension<TraceStoneColors>()!;
     final style = theme.textTheme.bodySmall?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.78),
+      color: theme.colorScheme.onSurfaceVariant.withValues(
+        alpha: shinen.navStyle == ShinenNavStyle.dot ? 0.9 : 0.78,
+      ),
       height: 1.45,
       fontWeight: FontWeight.w400,
     );
@@ -1466,11 +1493,29 @@ class _ReadMetaTags extends StatelessWidget {
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        for (var i = 0; i < items.length; i++) ...[
-          if (i > 0)
-            Text('/', style: style?.copyWith(color: theme.colorScheme.outline)),
-          Text(items[i], style: style),
-        ],
+        if (shinen.navStyle == ShinenNavStyle.underline)
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0)
+              Text('/',
+                  style: style?.copyWith(color: theme.colorScheme.outline)),
+            Text(items[i], style: style),
+          ]
+        else
+          for (final item in items)
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.42),
+                borderRadius: BorderRadius.circular(
+                  shinen.navStyle == ShinenNavStyle.pill ? 999 : 8,
+                ),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Text(item, style: style),
+              ),
+            ),
       ],
     );
   }

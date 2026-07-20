@@ -45,10 +45,12 @@ import 'package:trace_stone/data/services/ai_client_service.dart';
 import 'package:trace_stone/data/services/ai_data_inventory_service.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/ai_profile_decision_service.dart';
+import 'package:trace_stone/data/services/ai_retrieval_evaluation_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
 import 'package:trace_stone/data/services/companion_answer_service.dart';
 import 'package:trace_stone/data/services/dev_seed_data_service.dart';
+import 'package:trace_stone/data/services/ai_user_profile_service.dart';
 import 'package:trace_stone/data/services/diary_analysis_service.dart';
 import 'package:trace_stone/data/services/embedding_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
@@ -2421,8 +2423,8 @@ void main() {
         jobs: [diary, embedding, month, year, completedMonth],
       );
 
-      expect(snapshot.remainingStageCount, 13);
-      expect(snapshot.averageStageDurationLabel, '约 10 秒');
+      expect(snapshot.remainingStageCount, 17);
+      expect(snapshot.averageStageDurationLabel, '约 5 秒');
       expect(snapshot.estimatedRemainingLabel, '约 3 分钟');
     });
 
@@ -2672,6 +2674,7 @@ void main() {
     test('runner builds queued month summary jobs', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
       const queueRepository = AiAnalysisQueueRepository();
       const periodRepository = PeriodSummaryRepository();
       final client = _PeriodSummaryAiClientService();
@@ -2681,6 +2684,11 @@ void main() {
         content: '这个月开始规律散步，也更能觉察焦虑。',
       );
       await diaryRepository.saveEntry(entry);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: entry,
+        brief: '这个月开始规律散步，也更能觉察焦虑。',
+        importance: 0.6,
+      ));
       await queueRepository.enqueueMonthSummary(DateTime(2026, 7));
 
       await AiAnalysisQueueRunner(
@@ -2700,7 +2708,11 @@ void main() {
       expect(job?.type, AiAnalysisJobType.monthSummary);
       expect(job?.state, AiAnalysisJobState.completed);
       expect(job?.completedStages, contains(AiAnalysisStage.preparing));
+      expect(job?.completedStages, contains(AiAnalysisStage.segmenting));
+      expect(job?.completedStages, contains(AiAnalysisStage.embedding));
       expect(job?.completedStages, contains(AiAnalysisStage.generatingSummary));
+      expect(job?.stageLogs.map((log) => log.message), contains('补齐当期摘要和片段'));
+      expect(job?.stageLogs.map((log) => log.message), contains('补齐当期多级向量'));
       expect(summary?.generator, 'ai-month-summary-v1');
       expect(status?.state, PeriodSummaryState.completed);
     });
@@ -2709,6 +2721,7 @@ void main() {
         () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
       const queueRepository = AiAnalysisQueueRepository();
       const periodRepository = PeriodSummaryRepository();
       final client = _PeriodSummaryAiClientService();
@@ -2724,11 +2737,21 @@ void main() {
       );
       await diaryRepository.saveEntry(july);
       await diaryRepository.saveEntry(august);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: july,
+        brief: '七月开始规律散步。',
+        importance: 0.55,
+      ));
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: august,
+        brief: '八月继续调整节奏。',
+        importance: 0.55,
+      ));
       await queueRepository.enqueueYearSummary(2026);
 
       await AiAnalysisQueueRunner(
         periodSummaryService: PeriodSummaryService(client: client),
-      ).processUntilIdle(maxJobs: 1);
+      ).processUntilIdle(maxJobs: 3);
 
       final julySummary = await periodRepository.getSummary(
         PeriodSummaryRepository.monthId(DateTime(2026, 7)),
@@ -2747,6 +2770,68 @@ void main() {
       expect(yearSummary?.generator, 'ai-year-summary-v1');
       expect(yearJob?.state, AiAnalysisJobState.completed);
       expect(client.lastUserPrompt, contains('已生成月度总结'));
+    });
+
+    test('enqueue year summary seeds month dependencies and waiting reasons',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final july = _entry(
+        id: 'seed-year-july',
+        date: DateTime(2026, 7, 6),
+        content: '七月开始规律散步。',
+      );
+      final august = _entry(
+        id: 'seed-year-august',
+        date: DateTime(2026, 8, 6),
+        content: '八月继续调整节奏。',
+      );
+      await diaryRepository.saveEntry(july);
+      await diaryRepository.saveEntry(august);
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: july,
+        brief: '七月开始规律散步。',
+        importance: 0.55,
+      ));
+      await summaryRepository.saveSummary(_summaryForTest(
+        entry: august,
+        brief: '八月继续调整节奏。',
+        importance: 0.55,
+      ));
+
+      await queueRepository.enqueueYearSummary(2026);
+      final snapshot = await queueRepository.snapshot();
+
+      expect(
+        snapshot.jobs.map((job) => job.type),
+        containsAll(
+            [AiAnalysisJobType.monthSummary, AiAnalysisJobType.yearSummary]),
+      );
+      expect(snapshot.dependencyReasons[PeriodSummaryRepository.yearId(2026)],
+          isNotNull);
+      expect(snapshot.dependencyReasons[PeriodSummaryRepository.yearId(2026)],
+          contains('月度总结'));
+    });
+
+    test('runner builds queued user profile jobs', () async {
+      SharedPreferences.setMockInitialValues({});
+      const queueRepository = AiAnalysisQueueRepository();
+      await queueRepository.enqueueUserProfile();
+
+      await AiAnalysisQueueRunner(
+        userProfileService: const _FakeAiUserProfileService(),
+      ).processUntilIdle(maxJobs: 1);
+
+      final job = await queueRepository.getJob('user-profile');
+
+      expect(job?.type, AiAnalysisJobType.userProfile);
+      expect(job?.state, AiAnalysisJobState.completed);
+      expect(job?.completedStages, contains(AiAnalysisStage.preparing));
+      expect(job?.completedStages, contains(AiAnalysisStage.generatingSummary));
+      expect(job?.stageLogs.map((log) => log.message), contains('生成用户画像'));
+      expect(job?.stageLogs.map((log) => log.message), contains('用户画像已更新'));
     });
 
     test('runner resumes incomplete jobs without rewriting existing embeddings',
@@ -2987,7 +3072,7 @@ void main() {
       expect(embeddings, hasLength(4));
     });
 
-    test('runner continues with structured summaries when embeddings fail',
+    test('runner fails loudly but keeps summaries when embeddings fail',
         () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
@@ -3013,20 +3098,19 @@ void main() {
       final summary = await summaryRepository.getSummary(entry.id);
       final segments = await summaryRepository.listSegments(entry.id);
       final embeddings = await embeddingRepository.listForEntry(entry.id);
-      final insight = await insightRepository.getInsight(entry.id);
 
-      expect(job?.state, AiAnalysisJobState.completed);
-      expect(job?.completedStages, contains(AiAnalysisStage.embedding));
+      expect(job?.state, AiAnalysisJobState.incomplete);
+      expect(job?.completedStages, isNot(contains(AiAnalysisStage.embedding)));
       expect(job?.embeddingIds, isEmpty);
+      expect(job?.lastError, contains('向量生成失败'));
       expect(
           job?.stageLogs.map((log) => log.message), contains('向量生成失败，保留结构化摘要'));
       expect(job?.stageLogs.map((log) => log.outputSummary).join('\n'),
           contains('embeddingSkipped=true'));
-      expect(status?.state, DiaryAnalysisState.completed);
+      expect(status?.state, DiaryAnalysisState.incomplete);
       expect(summary?.brief, contains('工作压力'));
       expect(segments, hasLength(2));
       expect(embeddings, isEmpty);
-      expect(insight?.reflection, '本地测试洞察');
     });
 
     test('runner uses body preview fallback when summary generation fails',
@@ -4113,7 +4197,96 @@ void main() {
   });
 
   group('CompanionAnswerService', () {
-    test('fallback answer uses relationship profiles with sources', () async {
+    test('retrieval evaluation reports recall and precision', () async {
+      final service = AiRetrievalEvaluationService(
+        searchService: _FakeAiSearchService({
+          '新加坡': const [
+            AiSearchMatch(
+              sourceType: 'entry_summary',
+              sourceId: 'singapore-2025',
+              entryId: 'singapore-2025',
+              title: '新加坡旅行',
+              summary: '第一次明确记录新加坡旅行。',
+              score: 9,
+              reasons: ['地点匹配：新加坡'],
+              matchedTokens: ['新加坡'],
+            ),
+            AiSearchMatch(
+              sourceType: 'entry_summary',
+              sourceId: 'singapore-extra',
+              entryId: 'singapore-extra',
+              title: '新加坡复盘',
+              summary: '旅行后的复盘。',
+              score: 7,
+              reasons: ['地点匹配：新加坡'],
+              matchedTokens: ['新加坡'],
+            ),
+          ],
+          '杭州梅花': const [
+            AiSearchMatch(
+              sourceType: 'entry_summary',
+              sourceId: 'hangzhou-wrong',
+              entryId: 'hangzhou-wrong',
+              title: '杭州散步',
+              summary: '没有提到梅花。',
+              score: 4,
+              reasons: ['地点匹配：杭州'],
+              matchedTokens: ['杭州'],
+            ),
+          ],
+        }),
+      );
+
+      final report = await service.evaluate(const [
+        AiRetrievalEvaluationCase(
+          id: 'singapore-first',
+          question: '我什么时候去的新加坡',
+          expectedSourceIds: ['singapore-2025'],
+          minimumRecall: 1,
+        ),
+        AiRetrievalEvaluationCase(
+          id: 'hangzhou-plum',
+          question: '去年杭州梅花什么时候开',
+          expectedSourceIds: ['hangzhou-plum-2025'],
+          minimumRecall: 1,
+        ),
+      ]);
+
+      expect(report.totalCount, 2);
+      expect(report.passedCount, 1);
+      expect(report.failedCount, 1);
+      expect(report.averageRecall, 0.5);
+      expect(report.results.first.precision, 0.5);
+      expect(report.summary, contains('failed=1'));
+      expect(report.toDebugText(), contains('singapore-first'));
+      expect(report.toDebugText(), contains('hangzhou-plum'));
+    });
+
+    test('retrieval evaluation loads default asset format', () async {
+      final service = AiRetrievalEvaluationService(
+        assetBundle: _MapAssetBundle({
+          AiRetrievalEvaluationService.defaultAssetPath: jsonEncode({
+            'cases': [
+              {
+                'id': 'first-met',
+                'question': '第一次见面是什么时候',
+                'expectedSourceIds': ['entry-1', 'entry-2'],
+                'minimumRecall': 0.5,
+              },
+            ],
+          }),
+        }),
+      );
+
+      final cases = await service.loadCases();
+
+      expect(cases, hasLength(1));
+      expect(cases.single.id, 'first-met');
+      expect(cases.single.expectedSourceIds, ['entry-1', 'entry-2']);
+      expect(cases.single.minimumRecall, 0.5);
+    });
+
+    test('companion answer fails loudly when AI is not configured', () async {
       SharedPreferences.setMockInitialValues({});
       const insightRepository = InsightRepository();
       final date = DateTime(2026, 7, 3);
@@ -4130,14 +4303,15 @@ void main() {
         ),
       ));
 
-      final answer = await const CompanionAnswerService().answer('我和妈妈最近怎么样');
+      await expectLater(
+        () => const CompanionAnswerService().answer('我和妈妈最近怎么样'),
+        throwsA(isA<AiClientException>()),
+      );
 
-      expect(answer.usedFallback, isTrue);
-      expect(answer.answer, contains('妈妈'));
-      expect(answer.answer, contains('晚饭后沟通更平和'));
-      expect(answer.sources.map((source) => source.title), contains('妈妈'));
-      expect(answer.sources.firstWhere((source) => source.title == '妈妈').score,
-          greaterThan(0));
+      final session =
+          await const AiResearchSessionRepository().getLastSession();
+      expect(session?.state, AiResearchSessionState.failed);
+      expect(session?.error, contains('当前未开启自定义 AI'));
     });
 
     test('filters companion answer sources to retrieved context ids', () async {
@@ -5084,6 +5258,56 @@ void main() {
       expect(prefs.get('ai.embeddings.list'), ['bad']);
     });
 
+    test('scans embeddings by type in pages and repairs invalid references',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.embeddings.typeIndex.summary': <String>['missing'],
+      });
+      const repository = AiEmbeddingRepository();
+      final generatedAt = DateTime(2026, 7, 3);
+      for (var index = 0; index < 5; index++) {
+        await repository.saveEmbedding(AiEmbedding(
+          id: 'summary:paged-$index',
+          sourceType: AiEmbeddingSourceType.summary,
+          sourceId: 'paged-$index',
+          entryId: 'paged-$index',
+          modelId: 'test',
+          modelVersion: '1',
+          dimensions: 2,
+          vector: [index.toDouble(), 1],
+          generatedAt: generatedAt,
+          textHash: 'hash-$index',
+        ));
+      }
+
+      final pages = await repository
+          .scanByType(AiEmbeddingSourceType.summary, pageSize: 2)
+          .toList();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(pages.map((page) => page.length), [1, 2, 2]);
+      expect(
+        pages.expand((page) => page).map((embedding) => embedding.id),
+        [
+          'summary:paged-0',
+          'summary:paged-1',
+          'summary:paged-2',
+          'summary:paged-3',
+          'summary:paged-4',
+        ],
+      );
+      expect(
+        prefs.getStringList('ai.embeddings.typeIndex.summary'),
+        [
+          'summary:paged-0',
+          'summary:paged-1',
+          'summary:paged-2',
+          'summary:paged-3',
+          'summary:paged-4',
+        ],
+      );
+    });
+
     test('repairs embedding entry and type indexes from stored objects',
         () async {
       final entry = _entry(
@@ -5298,8 +5522,48 @@ void main() {
       expect(matches.first.rerankSignals.keys, contains('keyword'));
     });
 
-    test('falls back to keyword search when embeddings are unavailable',
-        () async {
+    test('reports search diagnostics for paged retrieval', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = EmbeddingService();
+      final entry = _entry(
+        id: 'diagnostic-search-entry',
+        date: DateTime(2026, 7, 3),
+        content: '晚上散步以后，焦虑明显下降，身体也放松了一些。',
+      );
+      await diaryRepository.saveEntry(entry);
+      final summary = _summaryForTest(
+        entry: entry,
+        brief: '晚上散步以后焦虑明显下降',
+        importance: 0.65,
+        topics: const ['散步'],
+      );
+      await summaryRepository.saveSummary(summary);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        text: summary.brief,
+        generatedAt: DateTime(2026, 7, 3),
+      );
+
+      final response =
+          await const AiSearchService().searchWithDiagnostics('散步后焦虑下降');
+
+      expect(response.matches, isNotEmpty);
+      expect(response.diagnostics.vectorPages, greaterThanOrEqualTo(1));
+      expect(response.diagnostics.vectorEmbeddingsScanned,
+          greaterThanOrEqualTo(1));
+      expect(response.diagnostics.keywordPages, greaterThanOrEqualTo(1));
+      expect(response.diagnostics.keywordEntriesScanned, 1);
+      expect(response.diagnostics.debugSummary, contains('searchDiagnostics='));
+    });
+
+    test('fails loudly when embeddings are unavailable', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const summaryRepository = EntrySummaryRepository();
@@ -5316,15 +5580,12 @@ void main() {
         topics: const ['散步'],
       ));
 
-      final matches = await const AiSearchService(
-        embeddingService: _ThrowingEmbeddingService(),
-      ).search('散步 焦虑');
-
-      expect(matches, isNotEmpty);
-      expect(matches.first.entryId, entry.id);
-      expect(matches.first.reasons.join(' '), contains('关键词重合'));
-      expect(matches.first.reasons.join(' '), isNot(contains('向量相似度')));
-      expect(matches.first.rerankSignals.keys, isNot(contains('semantic')));
+      expect(
+        () => const AiSearchService(
+          embeddingService: _ThrowingEmbeddingService(),
+        ).search('散步 焦虑'),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('uses summary importance as a rerank signal', () async {
@@ -6740,7 +7001,8 @@ void main() {
       );
       final savedTrace = await traceRepository.getTrace('search:last');
       expect(savedTrace?.scenario, AiContextScenario.search.name);
-      expect(savedTrace?.contextSummary, package.debugSummary);
+      expect(savedTrace?.contextSummary, startsWith(package.debugSummary));
+      expect(savedTrace?.contextSummary, contains('searchDiagnostics='));
       expect(savedTrace?.items.map((item) => item.sourceType),
           containsAll(['entry_summary', 'segment']));
     });
@@ -6770,7 +7032,8 @@ void main() {
       expect(package.retrievalTrace?.scenario, AiContextScenario.question.name);
       final savedTrace = await traceRepository.getTrace('question:last');
       expect(savedTrace?.scenario, AiContextScenario.question.name);
-      expect(savedTrace?.contextSummary, package.debugSummary);
+      expect(savedTrace?.contextSummary, startsWith(package.debugSummary));
+      expect(savedTrace?.contextSummary, contains('searchDiagnostics='));
       expect(savedTrace?.items.map((item) => item.sourceType),
           contains('segment'));
     });
@@ -6995,6 +7258,38 @@ void main() {
         package.retrievalTrace?.items
             .where((item) => item.sourceType == 'stone'),
         hasLength(5),
+      );
+    });
+  });
+
+  group('DiaryRepository', () {
+    test('scans active entries in pages', () async {
+      SharedPreferences.setMockInitialValues({});
+      const repository = DiaryRepository();
+      for (var index = 0; index < 5; index++) {
+        await repository.saveEntry(_entry(
+          id: 'scan-entry-$index',
+          date: DateTime(2026, 7, index + 1),
+          content: '分页扫描日记 $index',
+        ));
+      }
+
+      final pages = await repository.scanEntries(pageSize: 2).toList();
+
+      expect(
+        pages.map((page) => page.length),
+        everyElement(lessThanOrEqualTo(2)),
+      );
+      expect(pages.expand((page) => page), hasLength(5));
+      expect(
+        pages.expand((page) => page).map((entry) => entry.id).toSet(),
+        {
+          'scan-entry-0',
+          'scan-entry-1',
+          'scan-entry-2',
+          'scan-entry-3',
+          'scan-entry-4',
+        },
       );
     });
   });
@@ -8447,6 +8742,7 @@ class _CompanionAiClientService extends AiClientService {
 
   final String response;
   String? lastUserPrompt;
+  final List<String> userPrompts = [];
 
   @override
   Future<String> completeJson({
@@ -8454,8 +8750,61 @@ class _CompanionAiClientService extends AiClientService {
     required String userPrompt,
     required int maxTokens,
   }) async {
+    userPrompts.add(userPrompt);
+    if (systemPrompt.contains('研究规划器')) {
+      return jsonEncode(_researchPlanFor(userPrompt));
+    }
+    if (systemPrompt.contains('研究控制器')) {
+      return jsonEncode({
+        'should_continue': false,
+        'reason': '测试证据已经足够。',
+        'queries': [],
+      });
+    }
+    if (systemPrompt.contains('回答校验器')) {
+      final parsed = jsonDecode(response) as Map<String, dynamic>;
+      return jsonEncode({
+        'status': 'ok',
+        'issues': [],
+        'answer': parsed['answer'],
+        'follow_up': parsed['follow_up'],
+        'sources': parsed['sources'],
+      });
+    }
     lastUserPrompt = userPrompt;
     return response;
+  }
+
+  Map<String, dynamic> _researchPlanFor(String prompt) {
+    final items = <Map<String, dynamic>>[];
+    void add(String question, List<String> queries) {
+      items.add({
+        'question': question,
+        'reason': '测试计划',
+        'queries': queries,
+      });
+    }
+
+    if (prompt.contains('新加坡')) {
+      add('确认新加坡相关时间线', ['新加坡']);
+    }
+    if (prompt.contains('领导') || prompt.contains('周岚')) {
+      add('梳理领导反馈和建议', ['周岚']);
+    }
+    if (prompt.contains('小红')) {
+      add('梳理和小红的互动变化', ['小红']);
+    }
+    if (prompt.contains('运动')) {
+      add('梳理运动后的状态变化', ['运动']);
+    }
+    if (items.isEmpty) {
+      add('回答用户问题', ['相关记录']);
+    }
+    return {
+      'subquestions': items.take(6).toList(),
+      'stop_condition': '每个子问题至少有代表证据，或明确证据不足。',
+      'confidence': 0.72,
+    };
   }
 }
 
@@ -8468,6 +8817,29 @@ class _FakeQuestionContextBuilder extends AiContextBuilder {
   Future<AiContextPackage> buildForQuestion(String question) async => package;
 }
 
+class _FakeAiUserProfileService extends AiUserProfileService {
+  const _FakeAiUserProfileService();
+
+  @override
+  Future<MemoryEntry> rebuildProfile() async {
+    final now = DateTime(2026, 7, 20);
+    return MemoryEntry(
+      id: AiUserProfileService.profileMemoryId,
+      sourceEntryId: 'profile-source',
+      date: now,
+      createdAt: now,
+      summary: '用户画像：测试画像。',
+      keywords: const ['用户画像'],
+      emotion: '平稳',
+      people: const [],
+      tags: const ['用户画像', 'AI综合画像'],
+      evidenceEntryIds: const ['profile-source'],
+      importance: 0.9,
+      confidence: 0.8,
+    );
+  }
+}
+
 class _FakeAiSearchService extends AiSearchService {
   _FakeAiSearchService(this.responses);
 
@@ -8476,12 +8848,30 @@ class _FakeAiSearchService extends AiSearchService {
 
   @override
   Future<List<AiSearchMatch>> search(String query, {int limit = 12}) async {
+    return (await searchWithDiagnostics(query, limit: limit)).matches;
+  }
+
+  @override
+  Future<AiSearchResponse> searchWithDiagnostics(
+    String query, {
+    int limit = 12,
+  }) async {
     queries.add(query);
-    return responses.entries
+    final matches = responses.entries
         .where((entry) => query.contains(entry.key))
         .expand((entry) => entry.value)
         .take(limit)
         .toList(growable: false);
+    return AiSearchResponse(
+      matches: matches,
+      diagnostics: AiSearchDiagnostics(
+        keywordPages: matches.isEmpty ? 0 : 1,
+        keywordEntriesScanned: matches.length,
+        keywordCandidatesKept: matches.length,
+        finalMatches: matches.length,
+        returnedMatches: matches.length,
+      ),
+    );
   }
 }
 

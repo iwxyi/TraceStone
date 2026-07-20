@@ -29,8 +29,6 @@ class EmbeddingService {
     final prefs = await SharedPreferences.getInstance();
     final useOfficial = _safeGetBool(prefs, _useOfficialKey) ?? true;
     if (useOfficial) return localSignature;
-    final remoteAvailable = _safeGetBool(prefs, _embeddingRemoteAvailableKey);
-    if (remoteAvailable == false) return localSignature;
     final useChatConfig =
         _safeGetBool(prefs, _embeddingUseChatConfigKey) ?? true;
     final platform = useChatConfig
@@ -69,15 +67,28 @@ class EmbeddingService {
   );
 
   Future<AiEmbeddingResult> embedForAi(String text) async {
+    final signature = await currentTargetSignature();
+    if (signature.modelId == modelId &&
+        signature.modelVersion == modelVersion &&
+        signature.dimensions == dimensions) {
+      return embed(text);
+    }
     try {
       final result = await _embedRemote(text);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_embeddingRemoteAvailableKey, true);
       return result;
-    } on Object {
+    } on AiClientException catch (error) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_embeddingRemoteAvailableKey, false);
-      return embed(text);
+      throw AiClientException(
+        '向量生成失败：${error.message}',
+        retryable: error.retryable,
+      );
+    } on Object catch (error) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_embeddingRemoteAvailableKey, false);
+      throw AiClientException('向量生成失败：$error');
     }
   }
 

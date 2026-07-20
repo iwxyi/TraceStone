@@ -41,3 +41,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/dev/diary_seed_dataset.json
+    - assets/dev/retrieval_evaluation_cases.json
