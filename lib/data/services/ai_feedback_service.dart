@@ -86,12 +86,12 @@ class AiFeedbackService {
         AiAnalysisStageLog(
           stage: AiAnalysisStage.generatingInsight,
           startedAt: now,
-          message: '用户标记洞察不准确，重新生成今日洞察',
+          message: '用户标记分析不准确，重新生成今日分析',
           inputSummary: 'entryId=${entry.id}',
           outputSummary: _feedbackOutputSummary(feedback),
         ),
       ],
-      lastError: '用户标记洞察不准确，等待重新生成',
+      lastError: '用户标记分析不准确，等待重新生成',
     ));
     await _insightRepository.saveStatus(DiaryAnalysisStatus(
       entryId: entry.id,

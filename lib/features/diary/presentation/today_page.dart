@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/routing/app_routes.dart';
@@ -21,9 +22,9 @@ import '../../../data/services/location_weather_service.dart';
 import '../../ai_insight/presentation/ai_feedback_bar.dart';
 
 class TodayPage extends StatefulWidget {
-  const TodayPage({super.key, this.onDiaryChanged});
+  const TodayPage({super.key, this.onDiarySaved});
 
-  final VoidCallback? onDiaryChanged;
+  final ValueChanged<DiaryEntry>? onDiarySaved;
 
   @override
   State<TodayPage> createState() => _TodayPageState();
@@ -43,6 +44,9 @@ class _TodayPageState extends State<TodayPage> {
       queueRepository.snapshot();
   late final Future<LocationWeather> _locationWeatherFuture =
       locationWeatherService.getCachedCurrent();
+  late Future<bool> _developerModeFuture = _loadDeveloperMode();
+  bool _isContinuingQueue = false;
+  String? _queueActionDebug;
 
   @override
   void initState() {
@@ -70,7 +74,12 @@ class _TodayPageState extends State<TodayPage> {
     if (!mounted) return;
     setState(() {
       _queueSnapshotFuture = queueRepository.snapshot();
+      _developerModeFuture = _loadDeveloperMode();
     });
+  }
+
+  static Future<bool> _loadDeveloperMode() {
+    return const DeveloperSettingsRepository().isDeveloperModeEnabled();
   }
 
   Future<void> _openEditor([String? entryId]) async {
@@ -80,9 +89,11 @@ class _TodayPageState extends State<TodayPage> {
     setState(() {
       _entriesFuture = repository.getEntriesForDate(DateTime.now());
     });
-    widget.onDiaryChanged?.call();
     if (result is DiaryEntry) {
-      unawaited(_runQueuedAnalysis());
+      widget.onDiarySaved?.call(result);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_runQueuedAnalysis());
+      });
     }
   }
 
@@ -99,6 +110,61 @@ class _TodayPageState extends State<TodayPage> {
     await queueRepository.retryFailedJobs();
     await queueRepository.setPaused(false);
     await _runQueuedAnalysis();
+  }
+
+  Future<void> _continueQueue() async {
+    if (_isContinuingQueue) return;
+    setState(() {
+      _isContinuingQueue = true;
+      _queueActionDebug = '继续按钮已触发，正在恢复队列...';
+      _queueSnapshotFuture = queueRepository.snapshot();
+    });
+    try {
+      await queueRepository.setPaused(false);
+      final repaired = await queueRepository.enqueueMissingPeriodDependencies();
+      if (!mounted) return;
+      if (repaired > 0) {
+        setState(() {
+          _queueSnapshotFuture = queueRepository.snapshot();
+        });
+      }
+      await _runQueuedAnalysis();
+      final latest = await queueRepository.snapshot();
+      if (!mounted) return;
+      setState(() {
+        _queueActionDebug = _queueContinueResult(repaired, latest);
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _queueActionDebug = '继续失败：$error';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('继续整理失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isContinuingQueue = false;
+          _queueSnapshotFuture = queueRepository.snapshot();
+        });
+      }
+    }
+  }
+
+  String _queueContinueResult(int repaired, AiAnalysisQueueSnapshot snapshot) {
+    final firstDependency = snapshot.dependencyReasons.values.firstOrNull;
+    final current = snapshot.currentJob;
+    final parts = [
+      if (repaired > 0) '已补齐 $repaired 个依赖任务' else '没有新增依赖任务',
+      'runnable=${snapshot.runnableCount}',
+      'waiting=${snapshot.waitingCount}',
+      'blocked=${snapshot.dependencyReasons.length}',
+      if (current != null)
+        'current=${current.id}/${current.state.name}/${current.currentStage.name}',
+      if (firstDependency != null) 'reason=$firstDependency',
+    ];
+    return parts.join('；');
   }
 
   Future<void> _toggleQueuePaused(bool paused) async {
@@ -126,10 +192,17 @@ class _TodayPageState extends State<TodayPage> {
         }
         return Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: _AiQueueCard(
-            snapshot: queue,
-            onRetry: _retryQueue,
-            onPauseChanged: _toggleQueuePaused,
+          child: FutureBuilder<bool>(
+            future: _developerModeFuture,
+            builder: (context, developerSnapshot) => _AiQueueCard(
+              snapshot: queue,
+              isContinuing: _isContinuingQueue,
+              developerMode: developerSnapshot.data ?? false,
+              actionDebug: _queueActionDebug,
+              onContinue: _continueQueue,
+              onRetry: _retryQueue,
+              onPauseChanged: _toggleQueuePaused,
+            ),
           ),
         );
       },
@@ -190,7 +263,8 @@ class _TodayPageState extends State<TodayPage> {
             actions: [
               IconButton(
                 tooltip: '搜索',
-                onPressed: () {},
+                onPressed: () =>
+                    Navigator.of(context).pushNamed(AppRoutes.search),
                 icon: const Icon(Icons.search),
               ),
             ],
@@ -200,6 +274,7 @@ class _TodayPageState extends State<TodayPage> {
             child: const Icon(Icons.add),
           ),
           body: ListView(
+            key: const PageStorageKey('today-feed'),
             padding: const EdgeInsets.all(20),
             children: [
               _buildQueueCard(),
@@ -245,11 +320,14 @@ class _TodayTitle extends StatelessWidget {
 
     return FutureBuilder<LocationWeather>(
       future: locationWeatherFuture,
+      initialData: LocationWeatherService.cachedCurrent,
       builder: (context, snapshot) {
-        final metaLabel = switch (snapshot.connectionState) {
-          ConnectionState.waiting || ConnectionState.active => '定位中',
-          _ => _locationWeatherLabel(snapshot.data),
-        };
+        final hasData = snapshot.hasData;
+        final metaLabel = !hasData &&
+                (snapshot.connectionState == ConnectionState.waiting ||
+                    snapshot.connectionState == ConnectionState.active)
+            ? '定位中'
+            : _locationWeatherLabel(snapshot.data);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -338,11 +416,19 @@ class _DiaryPreviewCard extends StatelessWidget {
 class _AiQueueCard extends StatelessWidget {
   const _AiQueueCard({
     required this.snapshot,
+    required this.isContinuing,
+    required this.developerMode,
+    required this.actionDebug,
+    required this.onContinue,
     required this.onRetry,
     required this.onPauseChanged,
   });
 
   final AiAnalysisQueueSnapshot snapshot;
+  final bool isContinuing;
+  final bool developerMode;
+  final String? actionDebug;
+  final Future<void> Function() onContinue;
   final VoidCallback onRetry;
   final Future<void> Function(bool paused) onPauseChanged;
 
@@ -354,17 +440,33 @@ class _AiQueueCard extends StatelessWidget {
     final hasFailed = snapshot.failedCount > 0 && !hasRunning;
     final failedJob = hasFailed ? snapshot.firstFailedJob : null;
     final isResuming = job?.state == AiAnalysisJobState.incomplete;
+    final hasVisibleWork = snapshot.hasVisibleWork;
+    final dependencyReason = snapshot.dependencyReasons.values.firstOrNull;
     final title = snapshot.isPaused
         ? '记忆整理已暂停'
         : hasFailed
             ? '有日记整理失败'
             : isResuming
                 ? '继续整理记忆'
-                : '正在整理记忆';
-    final stage = job?.stageLabel ?? failedJob?.stageLabel ?? '等待继续';
+                : job == null
+                    ? (hasVisibleWork ? '记忆整理等待继续' : '暂无待整理记忆')
+                    : '正在整理记忆';
+    final stage = job?.stageLabel ??
+        failedJob?.stageLabel ??
+        dependencyReason ??
+        (hasVisibleWork ? '等待继续' : '当前没有新的整理任务');
     final errorText = job?.lastError ?? failedJob?.lastError;
     final waiting = snapshot.waitingCount;
     final currentBatch = job == null ? null : snapshot.batchForJob(job.id);
+    final continueOnly = !snapshot.isPaused && !hasRunning && hasVisibleWork;
+    final primaryActionLabel = isContinuing
+        ? '继续中'
+        : snapshot.isPaused || continueOnly
+            ? '继续'
+            : '暂停';
+    final primaryAction = snapshot.isPaused || continueOnly
+        ? onContinue
+        : () => onPauseChanged(true);
     final totalActive = snapshot.runnableCount +
         (job?.state == AiAnalysisJobState.running ? 1 : 0);
     final batchProgress = job == null
@@ -399,8 +501,21 @@ class _AiQueueCard extends StatelessWidget {
                         fontSize: 18, fontWeight: FontWeight.w600)),
               ),
               TextButton(
-                onPressed: () => onPauseChanged(!snapshot.isPaused),
-                child: Text(snapshot.isPaused ? '继续' : '暂停'),
+                onPressed: isContinuing ? null : primaryAction,
+                child: isContinuing
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(primaryActionLabel),
+                        ],
+                      )
+                    : Text(primaryActionLabel),
               ),
               if (hasFailed)
                 TextButton(onPressed: onRetry, child: const Text('重试')),
@@ -447,6 +562,13 @@ class _AiQueueCard extends StatelessWidget {
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.error)),
           ],
+          if (developerMode) ...[
+            const SizedBox(height: 10),
+            _HomeQueueDebug(
+              snapshot: snapshot,
+              actionDebug: actionDebug,
+            ),
+          ],
         ],
       ),
     );
@@ -456,6 +578,91 @@ class _AiQueueCard extends StatelessWidget {
       .where((stage) =>
           stage != AiAnalysisStage.queued && stage != AiAnalysisStage.completed)
       .length;
+}
+
+class _HomeQueueDebug extends StatelessWidget {
+  const _HomeQueueDebug({required this.snapshot, required this.actionDebug});
+
+  final AiAnalysisQueueSnapshot snapshot;
+  final String? actionDebug;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final lines = _debugLines();
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('开发者队列诊断', style: theme.textTheme.labelMedium),
+                ),
+                IconButton(
+                  tooltip: '复制诊断',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 32,
+                    height: 32,
+                  ),
+                  onPressed: () => _copyDebug(context, lines),
+                  icon: const Icon(Icons.copy_all_outlined),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            for (final line in lines)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(line, style: theme.textTheme.bodySmall),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<String> _debugLines() {
+    final job = snapshot.currentJob ?? snapshot.jobs.firstOrNull;
+    final dependency = snapshot.dependencyReasons.entries.firstOrNull;
+    final dependencyJob = dependency == null ? null : _jobById(dependency.key);
+    final lastLog = job?.stageLogs.lastOrNull;
+    return [
+      if ((actionDebug ?? '').isNotEmpty) 'action: $actionDebug',
+      'queue: paused=${snapshot.isPaused} jobs=${snapshot.jobs.length} runnable=${snapshot.runnableCount} waiting=${snapshot.waitingCount} blocked=${snapshot.dependencyReasons.length} failed=${snapshot.failedCount}',
+      if (job != null)
+        'job: ${job.id} type=${job.type.name} state=${job.state.name} stage=${job.currentStage.name} canRun=${job.canRun} retry=${job.retryCount}',
+      if ((job?.lastError ?? '').isNotEmpty) 'error: ${job!.lastError}',
+      if (dependency != null)
+        'dependency: ${dependency.key}=${dependency.value}${dependencyJob == null ? '' : ' state=${dependencyJob.state.name} type=${dependencyJob.type.name} canRun=${dependencyJob.canRun}'}',
+      if (lastLog != null)
+        'lastLog: ${lastLog.stage.name} ${lastLog.message}${(lastLog.error ?? '').isEmpty ? '' : ' error=${lastLog.error}'}',
+    ];
+  }
+
+  AiAnalysisJob? _jobById(String id) {
+    for (final job in snapshot.jobs) {
+      if (job.id == id) return job;
+    }
+    return null;
+  }
+
+  Future<void> _copyDebug(BuildContext context, List<String> lines) async {
+    await Clipboard.setData(ClipboardData(text: lines.join('\n')));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已复制队列诊断')),
+    );
+  }
 }
 
 class _TodayAnalysisCard extends StatelessWidget {
@@ -496,7 +703,7 @@ class _AnalysisEmptyCard extends StatelessWidget {
           Text('今日日记分析',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
           SizedBox(height: 10),
-          Text('还没有分析结果。退出编辑页后，会开始结合今天日记和历史经历生成分析。'),
+          Text('等待分析'),
         ],
       ),
     );
@@ -572,7 +779,7 @@ class _AnalysisLoadingCardState extends State<_AnalysisLoadingCard>
                   ],
                 ),
                 const SizedBox(height: 10),
-                Text(widget.message ?? '正在结合今天的日记和曾经的经历，生成分析和建议。'),
+                Text(widget.message ?? '分析中'),
               ],
             ),
           );
@@ -663,7 +870,7 @@ class _DeveloperInsightPanel extends StatelessWidget {
       child: ExpansionTile(
         tilePadding: EdgeInsets.zero,
         childrenPadding: const EdgeInsets.only(bottom: 8),
-        title: const Text('开发者洞察结构'),
+        title: const Text('开发者分析结构'),
         subtitle: Text(lines.join(' · '),
             style: Theme.of(context).textTheme.bodySmall),
         children: [

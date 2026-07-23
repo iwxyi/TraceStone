@@ -203,10 +203,68 @@ class AiAnalysisQueueRepository {
     return job;
   }
 
-  Future<void> _enqueueDiaryDependenciesForMonth(
+  Future<int> enqueueMissingPeriodDependencies({int limit = 200}) async {
+    if (await isPaused()) return 0;
+    final jobs = await listJobs();
+    var enqueued = 0;
+    for (final job in jobs) {
+      if (enqueued >= limit) break;
+      if (!job.canRun) continue;
+      if (job.type == AiAnalysisJobType.monthSummary) {
+        final month = _monthFromId(job.targetId);
+        if (month == null) continue;
+        enqueued += await _enqueueDiaryDependenciesForMonth(
+          month,
+          batchId:
+              job.batchId ?? 'period:${job.targetId}:${job.pipelineVersion}',
+          batchLabel:
+              job.batchLabel ?? '周期总结前置资料 ${_dateTimeLabel(DateTime.now())}',
+          limit: limit - enqueued,
+        );
+        continue;
+      }
+      if (job.type == AiAnalysisJobType.yearSummary) {
+        final year = _yearFromId(job.targetId);
+        if (year == null) continue;
+        final months = (await _diaryRepository.listEntries())
+            .where((entry) =>
+                entry.date.year == year && entry.content.trim().isNotEmpty)
+            .map((entry) => entry.date.month)
+            .toSet()
+            .toList()
+          ..sort();
+        for (final monthIndex in months) {
+          if (enqueued >= limit) break;
+          final month = DateTime(year, monthIndex);
+          final monthId = PeriodSummaryRepository.monthId(month);
+          final monthJob = await getJob(monthId);
+          final monthSummary =
+              await _periodSummaryRepository.getSummary(monthId);
+          if (monthSummary != null ||
+              (monthJob != null &&
+                  monthJob.state != AiAnalysisJobState.completed)) {
+            continue;
+          }
+          await enqueueMonthSummary(
+            month,
+            pipelineVersion: job.pipelineVersion,
+            batchId:
+                job.batchId ?? 'period:${job.targetId}:${job.pipelineVersion}',
+            batchLabel: job.batchLabel ??
+                '年度总结前置月度总结 ${_dateTimeLabel(DateTime.now())}',
+          );
+          enqueued++;
+        }
+      }
+    }
+    return enqueued;
+  }
+
+  Future<int> _enqueueDiaryDependenciesForMonth(
     DateTime month, {
     required String batchId,
     required String batchLabel,
+    int limit = 200,
   }) async {
     final entries = await _diaryRepository.listEntries();
     final scoped = entries.where((entry) {
@@ -215,10 +273,14 @@ class AiAnalysisQueueRepository {
           entry.content.trim().isNotEmpty;
     }).toList()
       ..sort((a, b) => a.date.compareTo(b.date));
+    var enqueued = 0;
     for (final entry in scoped) {
       if (!await _entryNeedsDiaryJob(entry)) continue;
       await enqueueEntry(entry, batchId: batchId, batchLabel: batchLabel);
+      enqueued++;
+      if (enqueued >= limit) break;
     }
+    return enqueued;
   }
 
   Future<bool> _entryNeedsDiaryJob(DiaryEntry entry) async {
@@ -460,6 +522,7 @@ class AiAnalysisQueueRepository {
         job.targetId: job,
     };
     for (final job in jobs) {
+      if (!job.canRun && job.state != AiAnalysisJobState.running) continue;
       if (job.type == AiAnalysisJobType.monthSummary) {
         final month = _monthFromId(job.targetId);
         if (month == null) continue;

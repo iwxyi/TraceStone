@@ -107,7 +107,7 @@ class CompanionAnswerService {
         evidence: allEvidence.take(12).toList(growable: false),
       ));
       const systemPrompt =
-          '你是拾年的成长陪伴助手。你只能基于给定的用户历史材料回答，在轻松、不施压的氛围中帮助用户记录生活、理解自己、看见变化；不诊断、不说教、不虚构。输出必须是 JSON。回答正文可以使用 Markdown。';
+          '你是拾年的树洞助手。语气温和、克制、具体，不表演亲密感；只能基于给定的用户历史材料回答，帮助用户记录生活、理解自己、看见变化。不诊断、不说教、不催促、不虚构。输出必须是 JSON。回答正文可以使用 Markdown。';
       final userPrompt = _buildPrompt(question, context, steps);
       final trace = AiPromptTrace(
         id: 'companion:last',

@@ -12,14 +12,40 @@ class CalendarMemoryPage extends StatefulWidget {
 
 class _CalendarMemoryPageState extends State<CalendarMemoryPage> {
   final _repository = const CalendarMemoryRepository();
-  late Future<List<CalendarMemory>> _memoriesFuture =
-      _repository.listMemories();
+  List<CalendarMemory> _memories = const [];
+  Object? _loadError;
+  bool _loadingInitial = true;
+  int _loadGeneration = 0;
 
-  Future<void> _refresh() async {
-    setState(() {
-      _memoriesFuture = _repository.listMemories();
-    });
-    await _memoriesFuture;
+  @override
+  void initState() {
+    super.initState();
+    _loadMemories(showLoading: true);
+  }
+
+  Future<void> _loadMemories({bool showLoading = false}) async {
+    final generation = ++_loadGeneration;
+    if (showLoading) {
+      setState(() {
+        _loadingInitial = true;
+        _loadError = null;
+      });
+    }
+    try {
+      final memories = await _repository.listMemories();
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _memories = memories;
+        _loadError = null;
+        _loadingInitial = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _loadError = error;
+        _loadingInitial = false;
+      });
+    }
   }
 
   Future<void> _edit([CalendarMemory? memory]) async {
@@ -29,7 +55,7 @@ class _CalendarMemoryPageState extends State<CalendarMemoryPage> {
     );
     if (updated == null) return;
     await _repository.saveMemory(updated);
-    await _refresh();
+    await _loadMemories();
   }
 
   Future<void> _setEnabled(CalendarMemory memory, bool enabled) async {
@@ -37,12 +63,29 @@ class _CalendarMemoryPageState extends State<CalendarMemoryPage> {
       enabled: enabled,
       updatedAt: DateTime.now(),
     ));
-    await _refresh();
+    await _loadMemories();
   }
 
   Future<void> _delete(CalendarMemory memory) async {
     await _repository.deleteMemory(memory.id);
-    await _refresh();
+    if (!mounted) return;
+    setState(() {
+      _memories = _memories
+          .where((item) => item.id != memory.id)
+          .toList(growable: false);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('已删除纪念日'),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () async {
+            await _repository.saveMemory(memory);
+            if (mounted) await _loadMemories();
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -55,34 +98,42 @@ class _CalendarMemoryPageState extends State<CalendarMemoryPage> {
         label: const Text('新增'),
       ),
       body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: FutureBuilder<List<CalendarMemory>>(
-          future: _memoriesFuture,
-          builder: (context, snapshot) {
-            final memories = snapshot.data ?? const <CalendarMemory>[];
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (memories.isEmpty) {
-              return const _EmptyCalendarMemoryState();
-            }
-            return ListView.separated(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
-              itemCount: memories.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final memory = memories[index];
-                return _CalendarMemoryCard(
-                  memory: memory,
-                  onEnabledChanged: (value) => _setEnabled(memory, value),
-                  onEdit: () => _edit(memory),
-                  onDelete: () => _delete(memory),
-                );
-              },
-            );
-          },
-        ),
+        onRefresh: _loadMemories,
+        child: _buildBody(),
       ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loadingInitial && _memories.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null && _memories.isEmpty) {
+      return Center(
+        child: FilledButton.icon(
+          onPressed: () => _loadMemories(showLoading: true),
+          icon: const Icon(Icons.refresh),
+          label: const Text('加载失败，点击重试'),
+        ),
+      );
+    }
+    if (_memories.isEmpty) {
+      return const _EmptyCalendarMemoryState();
+    }
+    return ListView.separated(
+      key: const PageStorageKey('calendar-memory-list'),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
+      itemCount: _memories.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final memory = _memories[index];
+        return _CalendarMemoryCard(
+          memory: memory,
+          onEnabledChanged: (value) => _setEnabled(memory, value),
+          onEdit: () => _edit(memory),
+          onDelete: () => _delete(memory),
+        );
+      },
     );
   }
 }

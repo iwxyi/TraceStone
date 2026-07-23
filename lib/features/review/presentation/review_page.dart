@@ -32,6 +32,14 @@ String? _temperatureLabel(String? value) {
   return normalized.isEmpty ? null : '$normalized℃';
 }
 
+bool _isVisibleLocation(String value) {
+  final trimmed = value.trim();
+  return trimmed.isNotEmpty &&
+      trimmed != '未选择地点' &&
+      trimmed != '点击选择地点' &&
+      trimmed != '定位中';
+}
+
 class ReviewPage extends StatefulWidget {
   const ReviewPage({super.key});
 
@@ -48,6 +56,7 @@ class _ReviewPageState extends State<ReviewPage> {
     super.initState();
     DiaryChangeBus.version.addListener(_refreshEntries);
     _loadViewPreference();
+    _loadEntries(showLoading: true);
   }
 
   Future<void> _loadViewPreference() async {
@@ -78,10 +87,7 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 
   void _refreshEntries() {
-    if (!mounted) return;
-    setState(() {
-      _entriesFuture = _repository.listEntries();
-    });
+    _loadEntries();
   }
 
   int? _selectedYear;
@@ -89,7 +95,10 @@ class _ReviewPageState extends State<ReviewPage> {
   DateTime _selectedDay =
       DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
   final Set<String> _selectedIds = <String>{};
-  late Future<List<DiaryEntry>> _entriesFuture = _repository.listEntries();
+  List<DiaryEntry> _entries = const [];
+  Object? _entriesError;
+  bool _isLoadingEntries = true;
+  int _entriesLoadGeneration = 0;
 
   bool get _isSelectionMode => _selectedIds.isNotEmpty;
 
@@ -108,8 +117,8 @@ class _ReviewPageState extends State<ReviewPage> {
     await _repository.moveManyToTrash(_selectedIds);
     setState(() {
       _selectedIds.clear();
-      _entriesFuture = _repository.listEntries();
     });
+    _loadEntries();
   }
 
   void _openEntry(String id) {
@@ -121,9 +130,7 @@ class _ReviewPageState extends State<ReviewPage> {
         .pushNamed(AppRoutes.diaryEditPath(id), arguments: id)
         .then((_) {
       if (mounted) {
-        setState(() {
-          _entriesFuture = _repository.listEntries();
-        });
+        _loadEntries();
       }
     });
   }
@@ -131,12 +138,35 @@ class _ReviewPageState extends State<ReviewPage> {
   void _startSelection(String id) => _toggleSelection(id);
 
   String get _appBarTitle =>
-      _isSelectionMode ? '已选择 ${_selectedIds.length} 篇' : '回顾';
+      _isSelectionMode ? '已选择 ${_selectedIds.length} 篇' : '时光';
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _entriesFuture = _repository.listEntries();
+  Future<void> _loadEntries({bool showLoading = false}) async {
+    final generation = ++_entriesLoadGeneration;
+    if (showLoading && mounted) {
+      setState(() {
+        _isLoadingEntries = true;
+        _entriesError = null;
+      });
+    }
+    try {
+      final entries = await _repository.listEntries();
+      if (!mounted || generation != _entriesLoadGeneration) return;
+      setState(() {
+        _entries = entries;
+        _entriesError = null;
+        _isLoadingEntries = false;
+        if (_selectedIds.isNotEmpty) {
+          final ids = entries.map((entry) => entry.id).toSet();
+          _selectedIds.removeWhere((id) => !ids.contains(id));
+        }
+      });
+    } catch (error) {
+      if (!mounted || generation != _entriesLoadGeneration) return;
+      setState(() {
+        _entriesError = error;
+        _isLoadingEntries = false;
+      });
+    }
   }
 
   @override
@@ -150,7 +180,7 @@ class _ReviewPageState extends State<ReviewPage> {
                 children: [
                   const Align(
                     alignment: Alignment.centerLeft,
-                    child: Text('回顾'),
+                    child: Text('时光'),
                   ),
                   _ReviewViewSwitcher(
                     selectedIndex: _selectedIndex,
@@ -183,78 +213,76 @@ class _ReviewPageState extends State<ReviewPage> {
           ],
         ],
       ),
-      body: FutureBuilder<List<DiaryEntry>>(
-        future: _entriesFuture,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(
-              child: FilledButton.icon(
-                onPressed: _refreshEntries,
-                icon: const Icon(Icons.refresh),
-                label: const Text('加载日记失败，点击重试'),
-              ),
-            );
-          }
-          final entries = snapshot.data ?? [];
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return _ReviewLoadingPlaceholder(selectedIndex: _selectedIndex);
-          }
-          if (entries.isEmpty) {
-            return const Padding(
-              padding: EdgeInsets.all(20),
-              child: _EmptyReviewCard(),
-            );
-          }
-          if (_selectedIndex == 2) {
-            return _DayTimeline(
-              entries: entries,
-              onOpenEntry: _openEntry,
-              onLongSelectEntry: _startSelection,
-              selectedIds: _selectedIds,
-            );
-          }
+      body: _buildBody(),
+    );
+  }
 
-          final availableYears = entries
-              .map((e) => e.date.year)
-              .toSet()
-              .toList()
-            ..sort((a, b) => b.compareTo(a));
-          _selectedYear ??= availableYears.first;
-          return CustomScrollView(
-            slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-                sliver: SliverToBoxAdapter(
-                  child: _selectedIndex == 0
-                      ? _YearList(
-                          entries: entries,
-                          selectedYear: _selectedYear!,
-                          onSelectYear: (year) =>
-                              setState(() => _selectedYear = year),
-                          onOpenEntry: _openEntry,
-                          onLongSelectEntry: _startSelection,
-                          selectedIds: _selectedIds,
-                        )
-                      : _MonthCalendar(
-                          entries: entries,
-                          selectedMonth: _selectedMonth,
-                          selectedDay: _selectedDay,
-                          onChangeMonth: (month) => setState(() {
-                            _selectedMonth = month;
-                            _selectedDay = DateTime(month.year, month.month, 1);
-                          }),
-                          onSelectDay: (day) =>
-                              setState(() => _selectedDay = day),
-                          onOpenEntry: _openEntry,
-                          onLongSelectEntry: _startSelection,
-                          selectedIds: _selectedIds,
-                        ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+  Widget _buildBody() {
+    if (_entriesError != null && _entries.isEmpty) {
+      return Center(
+        child: FilledButton.icon(
+          onPressed: _refreshEntries,
+          icon: const Icon(Icons.refresh),
+          label: const Text('加载日记失败，点击重试'),
+        ),
+      );
+    }
+    if (_isLoadingEntries && _entries.isEmpty) {
+      return _ReviewLoadingPlaceholder(selectedIndex: _selectedIndex);
+    }
+    if (_entries.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(20),
+        child: _EmptyReviewCard(),
+      );
+    }
+    if (_selectedIndex == 2) {
+      return _DayTimeline(
+        key: const PageStorageKey('review-day-timeline'),
+        entries: _entries,
+        onOpenEntry: _openEntry,
+        onLongSelectEntry: _startSelection,
+        selectedIds: _selectedIds,
+      );
+    }
+
+    final availableYears = _entries.map((e) => e.date.year).toSet().toList()
+      ..sort((a, b) => b.compareTo(a));
+    if (_selectedYear == null || !availableYears.contains(_selectedYear)) {
+      _selectedYear = availableYears.first;
+    }
+    return CustomScrollView(
+      key: PageStorageKey('review-${_selectedIndex == 0 ? 'year' : 'month'}'),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+          sliver: SliverToBoxAdapter(
+            child: _selectedIndex == 0
+                ? _YearList(
+                    entries: _entries,
+                    selectedYear: _selectedYear!,
+                    onSelectYear: (year) =>
+                        setState(() => _selectedYear = year),
+                    onOpenEntry: _openEntry,
+                    onLongSelectEntry: _startSelection,
+                    selectedIds: _selectedIds,
+                  )
+                : _MonthCalendar(
+                    entries: _entries,
+                    selectedMonth: _selectedMonth,
+                    selectedDay: _selectedDay,
+                    onChangeMonth: (month) => setState(() {
+                      _selectedMonth = month;
+                      _selectedDay = DateTime(month.year, month.month, 1);
+                    }),
+                    onSelectDay: (day) => setState(() => _selectedDay = day),
+                    onOpenEntry: _openEntry,
+                    onLongSelectEntry: _startSelection,
+                    selectedIds: _selectedIds,
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -688,10 +716,7 @@ class _EntryPreviewPage extends StatelessWidget {
     final theme = Theme.of(context);
     final shinen = theme.shinenColors;
     final meta = [
-      if (entry.location.trim().isNotEmpty &&
-          entry.location != '未选择地点' &&
-          entry.location != '点击选择地点')
-        entry.location,
+      if (_isVisibleLocation(entry.location)) entry.location,
       if (entry.weather.trim().isNotEmpty && entry.weather != '天气')
         entry.weather,
       if (_temperatureLabel(entry.temperature) != null)
@@ -2291,7 +2316,8 @@ class _PeriodSummaryDebugSources extends StatelessWidget {
 
 class _DayTimeline extends StatefulWidget {
   const _DayTimeline(
-      {required this.entries,
+      {super.key,
+      required this.entries,
       required this.onOpenEntry,
       required this.onLongSelectEntry,
       required this.selectedIds});
@@ -2326,7 +2352,14 @@ class _DayTimelineState extends State<_DayTimeline> {
   void didUpdateWidget(covariant _DayTimeline oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.entries != widget.entries) {
-      _visibleMonthCount = _initialMonthCount;
+      final bucketCount = _monthBuckets.length;
+      _visibleMonthCount = math.min(
+          math.max(_visibleMonthCount, _initialMonthCount), bucketCount);
+      final buckets = _monthBuckets;
+      final monthKeys = buckets.map((bucket) => bucket.key).toSet();
+      _collapsedMonths.removeWhere((key) => !monthKeys.contains(key));
+      final years = buckets.map((bucket) => bucket.year).toSet();
+      _collapsedYears.removeWhere((year) => !years.contains(year));
       WidgetsBinding.instance.addPostFrameCallback((_) => _ensureFilled());
     }
   }
@@ -2513,6 +2546,7 @@ class _DayTimelineState extends State<_DayTimeline> {
     slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 20)));
 
     return CustomScrollView(
+      key: const PageStorageKey('review-day-timeline-scroll'),
       controller: _scrollController,
       slivers: slivers,
     );
@@ -2927,10 +2961,7 @@ class _TimelineEntry extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final meta = [
-      if (entry.location.trim().isNotEmpty &&
-          entry.location != '未选择地点' &&
-          entry.location != '点击选择地点')
-        entry.location,
+      if (_isVisibleLocation(entry.location)) entry.location,
       if (entry.weather.trim().isNotEmpty && entry.weather != '天气')
         entry.weather,
       if (_temperatureLabel(entry.temperature) != null)

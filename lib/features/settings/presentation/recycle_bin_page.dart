@@ -13,20 +13,51 @@ class RecycleBinPage extends StatefulWidget {
 class _RecycleBinPageState extends State<RecycleBinPage> {
   final _repository = const DiaryRepository();
   final _queueRunner = const AiAnalysisQueueRunner();
-  late Future<List<DiaryTrashItem>> _itemsFuture =
-      _repository.listTrashEntries();
+  List<DiaryTrashItem> _items = const [];
+  Object? _loadError;
+  bool _loadingInitial = true;
+  int _loadGeneration = 0;
 
-  void _refresh() {
-    setState(() {
-      _itemsFuture = _repository.listTrashEntries();
-    });
+  @override
+  void initState() {
+    super.initState();
+    _loadItems(showLoading: true);
+  }
+
+  Future<void> _loadItems({bool showLoading = false}) async {
+    final generation = ++_loadGeneration;
+    if (showLoading) {
+      setState(() {
+        _loadingInitial = true;
+        _loadError = null;
+      });
+    }
+    try {
+      final items = await _repository.listTrashEntries();
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _items = items;
+        _loadError = null;
+        _loadingInitial = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _loadError = error;
+        _loadingInitial = false;
+      });
+    }
   }
 
   Future<void> _restore(DiaryTrashItem item) async {
     await _repository.restoreFromTrash(item.entry.id);
     await _queueRunner.enqueue(item.entry, start: false);
     if (!mounted) return;
-    _refresh();
+    setState(() {
+      _items = _items
+          .where((trashItem) => trashItem.entry.id != item.entry.id)
+          .toList(growable: false);
+    });
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('已恢复日记')));
   }
@@ -52,7 +83,11 @@ class _RecycleBinPageState extends State<RecycleBinPage> {
     if (confirmed != true) return;
     await _repository.permanentlyDeleteFromTrash(item.entry.id);
     if (!mounted) return;
-    _refresh();
+    setState(() {
+      _items = _items
+          .where((trashItem) => trashItem.entry.id != item.entry.id)
+          .toList(growable: false);
+    });
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('已永久删除')));
   }
@@ -61,28 +96,39 @@ class _RecycleBinPageState extends State<RecycleBinPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('回收站')),
-      body: FutureBuilder<List<DiaryTrashItem>>(
-        future: _itemsFuture,
-        builder: (context, snapshot) {
-          final items = snapshot.data ?? const <DiaryTrashItem>[];
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (items.isEmpty) {
-            return const Center(child: Text('回收站是空的'));
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(20),
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return _TrashEntryCard(
-                item: item,
-                onRestore: () => _restore(item),
-                onDelete: () => _deletePermanently(item),
-              );
-            },
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loadingInitial && _items.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null && _items.isEmpty) {
+      return Center(
+        child: FilledButton.icon(
+          onPressed: () => _loadItems(showLoading: true),
+          icon: const Icon(Icons.refresh),
+          label: const Text('加载失败，点击重试'),
+        ),
+      );
+    }
+    if (_items.isEmpty) {
+      return const Center(child: Text('回收站是空的'));
+    }
+    return RefreshIndicator(
+      onRefresh: _loadItems,
+      child: ListView.separated(
+        key: const PageStorageKey('recycle-bin-list'),
+        padding: const EdgeInsets.all(20),
+        itemCount: _items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          final item = _items[index];
+          return _TrashEntryCard(
+            item: item,
+            onRestore: () => _restore(item),
+            onDelete: () => _deletePermanently(item),
           );
         },
       ),

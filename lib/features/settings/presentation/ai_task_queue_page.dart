@@ -108,14 +108,37 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
   }
 
   Future<void> _continueQueue() async {
+    final messenger = ScaffoldMessenger.of(context);
     await _queueRepository.setPaused(false);
+    final repaired = await _queueRepository.enqueueMissingPeriodDependencies();
     await _queueRunner.processUntilIdle(maxJobs: 5);
     await _refreshAsync();
+    if (!mounted) return;
+    final snapshot = await _queueRepository.snapshot();
+    messenger.showSnackBar(
+      SnackBar(content: Text(_continueResultLabel(repaired, snapshot))),
+    );
+  }
+
+  String _continueResultLabel(
+    int repaired,
+    AiAnalysisQueueSnapshot snapshot,
+  ) {
+    final firstDependency = snapshot.dependencyReasons.values.firstOrNull;
+    final parts = [
+      if (repaired > 0) '已补齐 $repaired 个依赖任务' else '没有新增依赖任务',
+      '可运行 ${snapshot.runnableCount}',
+      if (snapshot.dependencyReasons.isNotEmpty)
+        '阻塞 ${snapshot.dependencyReasons.length}',
+      if (firstDependency != null) firstDependency,
+    ];
+    return parts.join(' · ');
   }
 
   Future<void> _togglePaused(bool paused) async {
     await _queueRepository.setPaused(paused);
     if (!paused) {
+      await _queueRepository.enqueueMissingPeriodDependencies();
       unawaited(_queueRunner.processUntilIdle(maxJobs: 5));
     }
     await _refreshAsync();
@@ -309,7 +332,7 @@ class _DiaryQueueSection extends StatelessWidget {
               ],
               const SizedBox(height: 12),
               FilledButton.icon(
-                onPressed: snapshot.runnableCount > 0 ? onContinue : null,
+                onPressed: snapshot.hasVisibleWork ? onContinue : null,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('继续整理'),
               ),

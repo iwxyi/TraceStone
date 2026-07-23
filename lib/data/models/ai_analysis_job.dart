@@ -141,7 +141,7 @@ class AiAnalysisJob {
       case AiAnalysisStage.retrieving:
         return '关联历史记录';
       case AiAnalysisStage.generatingInsight:
-        return '生成今日洞察';
+        return '生成今日分析';
       case AiAnalysisStage.updatingMemory:
         return '更新长期记忆';
       case AiAnalysisStage.completed:

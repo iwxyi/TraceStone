@@ -34,8 +34,7 @@ class _CustomAiPrivacyNotice extends StatelessWidget {
             SizedBox(width: 12),
             Expanded(
               child: Text(
-                '自定义 AI 会把当前日记、相关历史摘要、长期记忆、画像、关系档案和行动记录发送到你配置的服务。'
-                '秘钥只保存在本机，但第三方服务的数据处理规则由服务方决定。',
+                '会将必要上下文发送到你配置的 AI 服务。密钥仅保存在本机。',
               ),
             ),
           ],
@@ -98,7 +97,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
 
   static const _defaultEmbeddingModels = {
     'OpenAI': 'text-embedding-3-small',
-    'DeepSeek': 'text-embedding-3-small',
+    'DeepSeek': '',
     'OpenRouter': 'openai/text-embedding-3-small',
   };
 
@@ -208,6 +207,8 @@ class _CustomAiPageState extends State<CustomAiPage> {
     if (embeddingSettingsChanged) {
       await prefs.remove(_embeddingRemoteAvailableKey);
     }
+    final embeddingResult =
+        _useOfficialAi ? null : await _testEmbeddingConfiguration();
     if (!_useOfficialAi &&
         _baseUrlController.text.trim().isNotEmpty &&
         _apiKeyController.text.trim().isNotEmpty &&
@@ -215,8 +216,10 @@ class _CustomAiPageState extends State<CustomAiPage> {
       unawaited(const AiAnalysisQueueRunner().processUntilIdle(maxJobs: 1));
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('已保存 AI 设置')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content:
+          Text(embeddingResult == null ? '已保存 AI 设置' : '已保存 AI 设置；历史相似度使用本地模式'),
+    ));
     if (embeddingSettingsChanged) {
       await _showEmbeddingRebuildPrompt();
     }
@@ -267,8 +270,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
       builder: (context) => AlertDialog(
         title: const Text('需要重建历史相似度？'),
         content: Text(
-          '相似度配置已变化，${outdatedEntryIds.length} 篇日记的历史相似度索引需要重建。'
-          '不重建也能继续使用，但历史关联会先跳过旧模型索引。',
+          '配置已变化，${outdatedEntryIds.length} 篇日记需要重建索引。',
         ),
         actions: [
           TextButton(
@@ -417,7 +419,7 @@ class _CustomAiPageState extends State<CustomAiPage> {
             : _embeddingApiKeyController.text)
         .trim();
     final model = _embeddingModelController.text.trim();
-    if (platform == 'Claude' || baseUrl.contains('anthropic')) {
+    if (_platformDoesNotSupportEmbeddings(platform, baseUrl)) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_embeddingRemoteAvailableKey, false);
       return '当前服务没有提供历史相似度接口';
@@ -429,17 +431,19 @@ class _CustomAiPageState extends State<CustomAiPage> {
     }
     try {
       final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
-      final response = await http.post(
-        Uri.parse('$normalized/embeddings'),
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'model': model,
-          'input': '拾年 embedding test',
-        }),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$normalized/embeddings'),
+            headers: {
+              'Authorization': 'Bearer $apiKey',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'model': model,
+              'input': '拾年 embedding test',
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_embeddingRemoteAvailableKey, false);
@@ -453,7 +457,11 @@ class _CustomAiPageState extends State<CustomAiPage> {
       }
       final data = jsonDecode(response.body);
       final items = data is Map<String, dynamic> ? data['data'] : null;
-      if (items is! List || items.isEmpty) return '历史相似度响应为空';
+      if (items is! List || items.isEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_embeddingRemoteAvailableKey, false);
+        return '历史相似度响应为空';
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_embeddingRemoteAvailableKey, true);
       return null;
@@ -462,6 +470,15 @@ class _CustomAiPageState extends State<CustomAiPage> {
       await prefs.setBool(_embeddingRemoteAvailableKey, false);
       return '历史相似度服务暂不可用';
     }
+  }
+
+  bool _platformDoesNotSupportEmbeddings(String platform, String baseUrl) {
+    final normalizedPlatform = platform.toLowerCase();
+    final normalizedUrl = baseUrl.toLowerCase();
+    return normalizedPlatform == 'claude' ||
+        normalizedPlatform == 'deepseek' ||
+        normalizedUrl.contains('anthropic') ||
+        normalizedUrl.contains('deepseek');
   }
 
   void _scheduleModelFetch() {

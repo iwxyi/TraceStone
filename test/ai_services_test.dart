@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -475,10 +476,10 @@ void main() {
       expect(await const InsightRepository().getLatestInsight(), isNull);
       expect(job?.state, AiAnalysisJobState.incomplete);
       expect(job?.currentStage, AiAnalysisStage.generatingInsight);
-      expect(job?.lastError, contains('用户标记洞察不准确'));
+      expect(job?.lastError, contains('用户标记分析不准确'));
       expect(
         job?.stageLogs.map((log) => log.message),
-        contains('用户标记洞察不准确，重新生成今日洞察'),
+        contains('用户标记分析不准确，重新生成今日分析'),
       );
       expect(job?.stageLogs.last.outputSummary, contains('把情绪判断错了'));
       expect(job?.stageLogs.last.outputSummary,
@@ -820,7 +821,7 @@ void main() {
             entryId: 'entry-1',
             state: DiaryAnalysisState.completed,
             updatedAt: DateTime(2026, 7, 3),
-            message: '已完成今日洞察',
+            message: '已完成今日分析',
           ).toJson(),
         ),
         'diary.insights.entry-1': jsonEncode(
@@ -1150,9 +1151,9 @@ void main() {
         embeddingSection.details,
         contains('warning=存在维度不匹配的向量对象'),
       );
-      expect(counts['今日洞察'], 4);
+      expect(counts['今日分析'], 4);
       final insightSection =
-          inventory.sections.firstWhere((section) => section.label == '今日洞察');
+          inventory.sections.firstWhere((section) => section.label == '今日分析');
       expect(insightSection.details, contains('objects=1'));
       expect(insightSection.details, contains('indexed=1'));
       expect(insightSection.details, contains('statuses=1'));
@@ -1601,7 +1602,7 @@ void main() {
       expect(result?.target, AiArtifactRebuildTarget.insight);
       expect(insight?.reflection, '本地测试洞察');
       expect(job?.state, AiAnalysisJobState.completed);
-      expect(job?.stageLogs.last.message, '开发者重建今日洞察');
+      expect(job?.stageLogs.last.message, '开发者重建今日分析');
       expect(job?.stageLogs.last.outputSummary, contains('facts=1'));
     });
   });
@@ -2627,7 +2628,7 @@ void main() {
         entryId: job.entryId,
         state: DiaryAnalysisState.analyzing,
         updatedAt: old,
-        message: '生成今日洞察',
+        message: '生成今日分析',
       ));
 
       await const AiAnalysisQueueRunner().processUntilIdle(maxJobs: 0);
@@ -2813,6 +2814,80 @@ void main() {
           isNotNull);
       expect(snapshot.dependencyReasons[PeriodSummaryRepository.yearId(2026)],
           contains('月度总结'));
+    });
+
+    test('period dependency repair enqueues missing diary jobs', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final first = _entry(
+        id: 'repair-period-dependency-1',
+        date: DateTime(2026, 8, 3),
+        content: '八月第一篇还没有单日摘要。',
+      );
+      final second = _entry(
+        id: 'repair-period-dependency-2',
+        date: DateTime(2026, 8, 4),
+        content: '八月第二篇也还没有单日摘要。',
+      );
+      await diaryRepository.saveEntry(first);
+      await diaryRepository.saveEntry(second);
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        entryId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        type: AiAnalysisJobType.monthSummary,
+        targetId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: DateTime(2026, 8, 5),
+        updatedAt: DateTime(2026, 8, 5),
+      ));
+
+      final before = await queueRepository.snapshot();
+      final repaired = await queueRepository.enqueueMissingPeriodDependencies();
+      final after = await queueRepository.snapshot();
+      final next = await queueRepository.nextRunnableJob();
+
+      expect(
+        before.dependencyReasons[
+            PeriodSummaryRepository.monthId(DateTime(2026, 8))],
+        contains('等待 2 篇日记整理完成'),
+      );
+      expect(repaired, 2);
+      expect(after.jobs.map((job) => job.id), contains(first.id));
+      expect(after.jobs.map((job) => job.id), contains(second.id));
+      expect(next?.id, first.id);
+    });
+
+    test('completed period jobs do not keep queue dependency blocked',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'completed-period-stale-entry',
+        date: DateTime(2026, 7, 8),
+        content: '七月后来新增的日记不应该让已完成月总结卡住队列。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+        entryId: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+        type: AiAnalysisJobType.monthSummary,
+        targetId: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.completed,
+        currentStage: AiAnalysisStage.completed,
+        createdAt: DateTime(2026, 7, 9),
+        updatedAt: DateTime(2026, 7, 9),
+      ));
+
+      final snapshot = await queueRepository.snapshot();
+
+      expect(snapshot.runnableCount, 0);
+      expect(snapshot.dependencyReasons, isEmpty);
+      expect(snapshot.hasVisibleWork, isFalse);
     });
 
     test('runner builds queued user profile jobs', () async {
@@ -5441,6 +5516,57 @@ void main() {
 
       expect(result.modelId, EmbeddingService.modelId);
       expect(result.modelVersion, EmbeddingService.modelVersion);
+    });
+
+    test('records remote embedding failure when remote embeddings return 404',
+        () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      });
+      SharedPreferences.setMockInitialValues({
+        'ai.useOfficial': false,
+        'ai.embeddingUseChatConfig': false,
+        'ai.embeddingPlatform': 'OpenAI',
+        'ai.embeddingBaseUrl': 'http://127.0.0.1:${server.port}/v1',
+        'ai.embeddingApiKey': 'test-key',
+        'ai.embeddingModel': 'text-embedding-3-small',
+      });
+      const service = EmbeddingService();
+
+      try {
+        await expectLater(
+          service.embedForAi('今天跑步 状态很好'),
+          throwsA(isA<AiClientException>()),
+        );
+        final prefs = await SharedPreferences.getInstance();
+        final signature = await service.currentTargetSignature();
+
+        expect(prefs.getBool('ai.embeddingRemoteAvailable'), isFalse);
+        expect(signature.modelId, EmbeddingService.modelId);
+      } finally {
+        await server.close(force: true);
+      }
+    });
+
+    test('uses local embeddings for deepseek configuration', () async {
+      SharedPreferences.setMockInitialValues({
+        'ai.useOfficial': false,
+        'ai.embeddingUseChatConfig': true,
+        'ai.platform': 'DeepSeek',
+        'ai.baseUrl': 'https://api.deepseek.com/v1',
+        'ai.apiKey': 'test-key',
+        'ai.embeddingModel': 'text-embedding-3-small',
+      });
+      const service = EmbeddingService();
+
+      final signature = await service.currentTargetSignature();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(signature.modelId, EmbeddingService.modelId);
+      expect(signature.modelVersion, EmbeddingService.modelVersion);
+      expect(prefs.getBool('ai.embeddingRemoteAvailable'), isFalse);
     });
 
     test('reads malformed embedding json with safe defaults', () async {

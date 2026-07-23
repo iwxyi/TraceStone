@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -29,6 +30,8 @@ class EmbeddingService {
     final prefs = await SharedPreferences.getInstance();
     final useOfficial = _safeGetBool(prefs, _useOfficialKey) ?? true;
     if (useOfficial) return localSignature;
+    final remoteAvailable = _safeGetBool(prefs, _embeddingRemoteAvailableKey);
+    if (remoteAvailable == false) return localSignature;
     final useChatConfig =
         _safeGetBool(prefs, _embeddingUseChatConfigKey) ?? true;
     final platform = useChatConfig
@@ -47,11 +50,11 @@ class EmbeddingService {
     final model =
         (_safeGetString(prefs, _embeddingModelKey) ?? _defaultEmbeddingModel)
             .trim();
-    if (platform == 'Claude' ||
-        baseUrl.contains('anthropic') ||
-        baseUrl.isEmpty ||
-        apiKey.isEmpty ||
-        model.isEmpty) {
+    if (_platformDoesNotSupportEmbeddings(platform, baseUrl)) {
+      await prefs.setBool(_embeddingRemoteAvailableKey, false);
+      return localSignature;
+    }
+    if (baseUrl.isEmpty || apiKey.isEmpty || model.isEmpty) {
       return localSignature;
     }
     return EmbeddingModelSignature(
@@ -137,7 +140,7 @@ class EmbeddingService {
     final model =
         (_safeGetString(prefs, _embeddingModelKey) ?? _defaultEmbeddingModel)
             .trim();
-    if (platform == 'Claude' || baseUrl.contains('anthropic')) {
+    if (_platformDoesNotSupportEmbeddings(platform, baseUrl)) {
       throw const AiClientException('当前平台不支持 OpenAI embeddings');
     }
     if (baseUrl.isEmpty || apiKey.isEmpty || model.isEmpty) {
@@ -146,17 +149,19 @@ class EmbeddingService {
     final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
     final uri =
         Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/embeddings');
-    final response = await http.post(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $apiKey',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'model': model,
-        'input': normalized,
-      }),
-    );
+    final response = await http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': model,
+            'input': normalized,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AiClientException('向量请求失败：${response.statusCode}');
     }
@@ -200,6 +205,15 @@ class EmbeddingService {
     } on Object {
       return null;
     }
+  }
+
+  bool _platformDoesNotSupportEmbeddings(String platform, String baseUrl) {
+    final normalizedPlatform = platform.toLowerCase();
+    final normalizedUrl = baseUrl.toLowerCase();
+    return normalizedPlatform == 'claude' ||
+        normalizedPlatform == 'deepseek' ||
+        normalizedUrl.contains('anthropic') ||
+        normalizedUrl.contains('deepseek');
   }
 
   String? _safeGetString(SharedPreferences prefs, String key) {

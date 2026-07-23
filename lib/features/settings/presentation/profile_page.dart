@@ -124,7 +124,7 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('我的'),
+        title: const Text('我'),
         actions: [
           IconButton(
             tooltip: '设置',
@@ -163,6 +163,7 @@ class _ProfileContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
+      key: const PageStorageKey('profile-content'),
       padding: const EdgeInsets.all(20),
       children: [
         const _ProfileHeader(),
@@ -239,7 +240,7 @@ class _ProfileAiToolsCard extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.auto_awesome_motion_outlined),
             title: const Text('AI 整理进度'),
-            subtitle: const Text('查看日记分析、月度总结和年度总结的后台进度'),
+            subtitle: const Text('后台进度'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).pushNamed(AppRoutes.aiTaskQueue),
           ),
@@ -247,7 +248,7 @@ class _ProfileAiToolsCard extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.psychology_alt_outlined),
             title: const Text('AI 记忆'),
-            subtitle: const Text('查看、修正或删除 AI 记住的长期信息'),
+            subtitle: const Text('查看与修正'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () =>
                 Navigator.of(context).pushNamed(AppRoutes.memoryManagement),
@@ -256,7 +257,7 @@ class _ProfileAiToolsCard extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.event_note_outlined),
             title: const Text('纪念日'),
-            subtitle: const Text('用于多年今日、农历节日和特殊日期关联'),
+            subtitle: const Text('日期关联'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () =>
                 Navigator.of(context).pushNamed(AppRoutes.calendarMemory),
@@ -312,12 +313,7 @@ class _UserProfileCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              '由大模型综合日记摘要、长期记忆和历史洞察生成，用于让后续总结、洞察和建议更贴合你。',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             if (state != null) ...[
               Wrap(
                 spacing: 8,
@@ -337,7 +333,7 @@ class _UserProfileCard extends StatelessWidget {
             ],
             if (profile == null)
               Text(
-                '还没有生成用户画像。完成一些日记整理后，可以手动生成。',
+                '暂无画像',
                 style: theme.textTheme.bodyMedium,
               )
             else ...[

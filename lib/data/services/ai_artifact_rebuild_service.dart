@@ -200,17 +200,17 @@ class AiArtifactRebuildService {
     await _appendJobLog(
       entry: entry,
       stage: AiAnalysisStage.generatingInsight,
-      message: '开发者重建今日洞察',
+      message: '开发者重建今日分析',
       outputSummary:
           'insight=${insight.entryId} facts=${insight.facts.length} suggestions=${insight.suggestions.length}',
       insightId: insight.entryId,
       retrievalTraceId: entry.id,
     );
-    await _saveStatus(entry.id, '已重建今日洞察');
+    await _saveStatus(entry.id, '已重建今日分析');
     return AiArtifactRebuildResult(
       entryId: entry.id,
       target: AiArtifactRebuildTarget.insight,
-      message: '已重建今日洞察',
+      message: '已重建今日分析',
       insightId: insight.entryId,
     );
   }

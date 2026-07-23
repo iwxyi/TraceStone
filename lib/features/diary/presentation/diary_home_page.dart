@@ -5,6 +5,7 @@ import '../../companion/presentation/companion_page.dart';
 import '../../review/presentation/review_page.dart';
 import '../../settings/presentation/profile_page.dart';
 import 'today_page.dart';
+import '../../../data/models/diary_entry.dart';
 
 class DiaryHomePage extends StatefulWidget {
   const DiaryHomePage({super.key});
@@ -15,10 +16,15 @@ class DiaryHomePage extends StatefulWidget {
 
 class _DiaryHomePageState extends State<DiaryHomePage> {
   int _currentIndex = 0;
-  int _refreshToken = 0;
 
-  void _refreshPages() {
-    setState(() => _refreshToken++);
+  void _handleDiarySaved(DiaryEntry entry) {
+    final now = DateTime.now();
+    final isToday = entry.date.year == now.year &&
+        entry.date.month == now.month &&
+        entry.date.day == now.day;
+    setState(() {
+      if (!isToday) _currentIndex = 1;
+    });
   }
 
   @override
@@ -28,20 +34,16 @@ class _DiaryHomePageState extends State<DiaryHomePage> {
         index: _currentIndex,
         children: [
           TodayPage(
-            key: ValueKey('today-$_refreshToken'),
-            onDiaryChanged: _refreshPages,
+            onDiarySaved: _handleDiarySaved,
           ),
-          ReviewPage(key: ValueKey('review-$_refreshToken')),
+          const ReviewPage(),
           const CompanionPage(),
-          ProfilePage(key: ValueKey('profile-$_refreshToken')),
+          const ProfilePage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (index) => setState(() {
-          _currentIndex = index;
-          if (index == 0 || index == 1) _refreshToken++;
-        }),
+        onDestinationSelected: (index) => setState(() => _currentIndex = index),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.today_outlined),
@@ -51,17 +53,17 @@ class _DiaryHomePageState extends State<DiaryHomePage> {
           NavigationDestination(
             icon: Icon(Icons.history_outlined),
             selectedIcon: Icon(Icons.history),
-            label: '回顾',
+            label: '时光',
           ),
           NavigationDestination(
             icon: Icon(Icons.auto_awesome_outlined),
             selectedIcon: Icon(Icons.auto_awesome),
-            label: '洞察',
+            label: '树洞',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),
             selectedIcon: Icon(Icons.person),
-            label: '我的',
+            label: '我',
           ),
         ],
       ),

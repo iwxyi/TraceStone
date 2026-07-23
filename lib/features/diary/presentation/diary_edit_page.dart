@@ -57,6 +57,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   bool _autoSave = true;
   bool _hasUnsavedChanges = false;
   bool _isBootstrapping = true;
+  bool _isClosing = false;
   bool _useCustomAiFix = false;
   String _customAiFixRule = '';
   String? _analysisError;
@@ -108,7 +109,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   @override
   void dispose() {
     _insightPollTimer?.cancel();
-    unawaited(_flushAutoSave());
+    _autoSaveTimer?.cancel();
     _controller.removeListener(_onTextChanged);
     _focusNode.dispose();
     _controller.dispose();
@@ -201,7 +202,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       date: _selectedDate,
       createdAt: _createdAt,
       content: _controller.text,
-      location: _selectedLocation,
+      location: _persistedLocation(_selectedLocation),
       weather: _weather,
       temperature: _temperature,
       updatedAt: DateTime.now(),
@@ -209,10 +210,22 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     );
   }
 
-  Future<void> _saveEntry() async {
+  String _persistedLocation(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || trimmed == '定位中') return '未选择地点';
+    return trimmed;
+  }
+
+  Future<DiaryEntry?> _saveEntry() async {
     final entry = _currentEntry();
-    if (entry.content.trim().isEmpty) return;
+    if (entry.content.trim().isEmpty) return null;
     await _repository.saveEntry(entry);
+    if (mounted) {
+      setState(() => _hasUnsavedChanges = false);
+    } else {
+      _hasUnsavedChanges = false;
+    }
+    return entry;
   }
 
   String _entrySignature(DiaryEntry entry) {
@@ -310,15 +323,21 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   void _scheduleAutoSave() {
     _autoSaveTimer?.cancel();
     _autoSaveTimer = Timer(const Duration(milliseconds: 750), () {
-      _autoSaveTail = _autoSaveTail.then((_) => _saveEntry());
+      _autoSaveTail = _autoSaveTail.then((_) async {
+        await _saveEntry();
+      });
     });
   }
 
-  Future<void> _flushAutoSave() async {
+  Future<void> _waitForPendingAutoSave() async {
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
-    _autoSaveTail = _autoSaveTail.then((_) => _saveEntry());
     await _autoSaveTail;
+  }
+
+  void _cancelPendingAutoSave() {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = null;
   }
 
   void _restoreText(String value) {
@@ -546,7 +565,14 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('diary.autoSave', value);
     setState(() => _autoSave = value);
-    if (value) await _saveEntry();
+    if (value) {
+      await _saveEntry();
+    } else {
+      _cancelPendingAutoSave();
+      if (_controller.text.trim().isNotEmpty) {
+        setState(() => _hasUnsavedChanges = true);
+      }
+    }
   }
 
   Future<void> _setAiFixMode(bool value) async {
@@ -591,9 +617,9 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   }
 
   Future<void> _finishEditing() async {
-    final entry = _currentEntry();
-    if (entry.content.trim().isNotEmpty) {
-      await _repository.saveEntry(entry);
+    await _waitForPendingAutoSave();
+    final entry = await _saveEntry();
+    if (entry != null) {
       final signature = _entrySignature(entry);
       final shouldAnalyze = !_isExistingEntry ||
           _analysisSourceSignature == null ||
@@ -601,11 +627,10 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       if (shouldAnalyze) {
         _analysisSourceSignature = signature;
         await _analysisQueueRunner.enqueue(entry, start: false);
-        unawaited(_analysisQueueRunner.processNext());
       }
     }
     if (mounted) {
-      Navigator.of(context).pop(entry.content.trim().isEmpty ? true : entry);
+      Navigator.of(context).pop(entry ?? true);
     }
   }
 
@@ -615,36 +640,112 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   }
 
   Future<void> _closeEditor() async {
+    if (_isClosing) return;
+    _isClosing = true;
     if (!_isEditing) {
+      _cancelPendingAutoSave();
       Navigator.of(context).pop(true);
       return;
     }
-    if (_autoSave) {
+    try {
+      if (_autoSave) {
+        await _finishEditing();
+        return;
+      }
+      final action = await _confirmLeave();
+      if (!mounted || action == _LeaveAction.cancel) return;
+      if (action == _LeaveAction.discard) {
+        _cancelPendingAutoSave();
+        Navigator.of(context).pop(true);
+        return;
+      }
       await _finishEditing();
-      return;
+    } finally {
+      if (mounted) {
+        _isClosing = false;
+      }
     }
-    final action = await _confirmLeave();
-    if (!mounted || action == _LeaveAction.cancel) return;
-    if (action == _LeaveAction.discard) {
-      Navigator.of(context).pop(true);
-      return;
-    }
-    await _finishEditing();
   }
 
   Future<void> _discardAndClose() async {
-    if (mounted) Navigator.of(context).pop();
+    if (_isClosing) return;
+    _isClosing = true;
+    try {
+      _cancelPendingAutoSave();
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) _isClosing = false;
+    }
   }
 
   Future<void> _deleteEntry() async {
-    await _repository.moveToTrash(_entryId);
-    if (mounted) Navigator.of(context).pop(true);
+    if (_isClosing) return;
+    _isClosing = true;
+    final entryId = _entryId;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    try {
+      _cancelPendingAutoSave();
+      await _repository.moveToTrash(entryId);
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+      messenger?.clearSnackBars();
+      messenger?.showSnackBar(SnackBar(
+        content: const Text('已删除日记'),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () {
+            unawaited(_repository.restoreFromTrash(entryId));
+          },
+        ),
+      ));
+    } finally {
+      if (mounted) _isClosing = false;
+    }
+  }
+
+  Future<void> _openReadMenu() async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final top = MediaQuery.paddingOf(context).top + kToolbarHeight;
+    final action = await showMenu<_EditorMenuAction>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        overlay.size.width - 56,
+        top,
+        12,
+        0,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: _EditorMenuAction.delete,
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, color: Colors.red),
+              SizedBox(width: 8),
+              Text('删除这篇日记', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (action == _EditorMenuAction.delete) {
+      await _deleteEntry();
+    }
   }
 
   Future<void> _openEditorMenu() async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final top = MediaQuery.paddingOf(context).top + kToolbarHeight;
     final action = await showMenu<_EditorMenuAction>(
       context: context,
-      position: const RelativeRect.fromLTRB(1000, 64, 12, 0),
+      position: RelativeRect.fromLTRB(
+        overlay.size.width - 56,
+        top,
+        12,
+        0,
+      ),
       items: [
         PopupMenuItem(
           value: _EditorMenuAction.togglePreview,
@@ -1170,6 +1271,12 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
                 onPressed: _openEditorMenu,
                 icon: const Icon(Icons.more_vert),
               ),
+            if (!_isEditing && _isExistingEntry && !_isBootstrapping)
+              IconButton(
+                tooltip: '更多',
+                onPressed: _openReadMenu,
+                icon: const Icon(Icons.more_vert),
+              ),
           ],
         ),
         resizeToAvoidBottomInset: true,
@@ -1301,7 +1408,7 @@ class _DiaryMetaBar extends StatelessWidget {
         ? baseWeather
         : '$baseWeather $temperatureLabel';
 
-    final locationLabel = location.trim().isEmpty ? '未选择地点' : location;
+    final locationLabel = _locationLabel(location, isLoadingLocation);
 
     if (!isEditing) {
       return Padding(
@@ -1368,6 +1475,13 @@ class _DiaryMetaBar extends StatelessWidget {
     if (weather.contains('雷')) return Icons.thunderstorm_outlined;
     if (weather.contains('晴')) return Icons.wb_sunny_outlined;
     return Icons.thermostat_outlined;
+  }
+
+  String _locationLabel(String value, bool loading) {
+    final trimmed = value.trim();
+    if (loading && trimmed == '定位中') return '定位中';
+    if (trimmed.isEmpty || trimmed == '定位中') return '未选择地点';
+    return trimmed;
   }
 
   String? _temperatureLabel(String? value) {
@@ -2361,7 +2475,7 @@ class _InsightLoadingBlockState extends State<_InsightLoadingBlock>
               ],
             ),
             const SizedBox(height: 10),
-            Text(widget.message ?? '正在结合历史记录与相关日记生成分析。'),
+            Text(widget.message ?? '分析中'),
           ],
         ),
       ),
@@ -2404,7 +2518,7 @@ class _InsightEmptyBlock extends StatelessWidget {
         Text('还没有分析结果',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
         SizedBox(height: 10),
-        Text('退出编辑页保存后，会开始结合这篇日记和历史记录生成分析。'),
+        Text('等待分析'),
       ],
     );
   }

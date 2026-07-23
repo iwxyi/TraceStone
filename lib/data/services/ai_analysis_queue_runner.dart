@@ -155,6 +155,7 @@ class AiAnalysisQueueRunner {
     _isRunning = true;
     try {
       await _syncInterruptedStatuses();
+      await _queueRepository.enqueueMissingPeriodDependencies();
       final job = await _queueRepository.nextRunnableJob();
       if (job == null) return;
       await _runJob(job);
@@ -166,6 +167,7 @@ class AiAnalysisQueueRunner {
   Future<void> processUntilIdle({int maxJobs = 1}) async {
     await _syncInterruptedStatuses();
     for (var index = 0; index < maxJobs; index++) {
+      await _queueRepository.enqueueMissingPeriodDependencies();
       final current = await _queueRepository.nextRunnableJob();
       if (current == null) break;
       await processNext();
@@ -459,7 +461,7 @@ class AiAnalysisQueueRunner {
         message: '关联历史记录',
         retryCount: job.retryCount,
         completedStages: completedStages,
-        outputSummary: '由今日洞察上下文构建器执行，生成后写入 retrieval trace',
+        outputSummary: '由今日分析上下文构建器执行，生成后写入 retrieval trace',
         retrievalTraceId: entry.id,
         clearLastError: true,
       );
@@ -472,7 +474,7 @@ class AiAnalysisQueueRunner {
         state: AiAnalysisJobState.running,
         stage: AiAnalysisStage.generatingInsight,
         analysisState: DiaryAnalysisState.analyzing,
-        message: '生成今日洞察',
+        message: '生成今日分析',
         retryCount: job.retryCount,
         completedStages: completedStages,
         inputSummary: 'entryId=${entry.id} summary=${summary.brief}',
@@ -485,7 +487,7 @@ class AiAnalysisQueueRunner {
         state: AiAnalysisJobState.running,
         stage: AiAnalysisStage.generatingInsight,
         analysisState: DiaryAnalysisState.analyzing,
-        message: '今日洞察已生成',
+        message: '今日分析已生成',
         retryCount: job.retryCount,
         completedStages: completedStages,
         outputSummary: [
@@ -1116,7 +1118,7 @@ class AiAnalysisQueueRunner {
       entryId: job.entryId,
       state: DiaryAnalysisState.incomplete,
       updatedAt: now,
-      message: '本地资料已整理，等待 AI 可用后生成今日洞察',
+      message: '本地资料已整理，等待 AI 可用后生成今日分析',
     ));
   }
 

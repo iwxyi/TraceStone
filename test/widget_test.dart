@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -52,6 +53,7 @@ import 'package:trace_stone/features/settings/presentation/calendar_memory_page.
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
 import 'package:trace_stone/features/settings/presentation/ai_debug_page.dart';
 import 'package:trace_stone/features/settings/presentation/memory_management_page.dart';
+import 'package:trace_stone/features/settings/presentation/recycle_bin_page.dart';
 import 'package:trace_stone/features/search/presentation/search_page.dart';
 import 'package:trace_stone/features/shaping_stone/presentation/shaping_stone_page.dart';
 
@@ -61,9 +63,9 @@ void main() {
     await tester.pumpWidget(const TraceStoneApp());
 
     expect(find.text('今日'), findsWidgets);
-    expect(find.text('回顾'), findsOneWidget);
-    expect(find.text('洞察'), findsOneWidget);
-    expect(find.text('我的'), findsOneWidget);
+    expect(find.text('时光'), findsOneWidget);
+    expect(find.text('树洞'), findsOneWidget);
+    expect(find.text('我'), findsOneWidget);
   });
 
   testWidgets('resumes AI queue when app returns to foreground',
@@ -102,7 +104,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
 
-    expect(find.text('正在查找相关日记'), findsOneWidget);
+    expect(find.text('查找相关记录'), findsOneWidget);
     expect(find.text('睡眠'), findsOneWidget);
 
     service.complete();
@@ -113,7 +115,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('7月3日日记'), findsOneWidget);
-    expect(find.text('正在查找相关日记'), findsNothing);
+    expect(find.text('查找相关记录'), findsNothing);
   });
 
   testWidgets('companion page shows an error when answer generation fails',
@@ -132,10 +134,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.textContaining('洞察生成失败', findRichText: true),
+      find.textContaining('暂时没有整理成功', findRichText: true),
       findsOneWidget,
     );
-    expect(find.text('正在查找相关日记'), findsNothing);
+    expect(find.text('查找相关记录'), findsNothing);
   });
 
   testWidgets('companion page shows research steps in developer mode',
@@ -169,7 +171,90 @@ void main() {
     });
     await tester.pumpWidget(const TraceStoneApp());
 
-    expect(find.text('回顾'), findsOneWidget);
+    expect(find.text('时光'), findsOneWidget);
+  });
+
+  testWidgets('review page hides transient locating metadata', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime.now();
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'review-transient-location',
+      date: date,
+      createdAt: date,
+      content: '这篇日记保存时定位还没有完成。',
+      location: '定位中',
+      weather: '',
+      temperature: null,
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: ReviewPage()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.textContaining('这篇日记保存时定位还没有完成'), findsOneWidget);
+    expect(find.text('定位中'), findsNothing);
+  });
+
+  testWidgets('review page keeps timeline position after diary refresh',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const repository = DiaryRepository();
+    final now = DateTime(2026, 7, 20, 20);
+    final entries = <DiaryEntry>[];
+    for (var index = 0; index < 12; index++) {
+      final date = DateTime(2026, 7 - index, 10, 20);
+      final entry = DiaryEntry(
+        id: 'review-scroll-entry-$index',
+        date: date,
+        createdAt: date,
+        content: '滚动保持测试 $index',
+        location: '未选择地点',
+        weather: '晴',
+        temperature: '26',
+        updatedAt: now,
+      );
+      entries.add(entry);
+      await repository.saveEntry(entry);
+    }
+
+    await tester.pumpWidget(const MaterialApp(home: ReviewPage()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final timeline =
+        find.byKey(const PageStorageKey('review-day-timeline-scroll'));
+    for (var attempt = 0;
+        attempt < 12 && find.textContaining('滚动保持测试 7').evaluate().isEmpty;
+        attempt++) {
+      await tester.drag(timeline, const Offset(0, -480));
+      await tester.pump();
+    }
+    expect(find.textContaining('滚动保持测试 7'), findsWidgets);
+    final scrollView = tester.widget<CustomScrollView>(timeline);
+    final beforePixels = scrollView.controller!.position.pixels;
+
+    final anchor = entries[7];
+    await repository.saveEntry(DiaryEntry(
+      id: anchor.id,
+      date: anchor.date,
+      createdAt: anchor.createdAt,
+      content: '滚动保持测试 7 已编辑',
+      location: anchor.location,
+      weather: anchor.weather,
+      temperature: anchor.temperature,
+      updatedAt: now.add(const Duration(minutes: 1)),
+      locationDetails: anchor.locationDetails,
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final afterScrollView = tester.widget<CustomScrollView>(timeline);
+    expect(afterScrollView.controller!.position.pixels, greaterThan(0));
+    expect(
+      (afterScrollView.controller!.position.pixels - beforePixels).abs(),
+      lessThan(80),
+    );
+    expect(find.textContaining('滚动保持测试 7 已编辑'), findsWidgets);
   });
 
   testWidgets('review period summary shows developer source lines',
@@ -377,7 +462,7 @@ void main() {
     ));
 
     await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('我'));
     await tester.pumpAndSettle();
 
     expect(find.text('用户画像'), findsOneWidget);
@@ -414,11 +499,11 @@ void main() {
     ));
 
     await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('我'));
     await tester.pumpAndSettle();
 
     expect(find.text('用户画像'), findsOneWidget);
-    expect(find.textContaining('还没有生成用户画像'), findsOneWidget);
+    expect(find.text('暂无画像'), findsOneWidget);
     expect(find.text('自我调节'), findsNothing);
     expect(find.textContaining('运动可能帮助恢复状态'), findsNothing);
   });
@@ -485,7 +570,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('给我的建议'), findsOneWidget);
     expect(find.textContaining('明天晚饭后散步 10 分钟'), findsOneWidget);
-    expect(find.text('开发者洞察结构'), findsNothing);
+    expect(find.text('开发者分析结构'), findsNothing);
 
     SharedPreferences.setMockInitialValues({
       'settings.developerMode': true,
@@ -494,9 +579,9 @@ void main() {
     await const InsightRepository().saveInsight(insight);
     await tester.pumpWidget(const MaterialApp(home: TodayPage()));
     await tester.pumpAndSettle();
-    expect(find.text('开发者洞察结构'), findsOneWidget);
+    expect(find.text('开发者分析结构'), findsOneWidget);
     expect(find.textContaining('facts=1'), findsOneWidget);
-    await tester.tap(find.text('开发者洞察结构'));
+    await tester.tap(find.text('开发者分析结构'));
     await tester.pumpAndSettle();
     expect(find.textContaining('evidence=current_entry:today-dev-entry#s1'),
         findsOneWidget);
@@ -590,6 +675,49 @@ void main() {
     expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
   });
 
+  testWidgets('today queue card shows waiting state when jobs are blocked',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const diaryRepository = DiaryRepository();
+    const queueRepository = AiAnalysisQueueRepository();
+    final date = DateTime(2026, 8, 3);
+    await diaryRepository.saveEntry(DiaryEntry(
+      id: 'blocked-home-entry',
+      date: date,
+      createdAt: date,
+      updatedAt: date,
+      content: '被月总结依赖挡住的测试日记',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
+    await queueRepository.saveJob(AiAnalysisJob(
+      id: 'month:2026-08',
+      entryId: 'month:2026-08',
+      type: AiAnalysisJobType.monthSummary,
+      targetId: 'month:2026-08',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.pending,
+      currentStage: AiAnalysisStage.queued,
+      createdAt: date,
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pump();
+
+    expect(find.text('记忆整理等待继续'), findsOneWidget);
+    expect(find.textContaining('等待 1 篇日记整理完成'), findsWidgets);
+    expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '暂停'), findsNothing);
+
+    await tester.tap(find.widgetWithText(TextButton, '继续'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final jobs = await queueRepository.listJobs();
+    expect(jobs.map((job) => job.id), contains('blocked-home-entry'));
+  });
+
   testWidgets('today queue card shows failed reason and retries failed jobs',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -623,7 +751,7 @@ void main() {
 
     expect(find.text('有日记整理失败'), findsOneWidget);
     expect(find.text('AI 请求失败：500'), findsOneWidget);
-    expect(find.text('生成今日洞察'), findsOneWidget);
+    expect(find.text('生成今日分析'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(TextButton, '重试'));
     await tester.pump();
@@ -637,7 +765,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
 
     await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('我'));
     await tester.pumpAndSettle();
 
     expect(find.text('AI 整理进度'), findsOneWidget);
@@ -712,7 +840,7 @@ void main() {
     ));
 
     await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('我'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
@@ -731,7 +859,7 @@ void main() {
     await const AiAnalysisQueueRepository().enqueueYearSummary(2026);
 
     await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('我'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
@@ -770,7 +898,7 @@ void main() {
     ));
 
     await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('我'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
@@ -868,8 +996,8 @@ void main() {
     await const InsightRepository().saveInsight(insight);
     await tester.pumpWidget(const MaterialApp(home: InsightPage()));
     await tester.pumpAndSettle();
-    expect(find.text('今日洞察'), findsWidgets);
-    expect(find.text('今日洞察包'), findsNothing);
+    expect(find.text('今日分析'), findsWidgets);
+    expect(find.text('今日分析包'), findsNothing);
     expect(find.text('证据来源'), findsOneWidget);
     expect(
       find.textContaining(
@@ -878,15 +1006,15 @@ void main() {
     );
     expect(find.textContaining('证据缺失：结论没有有效来源'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.widgetWithText(OutlinedButton, '复制洞察包'),
+      find.widgetWithText(OutlinedButton, '复制分析包'),
       260,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(OutlinedButton, '复制洞察包'), findsOneWidget);
-    await tester.tap(find.widgetWithText(OutlinedButton, '复制洞察包'));
+    expect(find.widgetWithText(OutlinedButton, '复制分析包'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, '复制分析包'));
     await tester.pumpAndSettle();
-    expect(find.text('复制洞察包？'), findsOneWidget);
+    expect(find.text('复制分析包？'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, '复制'));
     await tester.pump(const Duration(milliseconds: 100));
 
@@ -1586,39 +1714,65 @@ void main() {
 
   testWidgets('custom ai requires privacy confirmation', (tester) async {
     SharedPreferences.setMockInitialValues({});
-
-    await tester.pumpWidget(
-      const MaterialApp(home: CustomAiPage()),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '使用官方 AI'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('自定义 AI 会把当前日记'), findsOneWidget);
-
-    await tester.enterText(
-      find.widgetWithText(TextField, '接口 URL'),
-      'https://api.example.com/v1',
-    );
-    await tester.enterText(find.widgetWithText(TextField, '秘钥'), 'test-key');
-    await tester.enterText(find.widgetWithText(TextField, '模型'), 'test-model');
-    expect(find.text('历史相似度'), findsOneWidget);
-    expect(find.widgetWithText(TextField, '向量模型'), findsNothing);
-    await tester.drag(find.byType(ListView), const Offset(0, -320));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('保存设置'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('使用第三方 AI？'), findsOneWidget);
-    expect(find.textContaining('日记原文'), findsOneWidget);
-
-    await tester.tap(find.text('我理解并继续'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('已保存 AI 设置'), findsOneWidget);
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getBool('ai.embeddingUseChatConfig'), isTrue);
-    expect(prefs.getString('ai.embeddingModel'), 'text-embedding-3-small');
+    await prefs.clear();
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      await request.drain<void>();
+      request.response.statusCode = request.uri.path.endsWith('/embeddings')
+          ? HttpStatus.notFound
+          : HttpStatus.ok;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({
+        'choices': [
+          {
+            'message': {'content': 'OK'}
+          }
+        ],
+      }));
+      await request.response.close();
+    });
+
+    try {
+      await tester.pumpWidget(
+        const MaterialApp(home: CustomAiPage()),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(SwitchListTile, '使用官方 AI'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('会将必要上下文'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, '接口 URL'),
+        'http://127.0.0.1:${server.port}/v1',
+      );
+      await tester.enterText(find.widgetWithText(TextField, '秘钥'), 'test-key');
+      await tester.enterText(
+          find.widgetWithText(TextField, '模型'), 'test-model');
+      expect(find.text('历史相似度'), findsOneWidget);
+      expect(find.widgetWithText(TextField, '向量模型'), findsNothing);
+      await tester.drag(find.byType(ListView), const Offset(0, -320));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.text('保存设置'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('使用第三方 AI？'), findsOneWidget);
+      expect(find.textContaining('日记原文'), findsOneWidget);
+
+      await tester.tap(find.text('我理解并继续'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(find.text('已保存 AI 设置；历史相似度使用本地模式'), findsOneWidget);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('ai.embeddingUseChatConfig'), isTrue);
+      expect(prefs.getString('ai.embeddingModel'), 'text-embedding-3-small');
+      expect(prefs.getBool('ai.embeddingRemoteAvailable'), isFalse);
+    } finally {
+      await server.close(force: true);
+    }
   });
 
   testWidgets('custom ai settings ignore invalid stored preference types',
@@ -1701,7 +1855,7 @@ void main() {
       entryId: 'editor-ai-waiting-status',
       state: DiaryAnalysisState.incomplete,
       updatedAt: date,
-      message: '本地资料已整理，等待 AI 可用后生成今日洞察',
+      message: '本地资料已整理，等待 AI 可用后生成今日分析',
     ));
 
     await tester.pumpWidget(MaterialApp(
@@ -1714,7 +1868,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('分析未完成'), findsOneWidget);
-    expect(find.text('本地资料已整理，等待 AI 可用后生成今日洞察'), findsOneWidget);
+    expect(find.text('本地资料已整理，等待 AI 可用后生成今日分析'), findsOneWidget);
     expect(find.text('可以稍后点底部刷新重新分析。'), findsOneWidget);
     expect(find.text('正在结合历史记录与相关日记生成分析。'), findsNothing);
   });
@@ -1738,7 +1892,7 @@ void main() {
       entryId: entryId,
       state: DiaryAnalysisState.analyzing,
       updatedAt: date,
-      message: '生成今日洞察',
+      message: '生成今日分析',
     ));
 
     await tester.pumpWidget(MaterialApp(
@@ -1751,7 +1905,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('正在分析这篇日记'), findsOneWidget);
-    expect(find.text('生成今日洞察'), findsOneWidget);
+    expect(find.text('生成今日分析'), findsOneWidget);
 
     await const InsightRepository().saveInsight(DiaryInsight(
       entryId: entryId,
@@ -1815,9 +1969,58 @@ void main() {
     final entries = await const DiaryRepository().listEntries();
 
     expect(entries.single.content, '今天散步后状态恢复。');
+    expect(entries.single.location, '未选择地点');
     expect(jobs.single.entryId, entries.single.id);
     expect(jobs.single.canRun, isTrue);
     expect(jobs.single.state, isNot(AiAnalysisJobState.completed));
+  });
+
+  testWidgets('diary editor saves new yesterday entry when auto save is off',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'diary.autoSave': false,
+    });
+    const queueRepository = AiAnalysisQueueRepository();
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    await tester.pumpWidget(MaterialApp(
+      navigatorKey: navigatorKey,
+      home: Builder(
+        builder: (context) => FilledButton(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const DiaryEditPage(),
+          )),
+          child: const Text('open editor'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open editor'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.enterText(find.byType(TextField).first, '昨天补写的一篇日记。');
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.calendar_today_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    navigatorKey.currentState!.pop(<DateTime?>[yesterday]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('保存'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final entries = await const DiaryRepository().listEntries();
+    final jobs = await queueRepository.listJobs();
+
+    expect(entries, hasLength(1));
+    expect(entries.single.content, '昨天补写的一篇日记。');
+    expect(entries.single.dayKey, DiaryEntry.dateKey(yesterday));
+    expect(jobs.single.entryId, entries.single.id);
   });
 
   testWidgets('diary editor does not requeue unchanged existing entry',
@@ -1852,6 +2055,91 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(await queueRepository.listJobs(), isEmpty);
+  });
+
+  testWidgets('diary editor moves existing entry to trash and can undo',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime.now();
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'delete-existing-entry',
+      date: date,
+      createdAt: date,
+      content: '今天要删除的日记。',
+      location: '家',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              settings: const RouteSettings(arguments: 'delete-existing-entry'),
+              builder: (_) => const DiaryEditPage(),
+            )),
+            child: const Text('open existing'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open existing'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('今天要删除的日记'), findsOneWidget);
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('删除这篇日记'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(await const DiaryRepository().listEntries(), isEmpty);
+    final trash = await const DiaryRepository().listTrashEntries();
+    expect(trash.single.entry.id, 'delete-existing-entry');
+    expect(find.text('已删除日记'), findsOneWidget);
+
+    await tester.tap(find.text('撤销'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    final restored = await const DiaryRepository().listEntries();
+    expect(restored.single.id, 'delete-existing-entry');
+    expect(await const DiaryRepository().listTrashEntries(), isEmpty);
+  });
+
+  testWidgets('recycle bin restores entry without replacing the list',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const repository = DiaryRepository();
+    final date = DateTime(2026, 7, 8);
+    await repository.saveEntry(DiaryEntry(
+      id: 'recycle-restore-entry',
+      date: date,
+      createdAt: date,
+      content: '这篇日记需要从回收站恢复。',
+      location: '家',
+      weather: '晴',
+      temperature: '26',
+      updatedAt: date,
+    ));
+    await repository.moveToTrash('recycle-restore-entry');
+
+    await tester.pumpWidget(const MaterialApp(home: RecycleBinPage()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.textContaining('这篇日记需要从回收站恢复'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '恢复'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('回收站是空的'), findsOneWidget);
+    expect((await repository.listEntries()).single.id, 'recycle-restore-entry');
+    expect(await repository.listTrashEntries(), isEmpty);
   });
 
   testWidgets('relationships page filters and asks about a person',
@@ -3052,7 +3340,7 @@ void main() {
     await tester.pumpAndSettle();
     await _expandFirstAiDebugJob(tester);
 
-    expect(find.textContaining('用户标记洞察不准确'), findsWidgets);
+    expect(find.textContaining('用户标记分析不准确'), findsWidgets);
     expect(find.textContaining('value=inaccurate'), findsOneWidget);
     expect(find.textContaining('note=把情绪判断错了'), findsWidgets);
 
@@ -3068,7 +3356,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(copiedText, contains('## AI Pipeline Job'));
-    expect(copiedText, contains('用户标记洞察不准确，重新生成今日洞察'));
+    expect(copiedText, contains('用户标记分析不准确，重新生成今日分析'));
     expect(copiedText, contains('value=inaccurate'));
     expect(copiedText, contains('note=把情绪判断错了'));
   });
@@ -3214,7 +3502,7 @@ void main() {
     expect(find.text('局部重建本篇资料'), findsOneWidget);
     expect(find.text('摘要和片段'), findsOneWidget);
     expect(find.text('多级向量'), findsOneWidget);
-    expect(find.text('今日洞察'), findsOneWidget);
+    expect(find.text('今日分析'), findsOneWidget);
     await tester.tap(find.text('多级向量'));
     await tester.pumpAndSettle();
 

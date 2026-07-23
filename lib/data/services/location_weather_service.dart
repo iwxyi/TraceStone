@@ -10,6 +10,8 @@ class LocationWeatherService {
   static LocationWeather? _cachedCurrent;
   static Future<LocationWeather>? _currentRequest;
 
+  static LocationWeather? get cachedCurrent => _cachedCurrent;
+
   final http.Client? _client;
 
   Future<LocationWeather> getCurrent() async {

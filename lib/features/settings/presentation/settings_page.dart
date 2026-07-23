@@ -271,7 +271,7 @@ class _ThemePreview extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: const [
-                Chip(label: Text('回顾')),
+                Chip(label: Text('时光')),
                 Chip(label: Text('关系')),
                 Chip(label: Text('变化')),
               ],

@@ -66,14 +66,36 @@ class _AiDebugPageState extends State<AiDebugPage> {
   }
 
   Future<void> _continueQueue() async {
+    final messenger = ScaffoldMessenger.of(context);
     await _queueRepository.setPaused(false);
+    final repaired = await _queueRepository.enqueueMissingPeriodDependencies();
     await _queueRunner.processUntilIdle(maxJobs: 5);
     _refresh();
+    if (!mounted) return;
+    final snapshot = await _queueRepository.snapshot();
+    messenger.showSnackBar(
+      SnackBar(content: Text(_continueResultLabel(repaired, snapshot))),
+    );
+  }
+
+  String _continueResultLabel(
+    int repaired,
+    AiAnalysisQueueSnapshot snapshot,
+  ) {
+    final firstDependency = snapshot.dependencyReasons.values.firstOrNull;
+    final parts = [
+      if (repaired > 0) '已补齐 $repaired 个依赖任务' else '没有新增依赖任务',
+      'runnable=${snapshot.runnableCount}',
+      'blocked=${snapshot.dependencyReasons.length}',
+      if (firstDependency != null) firstDependency,
+    ];
+    return parts.join(' · ');
   }
 
   Future<void> _toggleQueuePaused(bool paused) async {
     await _queueRepository.setPaused(paused);
     if (!paused) {
+      await _queueRepository.enqueueMissingPeriodDependencies();
       await _queueRunner.processUntilIdle(maxJobs: 5);
     }
     _refresh();
@@ -714,7 +736,7 @@ class _QueueSummaryCard extends StatelessWidget {
     final completed = queue.jobs
         .where((job) => job.state == AiAnalysisJobState.completed)
         .length;
-    final canContinue = queue.runnableCount > 0;
+    final canContinue = queue.hasVisibleWork;
 
     return Card(
       child: Padding(
@@ -1787,8 +1809,8 @@ class _JobCardState extends State<_JobCard> {
                 Navigator.of(context).pop(AiArtifactRebuildTarget.insight),
             child: const ListTile(
               leading: Icon(Icons.auto_awesome_outlined),
-              title: Text('今日洞察'),
-              subtitle: Text('重新检索上下文并生成洞察，不改原始日记'),
+              title: Text('今日分析'),
+              subtitle: Text('重新检索上下文并生成分析，不改原始日记'),
             ),
           ),
         ],
@@ -1857,7 +1879,7 @@ class _JobCardState extends State<_JobCard> {
       builder: (context) => AlertDialog(
         title: const Text('重建本篇 AI 资料？'),
         content: const Text(
-          '这会清除本篇已生成的摘要、分段、向量、今日洞察和调试记录，然后重新加入队列。原始日记不会被修改。',
+          '这会清除本篇已生成的摘要、分段、向量、今日分析和调试记录，然后重新加入队列。原始日记不会被修改。',
         ),
         actions: [
           TextButton(

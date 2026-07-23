@@ -48,7 +48,7 @@ class _InsightPageState extends State<InsightPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('今日洞察')),
+      appBar: AppBar(title: const Text('今日分析')),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<_InsightPageData?>(
@@ -108,7 +108,7 @@ class _InsightBody extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text('今日洞察', style: Theme.of(context).textTheme.headlineSmall),
+        Text('今日分析', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 6),
         Text(meta, style: Theme.of(context).textTheme.bodySmall),
         if (data.summary != null) ...[
@@ -125,7 +125,7 @@ class _InsightBody extends StatelessWidget {
           icon: Icons.auto_awesome_outlined,
           child: SimpleMarkdownText(
             text: insight.reflection,
-            emptyText: '洞察生成中。',
+            emptyText: '分析生成中。',
           ),
         ),
         if (insight.facts.isNotEmpty ||
@@ -615,7 +615,7 @@ class _InsightExportButton extends StatelessWidget {
       child: OutlinedButton.icon(
         onPressed: () => _copyInsight(context),
         icon: const Icon(Icons.copy),
-        label: const Text('复制洞察包'),
+        label: const Text('复制分析包'),
       ),
     );
   }
@@ -624,9 +624,9 @@ class _InsightExportButton extends StatelessWidget {
     final allowed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('复制洞察包？'),
+        title: const Text('复制分析包？'),
         content: const Text(
-          '洞察包可能包含日记摘要、证据来源、画像候选和关系候选。'
+          '分析包可能包含日记摘要、证据来源、画像候选和关系候选。'
           '这些内容只会复制到本机剪贴板，请确认不会粘贴到不可信的位置。',
         ),
         actions: [
@@ -645,7 +645,7 @@ class _InsightExportButton extends StatelessWidget {
     await Clipboard.setData(ClipboardData(text: _debugText()));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已复制洞察包')),
+      const SnackBar(content: Text('已复制分析包')),
     );
   }
 
@@ -985,7 +985,7 @@ class _EmptyInsight extends StatelessWidget {
         Icon(Icons.auto_awesome_outlined, size: 48),
         SizedBox(height: 16),
         Text(
-          '写完并保存日记后，后台会结合今天内容和历史记忆生成洞察。',
+          '暂无分析',
           textAlign: TextAlign.center,
         ),
       ],

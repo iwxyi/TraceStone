@@ -42,7 +42,7 @@ class _CompanionPageState extends State<CompanionPage> {
   void initState() {
     super.initState();
     _addMessage(const _ChatMessage.assistant(
-      text: '你可以问我：最近我反复在意什么？我和自己的关系有什么变化？',
+      text: '可以从一个问题开始：最近反复在意什么？和自己的关系有什么变化？',
     ));
     final question = widget.initialQuestion?.trim();
     if (question == null || question.isEmpty) return;
@@ -68,7 +68,7 @@ class _CompanionPageState extends State<CompanionPage> {
       _addMessage(_ChatMessage.user(text: text));
       userIndex = _messages.length - 1;
       _addMessage(const _ChatMessage.assistant(
-        text: '正在整理线索',
+        text: '整理中',
         isPending: true,
         researchSteps: [],
       ));
@@ -105,7 +105,7 @@ class _CompanionPageState extends State<CompanionPage> {
       if (!mounted) return;
       setState(() {
         _messages[progressIndex] = _ChatMessage.assistant(
-          text: '洞察生成失败：$error',
+          text: '暂时没有整理成功：$error',
           isError: true,
           researchSteps: List.unmodifiable(researchSteps),
         );
@@ -178,15 +178,15 @@ class _CompanionPageState extends State<CompanionPage> {
 
   String _publicStatusFor(CompanionResearchStep step) {
     final title = step.title;
-    if (title.contains('理解问题')) return '正在理解问题';
-    if (title.contains('检索基础资料')) return '正在查找相关日记';
-    if (title.contains('规划研究路径')) return '正在规划分析路径';
-    if (title.startsWith('研究第')) return '正在查找更多线索';
-    if (title.startsWith('整理')) return '正在整理线索';
-    if (title.contains('AI 判断下一步')) return '正在判断资料是否足够';
-    if (title.contains('评估证据覆盖')) return '正在核对线索';
-    if (title.contains('生成回答')) return '正在组织回答';
-    return '正在整理线索';
+    if (title.contains('理解问题')) return '理解问题';
+    if (title.contains('检索基础资料')) return '查找相关记录';
+    if (title.contains('规划研究路径')) return '整理分析路径';
+    if (title.startsWith('研究第')) return '补充线索';
+    if (title.startsWith('整理')) return '整理线索';
+    if (title.contains('AI 判断下一步')) return '判断资料是否足够';
+    if (title.contains('评估证据覆盖')) return '核对线索';
+    if (title.contains('生成回答')) return '生成回答';
+    return '整理中';
   }
 
   List<String> _publicHintsFor(CompanionResearchStep step) {
@@ -283,7 +283,7 @@ class _CompanionPageState extends State<CompanionPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('洞察')),
+      appBar: AppBar(title: const Text('树洞')),
       body: Column(
         children: [
           Expanded(
@@ -907,7 +907,7 @@ class _ComposerBar extends StatelessWidget {
               maxLines: 5,
               textInputAction: TextInputAction.send,
               decoration: InputDecoration(
-                hintText: '问问最近的自己……',
+                hintText: '写下想问的事，或想整理的感受……',
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 prefixIcon: Icon(

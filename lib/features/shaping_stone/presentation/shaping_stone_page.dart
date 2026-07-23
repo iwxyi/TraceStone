@@ -658,7 +658,7 @@ class _EmptyStoneState extends StatelessWidget {
         Icon(Icons.self_improvement_outlined, size: 48),
         SizedBox(height: 16),
         Text(
-          '完成 AI 洞察后，这里会出现可以轻轻尝试的一小步。没有任务，也不需要打卡。',
+          '暂无成长线索',
           textAlign: TextAlign.center,
         ),
       ],

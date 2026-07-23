@@ -50,7 +50,7 @@ class AiDataInventoryService {
       ),
       _section(
         keys,
-        label: '今日洞察',
+        label: '今日分析',
         prefixes: const ['diary.insights.'],
         sensitivity: 'high',
         backupPolicy: '随日记备份',

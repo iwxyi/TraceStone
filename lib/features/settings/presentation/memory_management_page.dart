@@ -17,14 +17,42 @@ class MemoryManagementPage extends StatefulWidget {
 class _MemoryManagementPageState extends State<MemoryManagementPage> {
   final _repository = const MemoryRepository();
   final _developerSettings = const DeveloperSettingsRepository();
-  late Future<List<MemoryEntry>> _memoriesFuture = _repository.listMemories();
   late final Future<bool> _developerModeFuture =
       _developerSettings.isDeveloperModeEnabled();
+  List<MemoryEntry> _memories = const [];
+  Object? _loadError;
+  bool _loadingInitial = true;
+  int _loadGeneration = 0;
 
-  void _refresh() {
-    setState(() {
-      _memoriesFuture = _repository.listMemories();
-    });
+  @override
+  void initState() {
+    super.initState();
+    _loadMemories(showLoading: true);
+  }
+
+  Future<void> _loadMemories({bool showLoading = false}) async {
+    final generation = ++_loadGeneration;
+    if (showLoading) {
+      setState(() {
+        _loadingInitial = true;
+        _loadError = null;
+      });
+    }
+    try {
+      final memories = await _repository.listMemories();
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _memories = memories;
+        _loadError = null;
+        _loadingInitial = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _loadError = error;
+        _loadingInitial = false;
+      });
+    }
   }
 
   Future<void> _delete(MemoryEntry memory) async {
@@ -48,7 +76,11 @@ class _MemoryManagementPageState extends State<MemoryManagementPage> {
     if (confirmed != true) return;
     await _repository.deleteMemory(memory.id);
     if (!mounted) return;
-    _refresh();
+    setState(() {
+      _memories = _memories
+          .where((item) => item.id != memory.id)
+          .toList(growable: false);
+    });
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('已删除记忆')));
   }
@@ -56,7 +88,8 @@ class _MemoryManagementPageState extends State<MemoryManagementPage> {
   Future<void> _toggleArchive(MemoryEntry memory) async {
     await _repository.archiveMemory(memory.id, archived: !memory.archived);
     if (!mounted) return;
-    _refresh();
+    await _loadMemories();
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(memory.archived ? '已恢复记忆' : '已归档记忆'),
     ));
@@ -70,7 +103,8 @@ class _MemoryManagementPageState extends State<MemoryManagementPage> {
     if (corrected == null) return;
     await _repository.correctSummary(id: memory.id, summary: corrected);
     if (!mounted) return;
-    _refresh();
+    await _loadMemories();
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('已修正记忆')));
   }
@@ -79,40 +113,48 @@ class _MemoryManagementPageState extends State<MemoryManagementPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('AI 记忆')),
-      body: FutureBuilder<List<MemoryEntry>>(
-        future: _memoriesFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final memories = snapshot.data ?? const <MemoryEntry>[];
-          if (memories.isEmpty) return const _EmptyMemoryState();
-          return FutureBuilder<bool>(
-            future: _developerModeFuture,
-            builder: (context, developerSnapshot) {
-              final developerMode = developerSnapshot.data ?? false;
-              return RefreshIndicator(
-                onRefresh: () async => _refresh(),
-                child: ListView.separated(
-                  padding: const EdgeInsets.all(20),
-                  itemCount: memories.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final memory = memories[index];
-                    return _MemoryCard(
-                      memory: memory,
-                      developerMode: developerMode,
-                      onDelete: () => _delete(memory),
-                      onToggleArchive: () => _toggleArchive(memory),
-                      onCorrect: () => _correct(memory),
-                    );
-                  },
-                ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loadingInitial && _memories.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null && _memories.isEmpty) {
+      return Center(
+        child: FilledButton.icon(
+          onPressed: () => _loadMemories(showLoading: true),
+          icon: const Icon(Icons.refresh),
+          label: const Text('加载失败，点击重试'),
+        ),
+      );
+    }
+    if (_memories.isEmpty) return const _EmptyMemoryState();
+    return FutureBuilder<bool>(
+      future: _developerModeFuture,
+      builder: (context, developerSnapshot) {
+        final developerMode = developerSnapshot.data ?? false;
+        return RefreshIndicator(
+          onRefresh: _loadMemories,
+          child: ListView.separated(
+            key: const PageStorageKey('memory-management-list'),
+            padding: const EdgeInsets.all(20),
+            itemCount: _memories.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final memory = _memories[index];
+              return _MemoryCard(
+                memory: memory,
+                developerMode: developerMode,
+                onDelete: () => _delete(memory),
+                onToggleArchive: () => _toggleArchive(memory),
+                onCorrect: () => _correct(memory),
               );
             },
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -130,9 +172,7 @@ class _EmptyMemoryState extends StatelessWidget {
           children: [
             Icon(Icons.psychology_alt_outlined, size: 48),
             SizedBox(height: 16),
-            Text('还没有长期记忆'),
-            SizedBox(height: 8),
-            Text('保存日记并完成 AI 整理后，这里会显示 AI 记住的内容。'),
+            Text('暂无长期记忆'),
           ],
         ),
       ),

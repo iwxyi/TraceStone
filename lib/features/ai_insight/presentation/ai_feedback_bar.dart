@@ -145,7 +145,7 @@ class _InaccurateFeedbackDialogState extends State<_InaccurateFeedbackDialog> {
             if (widget.developerMode) ...[
               const SizedBox(height: 10),
               Text(
-                '开发者模式：这条反馈会写入 AI 调试记录，并作为重新生成洞察的上下文。',
+                '开发者模式：这条反馈会写入 AI 调试记录，并作为重新生成分析的上下文。',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

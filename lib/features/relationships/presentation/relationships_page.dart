@@ -312,6 +312,7 @@ class _RelationshipContent extends StatelessWidget {
         (data.decisions.isNotEmpty || data.mergeHistory.isNotEmpty);
     final itemOffset = showDeveloperCard ? 2 : 1;
     return ListView.separated(
+      key: const PageStorageKey('relationships-list'),
       padding: const EdgeInsets.all(20),
       itemCount: visibleProfiles.length + itemOffset,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
@@ -1052,7 +1053,7 @@ class _EmptyRelationships extends StatelessWidget {
         Icon(Icons.people_alt_outlined, size: 48),
         SizedBox(height: 16),
         Text(
-          '还没有关系记录。完成 AI 洞察后，这里会按人物聚合互动摘要和关系变化。',
+          '暂无关系记录',
           textAlign: TextAlign.center,
         ),
       ],
