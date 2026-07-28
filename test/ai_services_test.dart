@@ -1581,6 +1581,59 @@ void main() {
           {EmbeddingService.dimensions});
     });
 
+    test('queues all entries for manual embedding rebuild', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = EmbeddingService();
+      final staleEntry = _entry(
+        id: 'manual-stale-embedding',
+        date: DateTime(2026, 7, 3),
+        content: '旧向量需要重建。',
+      );
+      final currentEntry = _entry(
+        id: 'manual-current-embedding',
+        date: DateTime(2026, 7, 4),
+        content: '当前向量也允许手动全量重建。',
+      );
+      await diaryRepository.saveEntry(staleEntry);
+      await diaryRepository.saveEntry(currentEntry);
+      await embeddingRepository.saveEmbedding(AiEmbedding(
+        id: 'entry:${staleEntry.id}',
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: staleEntry.id,
+        entryId: staleEntry.id,
+        modelId: 'legacy-hashing-embedding',
+        modelVersion: 'v0',
+        dimensions: 64,
+        vector: List<double>.filled(64, 0),
+        generatedAt: DateTime(2026, 7, 1),
+        textHash: 'stale',
+      ));
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: currentEntry.id,
+        sourceType: AiEmbeddingSourceType.entry,
+        sourceId: currentEntry.id,
+        text: currentEntry.content,
+        generatedAt: DateTime(2026, 7, 1),
+      );
+
+      final count =
+          await const AiAnalysisQueueRunner().enqueueAllEmbeddingRebuild();
+
+      final jobs = await queueRepository.listJobs();
+      expect(count, 2);
+      expect(
+        jobs
+            .where((job) => job.type == AiAnalysisJobType.embeddingRebuild)
+            .map((job) => job.entryId),
+        containsAll([staleEntry.id, currentEntry.id]),
+      );
+    });
+
     test('rebuilds today insight and records the debug action', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
@@ -5834,6 +5887,79 @@ void main() {
       expect(memoryMatch.rerankSignals['confidence'], 0.76);
     });
 
+    test('requires lexical or structured overlap for local vector matches',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = _FixedEmbeddingService();
+      final entry = _entry(
+        id: 'no-overlap-vector-entry',
+        date: DateTime(2026, 7, 3),
+        content: '我在图书馆安静地看书。',
+      );
+      await diaryRepository.saveEntry(entry);
+      final summary = _summaryForTest(
+        entry: entry,
+        brief: '图书馆看书',
+        importance: 0.5,
+      );
+      await summaryRepository.saveSummary(summary);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        text: summary.brief,
+        generatedAt: DateTime(2026, 7, 3),
+      );
+
+      final matches = await AiSearchService(
+        embeddingService: embeddingService,
+      ).search('星空');
+
+      expect(matches, isEmpty);
+    });
+
+    test('still returns local vector matches when text overlaps', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const summaryRepository = EntrySummaryRepository();
+      const embeddingRepository = AiEmbeddingRepository();
+      const embeddingService = _FixedEmbeddingService();
+      final entry = _entry(
+        id: 'overlap-vector-entry',
+        date: DateTime(2026, 7, 3),
+        content: '晚上散步以后，焦虑明显下降。',
+      );
+      await diaryRepository.saveEntry(entry);
+      final summary = _summaryForTest(
+        entry: entry,
+        brief: '晚上散步以后焦虑明显下降',
+        importance: 0.65,
+        topics: const ['散步'],
+      );
+      await summaryRepository.saveSummary(summary);
+      await _saveTestEmbedding(
+        repository: embeddingRepository,
+        service: embeddingService,
+        entryId: entry.id,
+        sourceType: AiEmbeddingSourceType.summary,
+        sourceId: entry.id,
+        text: summary.brief,
+        generatedAt: DateTime(2026, 7, 3),
+      );
+
+      final matches = await AiSearchService(
+        embeddingService: embeddingService,
+      ).search('散步 焦虑');
+
+      expect(matches, isNotEmpty);
+      expect(matches.first.reasons.join(' '), contains('向量相似度'));
+    });
+
     test('uses memory lifecycle signals when ranking search matches', () async {
       SharedPreferences.setMockInitialValues({});
       const memoryRepository = MemoryRepository();
@@ -8572,6 +8698,24 @@ class _ThrowingEmbeddingService extends EmbeddingService {
   @override
   AiEmbeddingResult embed(String text) {
     throw StateError('simulated embedding failure');
+  }
+}
+
+class _FixedEmbeddingService extends EmbeddingService {
+  const _FixedEmbeddingService();
+
+  static const List<double> _vector = [0.45, -0.21, 0.63, 0.17];
+
+  @override
+  AiEmbeddingResult embed(String text) {
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return AiEmbeddingResult(
+      modelId: EmbeddingService.modelId,
+      modelVersion: EmbeddingService.modelVersion,
+      dimensions: _vector.length,
+      vector: List<double>.from(_vector),
+      textHash: 'fixed:${normalized.length}',
+    );
   }
 }
 

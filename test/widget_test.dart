@@ -821,12 +821,11 @@ void main() {
     expect(find.text('纪念日'), findsNothing);
   });
 
-  testWidgets('AI task queue page shows diary and period progress',
+  testWidgets('AI task queue page shows unified queue progress',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     const queueRepository = AiAnalysisQueueRepository();
     const diaryRepository = DiaryRepository();
-    const periodRepository = PeriodSummaryRepository();
     final now = DateTime(2026, 7, 7);
     await diaryRepository.saveEntry(DiaryEntry(
       id: 'queue-page-entry',
@@ -847,31 +846,6 @@ void main() {
       createdAt: now,
       updatedAt: now,
     ));
-    await periodRepository.saveSummary(PeriodSummary(
-      id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
-      type: PeriodSummaryType.month,
-      startDate: DateTime(2026, 7),
-      endDate: DateTime(2026, 7, 31, 23, 59, 59),
-      generatedAt: now,
-      entryCount: 1,
-      brief: '七月 AI 总结',
-      themes: const ['散步'],
-      emotions: const ['平稳'],
-      representativeEntryIds: const ['queue-page-entry'],
-      generator: 'ai-month-summary-v1',
-    ));
-    await periodRepository.saveStatus(PeriodSummaryStatus(
-      id: PeriodSummaryRepository.monthId(DateTime(2026, 7)),
-      state: PeriodSummaryState.completed,
-      updatedAt: now,
-      message: 'AI 周期总结已生成',
-    ));
-    await periodRepository.saveStatus(PeriodSummaryStatus(
-      id: PeriodSummaryRepository.yearId(2026),
-      state: PeriodSummaryState.generating,
-      updatedAt: now.add(const Duration(minutes: 1)),
-      message: '正在生成 AI 周期总结',
-    ));
 
     await tester.pumpWidget(const TraceStoneApp());
     await tester.tap(find.text('我'));
@@ -879,18 +853,26 @@ void main() {
     await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
 
-    expect(find.text('日记 AI 分析'), findsOneWidget);
+    expect(find.text('AI 整理队列'), findsOneWidget);
     expect(find.text('运行/待处理 1'), findsOneWidget);
-    expect(find.text('周期总结'), findsOneWidget);
-    expect(find.text('2026年 年度总结'), findsOneWidget);
-    expect(find.text('正在生成 AI 周期总结'), findsOneWidget);
-    expect(find.text('2026年7月 月度总结'), findsOneWidget);
-    expect(find.text('AI 周期总结已生成'), findsOneWidget);
+    expect(find.text('全量重建向量'), findsOneWidget);
+    expect(find.textContaining('日记 · 等待整理'), findsOneWidget);
   });
 
-  testWidgets('AI task queue page shows queued period jobs', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    await const AiAnalysisQueueRepository().enqueueYearSummary(2026);
+  testWidgets('AI task queue page shows queued period jobs in unified list',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({'ai.analysis.jobs.paused': true});
+    await const AiAnalysisQueueRepository().saveJob(AiAnalysisJob(
+      id: 'year:2026',
+      entryId: '',
+      type: AiAnalysisJobType.yearSummary,
+      targetId: 'year:2026',
+      pipelineVersion: 1,
+      state: AiAnalysisJobState.pending,
+      currentStage: AiAnalysisStage.queued,
+      createdAt: DateTime(2026, 7, 1),
+      updatedAt: DateTime(2026, 7, 1),
+    ));
 
     await tester.pumpWidget(const TraceStoneApp());
     await tester.tap(find.text('我'));
@@ -898,11 +880,14 @@ void main() {
     await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
 
-    expect(find.text('周期总结'), findsOneWidget);
-    expect(find.text('2026年 年度总结'), findsOneWidget);
+    expect(find.text('AI 整理队列'), findsOneWidget);
+    expect(find.text('运行/待处理 1'), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -240));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('年报 · 等待生成周期总结'), findsOneWidget);
   });
 
-  testWidgets('AI task queue page shows embedding rebuild progress',
+  testWidgets('AI task queue page queues full embedding rebuild',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     const diaryRepository = DiaryRepository();
@@ -917,7 +902,18 @@ void main() {
       weather: '晴',
       temperature: '26C',
     );
+    final freshEntry = DiaryEntry(
+      id: 'queue-current-embedding',
+      date: DateTime(2026, 7, 9),
+      createdAt: DateTime(2026, 7, 9),
+      updatedAt: DateTime(2026, 7, 9),
+      content: '这篇日记已有当前向量，但也应当支持全量重建。',
+      location: '家',
+      weather: '晴',
+      temperature: '27C',
+    );
     await diaryRepository.saveEntry(entry);
+    await diaryRepository.saveEntry(freshEntry);
     await embeddingRepository.saveEmbedding(AiEmbedding(
       id: 'entry:${entry.id}',
       sourceType: AiEmbeddingSourceType.entry,
@@ -930,6 +926,19 @@ void main() {
       generatedAt: DateTime(2026, 7, 1),
       textHash: 'stale',
     ));
+    final currentEmbedding = const EmbeddingService().embed(freshEntry.content);
+    await embeddingRepository.saveEmbedding(AiEmbedding(
+      id: 'entry:${freshEntry.id}',
+      sourceType: AiEmbeddingSourceType.entry,
+      sourceId: freshEntry.id,
+      entryId: freshEntry.id,
+      modelId: currentEmbedding.modelId,
+      modelVersion: currentEmbedding.modelVersion,
+      dimensions: currentEmbedding.dimensions,
+      vector: currentEmbedding.vector,
+      generatedAt: DateTime(2026, 7, 1),
+      textHash: currentEmbedding.textHash,
+    ));
 
     await tester.pumpWidget(const TraceStoneApp());
     await tester.tap(find.text('我'));
@@ -937,9 +946,20 @@ void main() {
     await tester.tap(find.text('AI 整理进度'));
     await tester.pumpAndSettle();
 
-    expect(find.text('历史相似度索引'), findsOneWidget);
-    expect(find.text('需要重建 1'), findsOneWidget);
-    expect(find.text('一键重建'), findsOneWidget);
+    expect(find.text('AI 整理队列'), findsOneWidget);
+    expect(find.text('向量待重建 1'), findsOneWidget);
+    expect(find.text('全量重建向量'), findsOneWidget);
+
+    await tester.tap(find.text('全量重建向量'));
+    await tester.pump();
+
+    final jobs = await const AiAnalysisQueueRepository().listJobs();
+    expect(
+      jobs
+          .where((job) => job.type == AiAnalysisJobType.embeddingRebuild)
+          .map((job) => job.entryId),
+      containsAll([entry.id, freshEntry.id]),
+    );
   });
 
   testWidgets('unknown named route does not fall back to today page',

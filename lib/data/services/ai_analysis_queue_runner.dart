@@ -150,6 +150,32 @@ class AiAnalysisQueueRunner {
     return enqueued;
   }
 
+  Future<int> enqueueAllEmbeddingRebuild({int limit = 5000}) async {
+    final entries = await _diaryRepository.listEntries();
+    final batchStartedAt = DateTime.now();
+    final batchId =
+        'embedding-rebuild:${batchStartedAt.microsecondsSinceEpoch}';
+    final batchLabel = '全量重建历史相似度 ${_dateTimeLabel(batchStartedAt)}';
+    var enqueued = 0;
+    for (final entry in entries) {
+      if (enqueued >= limit) break;
+      if (entry.content.trim().isEmpty) continue;
+      await _queueRepository.enqueueEmbeddingRebuildEntry(
+        entry,
+        batchId: batchId,
+        batchLabel: batchLabel,
+      );
+      await _insightRepository.saveStatus(DiaryAnalysisStatus(
+        entryId: entry.id,
+        state: DiaryAnalysisState.queued,
+        updatedAt: DateTime.now(),
+        message: '等待全量重建历史相似度',
+      ));
+      enqueued += 1;
+    }
+    return enqueued;
+  }
+
   Future<void> processNext() async {
     if (_isRunning) return;
     _isRunning = true;

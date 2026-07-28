@@ -147,7 +147,6 @@ class AiSearchService {
           queryEmbedding.vector,
           embedding.vector,
         );
-        if (similarity < 0.18) continue;
         final source = await _sourceForEmbedding(
           embedding,
           memories: memories,
@@ -155,8 +154,17 @@ class AiSearchService {
           stoneSources: stoneSources,
         );
         if (source == null) continue;
-        final keywordScore = _keywordScore(queryTokens, _tokens(source.text));
+        final sourceTokens = _tokens(source.text);
+        final keywordScore = _keywordScore(queryTokens, sourceTokens);
         final structuredScore = _structuredScore(queryTokens, source);
+        final isLocalEmbedding = _isLocalEmbedding(queryEmbedding);
+        final minSimilarity = isLocalEmbedding
+            ? (keywordScore > 0 || structuredScore > 0 ? 0.22 : 0.34)
+            : 0.18;
+        if (similarity < minSimilarity) continue;
+        if (isLocalEmbedding && keywordScore == 0 && structuredScore == 0) {
+          continue;
+        }
         final importanceBonus = _importanceBonus(source.importance);
         final recencyBonus = _recencyBonus(source.date);
         final lifecycleScore = _memoryLifecycleScore(source);
@@ -991,6 +999,11 @@ class AiSearchService {
     Set<String> sourceTokens,
   ) {
     return queryTokens.where(sourceTokens.contains).take(12).toList();
+  }
+
+  bool _isLocalEmbedding(AiEmbeddingResult embedding) {
+    return embedding.modelId == EmbeddingService.modelId &&
+        embedding.modelVersion == EmbeddingService.modelVersion;
   }
 
   Set<String> _tokens(String text) {
