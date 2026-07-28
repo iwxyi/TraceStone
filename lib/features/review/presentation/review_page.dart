@@ -252,7 +252,6 @@ class _ReviewPageState extends State<ReviewPage> {
       _selectedYear = availableYears.first;
     }
     return CustomScrollView(
-      key: PageStorageKey('review-${_selectedIndex == 0 ? 'year' : 'month'}'),
       slivers: [
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
@@ -1800,31 +1799,98 @@ class _MonthCalendar extends StatelessWidget {
           Column(
             children: [
               for (final entry in dayEntries) ...[
-                Card(
-                  elevation: 0,
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => onOpenEntry(entry.id),
-                    onLongPress: () => onLongSelectEntry(entry.id),
-                    child: ListTile(
-                      title: Text(entry.title ?? entry.bodyPreview),
-                      subtitle: entry.title == null
-                          ? null
-                          : Text(
-                              entry.bodyPreview,
-                              maxLines: AppConstants.diaryPreviewMaxLines,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                      selected: selectedIds.contains(entry.id),
-                    ),
-                  ),
+                _ReviewEntryCard(
+                  entry: entry,
+                  selected: selectedIds.contains(entry.id),
+                  onTap: () => onOpenEntry(entry.id),
+                  onLongPress: () => onLongSelectEntry(entry.id),
                 ),
                 const SizedBox(height: 10),
               ],
             ],
           ),
       ],
+    );
+  }
+}
+
+class _ReviewEntryCard extends StatelessWidget {
+  const _ReviewEntryCard({
+    required this.entry,
+    required this.selected,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final DiaryEntry entry;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Card(
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.fromLTRB(16, 13, 14, 13),
+          color: selected
+              ? colorScheme.primary.withValues(alpha: 0.08)
+              : Colors.transparent,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      entry.title ?? entry.bodyPreview,
+                      maxLines: entry.title == null ? 2 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        height: 1.28,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    if (entry.title != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        entry.bodyPreview,
+                        maxLines: AppConstants.diaryPreviewMaxLines,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.4,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 140),
+                child: selected
+                    ? Padding(
+                        key: const ValueKey('selected'),
+                        padding: const EdgeInsets.only(left: 10, top: 2),
+                        child: Icon(Icons.check_circle,
+                            size: 18, color: colorScheme.primary),
+                      )
+                    : const SizedBox.shrink(key: ValueKey('unselected')),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1853,8 +1919,8 @@ class _MonthDayCell extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOutCubic,
-          width: 38,
-          height: 38,
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: selected
@@ -1862,32 +1928,38 @@ class _MonthDayCell extends StatelessWidget {
                 : Colors.transparent,
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
                 '$day',
-                style: Theme.of(context).textTheme.bodyMedium,
+                maxLines: 1,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      height: 1,
+                    ),
               ),
-              const SizedBox(height: 2),
-              SizedBox(
-                height: 4,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    for (var i = 0; i < dotCount; i++) ...[
-                      Container(
-                        width: 4,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: colorScheme.primary,
+              if (dotCount > 0) ...[
+                const SizedBox(height: 3),
+                SizedBox(
+                  height: 4,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var i = 0; i < dotCount; i++) ...[
+                        Container(
+                          width: 4,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: colorScheme.primary,
+                          ),
                         ),
-                      ),
-                      if (i != dotCount - 1) const SizedBox(width: 2),
+                        if (i != dotCount - 1) const SizedBox(width: 2),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -2449,14 +2521,10 @@ class _DayTimelineState extends State<_DayTimeline> {
   Widget build(BuildContext context) {
     final buckets = _monthBuckets;
     final loadedBuckets = buckets.take(_visibleMonthCount).toList();
-    final lastLoadedMonthInYear = <int, String>{};
-    for (final bucket in loadedBuckets) {
-      lastLoadedMonthInYear[bucket.year] = bucket.key;
-    }
     final hasMore = _visibleMonthCount < buckets.length;
     var lastYear = -1;
     final slivers = <Widget>[
-      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+      const SliverToBoxAdapter(child: SizedBox(height: 8)),
     ];
 
     for (final bucket in loadedBuckets) {
@@ -2482,7 +2550,7 @@ class _DayTimelineState extends State<_DayTimeline> {
         ];
         if (!monthCollapsed) {
           groupSlivers.add(SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
@@ -2490,9 +2558,7 @@ class _DayTimelineState extends State<_DayTimeline> {
                   return _TimelineDayGroup(
                     day: day,
                     hasLineBefore: index == 0 && !startsNewYear,
-                    hasLineAfter:
-                        lastLoadedMonthInYear[bucket.year] != bucket.key ||
-                            index < bucket.dayGroups.length - 1,
+                    hasLineAfter: index < bucket.dayGroups.length - 1,
                     onOpenEntry: widget.onOpenEntry,
                     onLongSelectEntry: widget.onLongSelectEntry,
                     selectedIds: widget.selectedIds,
@@ -2823,124 +2889,140 @@ class _TimelineDayGroup extends StatelessWidget {
     const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     final weekday = weekdays[date.weekday - 1];
 
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _TimelineDateRail(
-            day: date.day,
-            weekday: weekday,
-            topInset: 0,
-            hasLineBefore: hasLineBefore,
-            hasLineAfter: hasLineAfter,
-            selected: true,
+    final colorScheme = Theme.of(context).colorScheme;
+    final railColor = colorScheme.primary;
+    final lineColor = railColor.withValues(alpha: 0.28);
+
+    return Stack(
+      children: [
+        if (hasLineBefore)
+          Positioned(
+            left: 21,
+            top: 0,
+            height: _TimelineDateBadge.height / 2,
+            child: _TimelineRailLine(color: lineColor),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final entry in day.entries) ...[
-                  _TimelineEntry(
-                    entry: entry,
-                    onOpenEntry: onOpenEntry,
-                    onLongSelectEntry: onLongSelectEntry,
-                    selected: selectedIds.contains(entry.id),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-                const SizedBox(height: 12),
-              ],
+        if (hasLineAfter)
+          Positioned(
+            left: 21,
+            top: _TimelineDateBadge.height,
+            bottom: 0,
+            child: _TimelineRailLine(color: lineColor),
+          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 42,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: _TimelineDateBadge(
+                  day: date.day,
+                  weekday: weekday,
+                  selected: true,
+                  railColor: railColor,
+                ),
+              ),
             ),
-          ),
-        ],
-      ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var index = 0; index < day.entries.length; index++) ...[
+                    _TimelineEntry(
+                      entry: day.entries[index],
+                      onOpenEntry: onOpenEntry,
+                      onLongSelectEntry: onLongSelectEntry,
+                      selected: selectedIds.contains(day.entries[index].id),
+                    ),
+                    SizedBox(
+                      height: index == day.entries.length - 1 ? 6 : 8,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
 
-class _TimelineDateRail extends StatelessWidget {
-  const _TimelineDateRail(
-      {required this.day,
-      required this.weekday,
-      required this.topInset,
-      required this.hasLineBefore,
-      required this.hasLineAfter,
-      required this.selected});
+class _TimelineRailLine extends StatelessWidget {
+  const _TimelineRailLine({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      width: 1,
+      color: color,
+    );
+  }
+}
+
+class _TimelineDateBadge extends StatelessWidget {
+  const _TimelineDateBadge({
+    required this.day,
+    required this.weekday,
+    required this.selected,
+    required this.railColor,
+  });
+
+  static const height = 46.0;
 
   final int day;
   final String weekday;
-  final double topInset;
-  final bool hasLineBefore;
-  final bool hasLineAfter;
   final bool selected;
+  final Color railColor;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final railColor = selected ? colorScheme.primary : colorScheme.outline;
-
-    return SizedBox(
-      width: 42,
-      child: Column(
-        children: [
-          if (topInset > 0)
-            SizedBox(
-              height: topInset,
-              child: Center(
-                child: hasLineBefore
-                    ? AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
-                        curve: Curves.easeOutCubic,
-                        width: 1,
-                        color: railColor.withValues(alpha: 0.28),
-                      )
-                    : null,
-              ),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      width: 34,
+      height: height,
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      decoration: BoxDecoration(
+        color: selected
+            ? colorScheme.primary.withValues(alpha: 0.08)
+            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: railColor.withValues(alpha: 0.28)),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$day',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontSize: 19,
+                    height: 1.05,
+                    color:
+                        selected ? colorScheme.primary : colorScheme.onSurface,
+                  ),
             ),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            width: 34,
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            decoration: BoxDecoration(
-              color: selected
-                  ? colorScheme.primary.withValues(alpha: 0.08)
-                  : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(color: railColor.withValues(alpha: 0.28)),
+            Text(
+              weekday,
+              maxLines: 1,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.05,
+                  ),
             ),
-            child: Column(
-              children: [
-                Text(
-                  '$day',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontSize: 19,
-                        height: 1.05,
-                        color: selected
-                            ? colorScheme.primary
-                            : colorScheme.onSurface,
-                      ),
-                ),
-                Text(
-                  weekday,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                ),
-              ],
-            ),
-          ),
-          if (hasLineAfter)
-            Expanded(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                curve: Curves.easeOutCubic,
-                width: 1,
-                color: railColor.withValues(alpha: 0.28),
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -3004,6 +3086,7 @@ class _TimelineEntry extends StatelessWidget {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       entry.title ?? entry.bodyPreview,

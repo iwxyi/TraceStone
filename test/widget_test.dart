@@ -257,6 +257,40 @@ void main() {
     expect(find.textContaining('滚动保持测试 7 已编辑'), findsWidgets);
   });
 
+  testWidgets('review timeline entry handles long preview without overflow',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime(2026, 7, 28, 20);
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'review-long-preview',
+      date: date,
+      createdAt: date,
+      content:
+          '# 一个很长很长的标题用来测试时光页面右侧日记摘要卡片不会因为标题和正文太多而出现底部溢出\n\n今天记录了很多事情，包括工作复盘、关系变化、晚饭、运动、睡眠和一些临时想到的计划。这里故意写得比较长，用来覆盖摘要卡片在较大字体和窄屏下的布局。',
+      location: '一个很长的地点名称',
+      weather: '多云',
+      temperature: '26',
+      updatedAt: date,
+    ));
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(
+            size: Size(360, 720),
+            textScaler: TextScaler.linear(1.35),
+          ),
+          child: ReviewPage(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.textContaining('一个很长很长的标题'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('review period summary shows developer source lines',
       (tester) async {
     SharedPreferences.setMockInitialValues({
