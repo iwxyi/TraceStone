@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../features/auth/presentation/login_page.dart';
+import '../../features/auth/presentation/account_page.dart';
 import '../../features/ai_insight/presentation/insight_page.dart';
 import '../../features/companion/presentation/companion_page.dart';
 import '../../features/diary/presentation/diary_edit_page.dart';
@@ -31,6 +33,8 @@ class AppRoutes {
   static const search = '/search';
   static const relationships = '/relationships';
   static const settings = '/settings';
+  static const login = '/login';
+  static const account = '/account';
   static const customAi = '/settings/custom-ai';
   static const calendarMemory = '/settings/calendar-memory';
   static const memoryManagement = '/settings/memories';
@@ -64,6 +68,8 @@ class AppRoutes {
         review: (_) => const ReviewPage(),
         search: (_) => const SearchPage(),
         relationships: (_) => const RelationshipsPage(),
+        login: (_) => const LoginPage(),
+        account: (_) => const AccountPage(),
         settings: (_) => const SettingsPage(),
         customAi: (_) => const CustomAiPage(),
         calendarMemory: (_) => const CalendarMemoryPage(),

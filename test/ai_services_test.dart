@@ -16,6 +16,7 @@ import 'package:trace_stone/data/models/ai_profile_preference.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
 import 'package:trace_stone/data/models/ai_research_session.dart';
+import 'package:trace_stone/data/models/app_auth_session.dart';
 import 'package:trace_stone/data/models/calendar_memory.dart';
 import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
@@ -32,6 +33,7 @@ import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_retrieval_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_research_session_repository.dart';
 import 'package:trace_stone/data/repositories/ai_profile_preference_repository.dart';
+import 'package:trace_stone/data/repositories/app_auth_repository.dart';
 import 'package:trace_stone/data/repositories/calendar_memory_repository.dart';
 import 'package:trace_stone/data/repositories/developer_settings_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
@@ -48,6 +50,8 @@ import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/ai_profile_decision_service.dart';
 import 'package:trace_stone/data/services/ai_retrieval_evaluation_service.dart';
 import 'package:trace_stone/data/services/ai_search_service.dart';
+import 'package:trace_stone/data/services/app_account_service.dart';
+import 'package:trace_stone/data/services/app_auth_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
 import 'package:trace_stone/data/services/companion_answer_service.dart';
 import 'package:trace_stone/data/services/dev_seed_data_service.dart';
@@ -64,6 +68,330 @@ Future<void> _throwStartupCleanupError() async {
 }
 
 void main() {
+  group('AppAuthService', () {
+    test('sends code and logs in with configured app id', () async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <Map<String, dynamic>>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        requests.add({
+          'path': request.uri.path,
+          'body': jsonDecode(body),
+        });
+        request.response.headers.contentType = ContentType.json;
+        if (request.uri.path == '/api/auth/send-code') {
+          request.response.write(jsonEncode({
+            'code': 0,
+            'message': 'OK',
+            'data': {
+              'sent': true,
+              'expireSeconds': 90,
+              'debugCode': '123456',
+            },
+          }));
+        } else if (request.uri.path == '/api/auth/login') {
+          request.response.write(jsonEncode({
+            'code': 0,
+            'message': 'OK',
+            'data': {
+              'token': 'jwt-token',
+              'userId': 42,
+              'mobile': '13800138000',
+              'appId': '1003',
+            },
+          }));
+        } else {
+          request.response.statusCode = 404;
+        }
+        await request.response.close();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'app.backend.baseUrl',
+        'http://127.0.0.1:${server.port}',
+      );
+
+      final service = const AppAuthService();
+      final codeResult = await service.sendCode('13800138000');
+      final session = await service.login(
+        mobile: '13800138000',
+        code: '123456',
+      );
+      final saved = await const AppAuthRepository().loadSession();
+
+      expect(codeResult.debugCode, '123456');
+      expect(session.token, 'jwt-token');
+      expect(saved?.userId, 42);
+      expect(requests.map((item) => item['path']), [
+        '/api/auth/send-code',
+        '/api/auth/login',
+      ]);
+      expect(requests.first['body']['appId'], '1003');
+      expect(requests.last['body']['appId'], '1003');
+      expect(requests.last['body']['code'], '123456');
+    });
+
+    test('logs in with password account field', () async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <Map<String, dynamic>>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        requests.add({
+          'path': request.uri.path,
+          'body': jsonDecode(body),
+        });
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'code': 0,
+          'message': 'ok',
+          'data': {
+            'token': 'password-token',
+            'userId': 42,
+            'mobile': '13800138000',
+            'appId': '1003',
+          },
+        }));
+        await request.response.close();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'app.backend.baseUrl',
+        'http://127.0.0.1:${server.port}',
+      );
+
+      final session = await const AppAuthService().passwordLogin(
+        account: '13800138000',
+        password: 'abc123456',
+      );
+
+      expect(session.token, 'password-token');
+      expect(requests.single['path'], '/api/auth/password-login');
+      expect(requests.single['body']['appId'], '1003');
+      expect(requests.single['body']['account'], '13800138000');
+      expect(requests.single['body']['password'], 'abc123456');
+    });
+
+    test('surfaces backend auth errors', () async {
+      SharedPreferences.setMockInitialValues({});
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'code': 404,
+          'message': 'APP 不存在',
+          'data': null,
+        }));
+        await request.response.close();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'app.backend.baseUrl',
+        'http://127.0.0.1:${server.port}',
+      );
+
+      expect(
+        () => const AppAuthService().sendCode('13800138000'),
+        throwsA(isA<AppAuthException>()
+            .having((error) => error.message, 'message', 'APP 不存在')),
+      );
+    });
+
+    test('loads account profile and member status with bearer token', () async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <Map<String, Object?>>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        requests.add({
+          'path': request.uri.path,
+          'authorization': request.headers.value('authorization'),
+        });
+        request.response.headers.contentType = ContentType.json;
+        if (request.uri.path == '/api/user/profile') {
+          request.response.write(jsonEncode({
+            'code': 0,
+            'message': 'ok',
+            'data': {
+              'id': 42,
+              'mobile': '13800138000',
+              'nickname': '拾年用户',
+              'status': 'ENABLED',
+              'lastLoginAt': '2026-07-29T17:30:35.346623',
+              'mustChangePassword': false,
+            },
+          }));
+        } else if (request.uri.path == '/api/member/status') {
+          request.response.write(jsonEncode({
+            'code': 0,
+            'message': 'ok',
+            'data': {
+              'active': true,
+              'status': 'ACTIVE',
+              'expireAt': '2026-12-31T23:59:59',
+            },
+          }));
+        } else {
+          request.response.statusCode = 404;
+          request.response.write(jsonEncode({
+            'code': 404,
+            'message': 'missing',
+            'data': null,
+          }));
+        }
+        await request.response.close();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'app.backend.baseUrl',
+        'http://127.0.0.1:${server.port}',
+      );
+      await const AppAuthRepository().saveSession(const AppAuthSession(
+        token: 'jwt-token',
+        userId: 42,
+        mobile: '13800138000',
+        appId: '1003',
+      ));
+
+      final snapshot = await const AppAccountService().loadSnapshot();
+
+      expect(snapshot.profile?.nickname, '拾年用户');
+      expect(snapshot.memberStatus?.active, isTrue);
+      expect(snapshot.remoteError, isEmpty);
+      expect(requests.map((item) => item['path']), [
+        '/api/user/profile',
+        '/api/member/status',
+      ]);
+      expect(requests.first['authorization'], 'Bearer jwt-token');
+      expect(requests.last['authorization'], 'Bearer jwt-token');
+    });
+
+    test('sets password with bearer token', () async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <Map<String, Object?>>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        requests.add({
+          'path': request.uri.path,
+          'authorization': request.headers.value('authorization'),
+          'body': jsonDecode(body),
+        });
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'code': 0,
+          'message': 'ok',
+          'data': null,
+        }));
+        await request.response.close();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'app.backend.baseUrl',
+        'http://127.0.0.1:${server.port}',
+      );
+      await const AppAuthRepository().saveSession(const AppAuthSession(
+        token: 'jwt-token',
+        userId: 42,
+        mobile: '13800138000',
+        appId: '1003',
+      ));
+
+      await const AppAccountService().setPassword('abc123456');
+
+      expect(requests.single['path'], '/api/user/password/set');
+      expect(requests.single['authorization'], 'Bearer jwt-token');
+      expect((requests.single['body'] as Map)['password'], 'abc123456');
+    });
+
+    test('updates account nickname with bearer token', () async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <Map<String, Object?>>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        requests.add({
+          'method': request.method,
+          'path': request.uri.path,
+          'authorization': request.headers.value('authorization'),
+          'body': jsonDecode(body),
+        });
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'code': 0,
+          'message': 'ok',
+          'data': {
+            'id': 42,
+            'mobile': '13800138000',
+            'nickname': '新的昵称',
+            'status': 'ENABLED',
+          },
+        }));
+        await request.response.close();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'app.backend.baseUrl',
+        'http://127.0.0.1:${server.port}',
+      );
+      await const AppAuthRepository().saveSession(const AppAuthSession(
+        token: 'jwt-token',
+        userId: 42,
+        mobile: '13800138000',
+        appId: '1003',
+      ));
+
+      final profile = await const AppAccountService().updateProfile(
+        nickname: ' 新的昵称 ',
+      );
+
+      expect(profile?.nickname, '新的昵称');
+      expect(requests.single['method'], 'PUT');
+      expect(requests.single['path'], '/api/user/profile');
+      expect(requests.single['authorization'], 'Bearer jwt-token');
+      expect((requests.single['body'] as Map)['nickname'], '新的昵称');
+    });
+
+    test('clears session when account request is unauthorized', () async {
+      SharedPreferences.setMockInitialValues({});
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.listen((request) async {
+        request.response.statusCode = 401;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'code': 401,
+          'message': '未登录',
+          'data': null,
+        }));
+        await request.response.close();
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'app.backend.baseUrl',
+        'http://127.0.0.1:${server.port}',
+      );
+      await const AppAuthRepository().saveSession(const AppAuthSession(
+        token: 'jwt-token',
+        userId: 42,
+        mobile: '13800138000',
+        appId: '1003',
+      ));
+
+      final snapshot = await const AppAccountService().loadSnapshot();
+
+      expect(snapshot.session, isNull);
+      expect(snapshot.remoteError, contains('登录已过期'));
+      expect(await const AppAuthRepository().loadSession(), isNull);
+    });
+  });
+
   group('DevSeedDataService', () {
     test('uses built in seed dataset when asset is unavailable', () async {
       SharedPreferences.setMockInitialValues({});

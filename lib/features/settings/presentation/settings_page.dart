@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app/theme_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../data/repositories/app_auth_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -81,7 +82,9 @@ class _DeveloperModeSection extends StatefulWidget {
 
 class _DeveloperModeSectionState extends State<_DeveloperModeSection> {
   final _repository = const DeveloperSettingsRepository();
+  final _authRepository = const AppAuthRepository();
   late Future<bool> _enabledFuture = _repository.isDeveloperModeEnabled();
+  late Future<String> _backendBaseUrlFuture = _authRepository.loadBaseUrl();
 
   Future<void> _setEnabled(bool value) async {
     await _repository.setDeveloperModeEnabled(value);
@@ -89,6 +92,57 @@ class _DeveloperModeSectionState extends State<_DeveloperModeSection> {
     setState(() {
       _enabledFuture = Future.value(value);
     });
+  }
+
+  Future<void> _editBackendBaseUrl() async {
+    final current = await _authRepository.loadBaseUrl();
+    if (!mounted) return;
+    final controller = TextEditingController(text: current);
+    try {
+      final value = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('后端地址'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              hintText: AppAuthRepository.defaultBaseUrl,
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => Navigator.of(context).pop(controller.text),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(AppAuthRepository.defaultBaseUrl),
+              child: const Text('恢复默认'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      );
+      if (value == null) return;
+      await _authRepository.saveBaseUrl(value);
+      if (!mounted) return;
+      setState(() {
+        _backendBaseUrlFuture = _authRepository.loadBaseUrl();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('后端地址已保存')),
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 
   @override
@@ -116,6 +170,21 @@ class _DeveloperModeSectionState extends State<_DeveloperModeSection> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () =>
                       Navigator.of(context).pushNamed(AppRoutes.aiDebug),
+                ),
+                const Divider(height: 1),
+                FutureBuilder<String>(
+                  future: _backendBaseUrlFuture,
+                  builder: (context, snapshot) {
+                    return ListTile(
+                      leading: const Icon(Icons.dns_outlined),
+                      title: const Text('后端地址'),
+                      subtitle: Text(
+                        snapshot.data ?? AppAuthRepository.defaultBaseUrl,
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _editBackendBaseUrl,
+                    );
+                  },
                 ),
               ],
             ],

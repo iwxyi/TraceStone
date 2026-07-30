@@ -18,6 +18,7 @@ import 'package:trace_stone/data/models/diary_insight.dart';
 import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
 import 'package:trace_stone/data/models/ai_research_session.dart';
+import 'package:trace_stone/data/models/app_auth_session.dart';
 import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/period_summary.dart';
@@ -42,6 +43,7 @@ import 'package:trace_stone/data/services/companion_answer_service.dart';
 import 'package:trace_stone/data/services/embedding_service.dart';
 import 'package:trace_stone/data/services/entry_summary_service.dart';
 import 'package:trace_stone/data/services/period_summary_service.dart';
+import 'package:trace_stone/features/auth/presentation/account_page.dart';
 import 'package:trace_stone/features/ai_insight/presentation/ai_feedback_bar.dart';
 import 'package:trace_stone/features/ai_insight/presentation/insight_page.dart';
 import 'package:trace_stone/features/companion/presentation/companion_page.dart';
@@ -799,8 +801,14 @@ void main() {
     SharedPreferences.setMockInitialValues({});
 
     await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我'));
-    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('我'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
 
     expect(find.text('AI 整理进度'), findsOneWidget);
     expect(find.text('AI 记忆'), findsOneWidget);
@@ -819,6 +827,94 @@ void main() {
     expect(find.text('自定义 AI'), findsOneWidget);
     expect(find.text('AI 记忆'), findsNothing);
     expect(find.text('纪念日'), findsNothing);
+  });
+
+  testWidgets('profile page opens login page and shows saved account',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('我'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text('未登录用户'), findsOneWidget);
+    expect(find.text('登录'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '登录'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('登录 / 注册'), findsWidgets);
+
+    Navigator.of(tester.element(find.text('登录 / 注册').first)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'app.auth.session',
+      jsonEncode(const AppAuthSession(
+        token: 'jwt-token',
+        userId: 42,
+        mobile: '13800138000',
+        appId: '1003',
+      ).toJson()),
+    );
+
+    await tester.pumpWidget(const TraceStoneApp());
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('我'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text('138****8000'), findsOneWidget);
+    expect(find.text('账号信息与会员状态'), findsOneWidget);
+  });
+
+  testWidgets('account page shows saved account details', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'app.auth.session',
+      jsonEncode(const AppAuthSession(
+        token: 'jwt-token',
+        userId: 42,
+        mobile: '13800138000',
+        appId: '1003',
+      ).toJson()),
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: AccountPage()));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text('账号'), findsOneWidget);
+    expect(find.text('账号信息'), findsOneWidget);
+    expect(find.text('手机号 138****8000'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('设置密码'),
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    expect(find.text('设置密码'), findsOneWidget);
+    expect(find.text('用于密码登录'), findsOneWidget);
+    expect(find.text('WebDAV 备份'), findsOneWidget);
+    expect(find.text('日记、附件、AI 总结备份'), findsOneWidget);
+    expect(find.text('API Key、密码、登录凭证'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
   });
 
   testWidgets('AI task queue page shows unified queue progress',

@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../../../core/routing/app_route_observer.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../data/models/app_auth_session.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_analysis_queue_repository.dart';
+import '../../../data/repositories/app_auth_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
@@ -20,6 +22,7 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> with RouteAware {
   final _developerSettings = const DeveloperSettingsRepository();
+  final _authRepository = const AppAuthRepository();
   final _userProfileService = const AiUserProfileService();
   final _queueRepository = const AiAnalysisQueueRepository();
   final _queueRunner = const AiAnalysisQueueRunner();
@@ -88,6 +91,7 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
 
   Future<_ProfilePageData> _loadData() async {
     return _ProfilePageData(
+      authSession: await _authRepository.loadSession(),
       profileState: await _userProfileService.currentState(),
       developerMode: await _developerSettings.isDeveloperModeEnabled(),
     );
@@ -120,6 +124,25 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
     }
   }
 
+  Future<void> _openLogin() async {
+    final changed = await Navigator.of(context).pushNamed(AppRoutes.login);
+    if (changed == true) _refreshNow();
+  }
+
+  Future<void> _openAccount() async {
+    await Navigator.of(context).pushNamed(AppRoutes.account);
+    _refreshNow();
+  }
+
+  Future<void> _logout() async {
+    await _authRepository.clearSession();
+    if (!mounted) return;
+    _refreshNow();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已退出登录')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -141,6 +164,9 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
           loadingInitial: _loadingInitial,
           rebuildingProfile: _rebuildingProfile,
           onRebuildProfile: _rebuildUserProfile,
+          onOpenAccount: _openAccount,
+          onLogin: _openLogin,
+          onLogout: _logout,
         ),
       ),
     );
@@ -153,12 +179,18 @@ class _ProfileContent extends StatelessWidget {
     required this.loadingInitial,
     required this.rebuildingProfile,
     required this.onRebuildProfile,
+    required this.onOpenAccount,
+    required this.onLogin,
+    required this.onLogout,
   });
 
   final _ProfilePageData data;
   final bool loadingInitial;
   final bool rebuildingProfile;
   final VoidCallback onRebuildProfile;
+  final VoidCallback onOpenAccount;
+  final VoidCallback onLogin;
+  final VoidCallback onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -166,7 +198,12 @@ class _ProfileContent extends StatelessWidget {
       key: const PageStorageKey('profile-content'),
       padding: const EdgeInsets.all(20),
       children: [
-        const _ProfileHeader(),
+        _ProfileHeader(
+          session: data.authSession,
+          onLogin: onLogin,
+          onOpenAccount: onOpenAccount,
+          onLogout: onLogout,
+        ),
         const SizedBox(height: 16),
         const _ProfileAiToolsCard(),
         const SizedBox(height: 16),
@@ -190,41 +227,78 @@ class _ProfileContent extends StatelessWidget {
 }
 
 class _ProfilePageData {
-  const _ProfilePageData({this.profileState, this.developerMode = false});
+  const _ProfilePageData({
+    this.authSession,
+    this.profileState,
+    this.developerMode = false,
+  });
 
+  final AppAuthSession? authSession;
   final AiUserProfileState? profileState;
   final bool developerMode;
 
-  bool get isEmpty => profileState == null;
+  bool get isEmpty => authSession == null && profileState == null;
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader();
+  const _ProfileHeader({
+    required this.session,
+    required this.onLogin,
+    required this.onOpenAccount,
+    required this.onLogout,
+  });
+
+  final AppAuthSession? session;
+  final VoidCallback onLogin;
+  final VoidCallback onOpenAccount;
+  final VoidCallback onLogout;
 
   @override
   Widget build(BuildContext context) {
-    return const Card(
-      elevation: 0,
-      child: Padding(
-        padding: EdgeInsets.all(18),
-        child: Row(
-          children: [
-            CircleAvatar(radius: 28, child: Text('我')),
-            SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('未登录用户',
-                    style:
-                        TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-                SizedBox(height: 4),
-                Text('本地记录优先保存'),
-              ],
-            ),
-          ],
+    final loggedIn = session?.isValid ?? false;
+    final title = loggedIn ? _maskMobile(session!.mobile) : '未登录用户';
+    final subtitle = loggedIn ? '账号信息与会员状态' : '登录后可查看账号与会员状态';
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: loggedIn ? onOpenAccount : onLogin,
+      child: Card(
+        elevation: 0,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              const CircleAvatar(radius: 28, child: Text('我')),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(subtitle),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: loggedIn ? onLogout : onLogin,
+                child: Text(loggedIn ? '退出' : '登录'),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  String _maskMobile(String mobile) {
+    if (mobile.length < 7) return mobile.isEmpty ? '已登录' : mobile;
+    return '${mobile.substring(0, 3)}****${mobile.substring(mobile.length - 4)}';
   }
 }
 
