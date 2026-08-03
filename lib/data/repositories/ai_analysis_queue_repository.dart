@@ -58,6 +58,40 @@ class AiAnalysisQueueRepository {
     return job;
   }
 
+  Future<List<AiAnalysisJob>> enqueueEntries(
+    Iterable<DiaryEntry> entries, {
+    String? batchId,
+    String? batchLabel,
+  }) async {
+    final scoped = entries.toList(growable: false);
+    if (scoped.isEmpty) return const [];
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    final indexed = index.toSet();
+    final jobs = <AiAnalysisJob>[];
+    for (final entry in scoped) {
+      final existing = _jobFromPrefs(prefs, entry.id);
+      final job = AiAnalysisJob(
+        id: entry.id,
+        entryId: entry.id,
+        pipelineVersion: entry.updatedAt.microsecondsSinceEpoch,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        batchId: batchId ?? existing?.batchId,
+        batchLabel: batchLabel ?? existing?.batchLabel,
+      );
+      await prefs.setString('$_prefix${job.id}', jsonEncode(job.toJson()));
+      if (indexed.add(job.id)) index.add(job.id);
+      jobs.add(job);
+    }
+    await prefs.setStringList(_indexKey, index);
+    AiAnalysisQueueBus.bump();
+    return jobs;
+  }
+
   Future<AiAnalysisJob> enqueueEmbeddingRebuildEntry(
     DiaryEntry entry, {
     String? batchId,
@@ -315,20 +349,30 @@ class AiAnalysisQueueRepository {
     final key = '$_prefix$id';
     final raw = _safeGetString(prefs, key);
     if (raw == null) return null;
+    final job = _jobFromRaw(raw);
+    if (job == null) await prefs.remove(key);
+    return job;
+  }
+
+  AiAnalysisJob? _jobFromPrefs(SharedPreferences prefs, String id) {
+    final key = '$_prefix$id';
+    final raw = _safeGetString(prefs, key);
+    if (raw == null) return null;
+    return _jobFromRaw(raw);
+  }
+
+  AiAnalysisJob? _jobFromRaw(String raw) {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) {
-        await prefs.remove(key);
         return null;
       }
       final job = AiAnalysisJob.fromJson(decoded);
       if (job.id.isEmpty) {
-        await prefs.remove(key);
         return null;
       }
       return job;
     } on Object {
-      await prefs.remove(key);
       return null;
     }
   }

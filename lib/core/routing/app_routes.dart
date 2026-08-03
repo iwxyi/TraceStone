@@ -13,6 +13,8 @@ import '../../features/settings/presentation/ai_debug_page.dart';
 import '../../features/settings/presentation/ai_task_queue_page.dart';
 import '../../features/settings/presentation/calendar_memory_page.dart';
 import '../../features/settings/presentation/custom_ai_page.dart';
+import '../../features/settings/presentation/diary_lock_page.dart';
+import '../../features/settings/presentation/diary_import_export_page.dart';
 import '../../features/settings/presentation/memory_management_page.dart';
 import '../../features/settings/presentation/recycle_bin_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
@@ -41,6 +43,8 @@ class AppRoutes {
   static const aiTaskQueue = '/settings/ai-task-queue';
   static const aiDebug = '/settings/ai-debug';
   static const recycleBin = '/settings/recycle-bin';
+  static const diaryLock = '/settings/diary-lock';
+  static const diaryImportExport = '/settings/diary-import-export';
 
   static Route<dynamic>? onGenerateRoute(RouteSettings settings) {
     final name = settings.name ?? '';
@@ -77,6 +81,8 @@ class AppRoutes {
         aiTaskQueue: (_) => const AiTaskQueuePage(),
         aiDebug: (_) => const AiDebugPage(),
         recycleBin: (_) => const RecycleBinPage(),
+        diaryLock: (_) => const DiaryLockPage(),
+        diaryImportExport: (_) => const DiaryImportExportPage(),
       };
 }
 

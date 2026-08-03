@@ -19,6 +19,7 @@ import 'package:trace_stone/data/models/ai_prompt_trace.dart';
 import 'package:trace_stone/data/models/ai_retrieval_trace.dart';
 import 'package:trace_stone/data/models/ai_research_session.dart';
 import 'package:trace_stone/data/models/app_auth_session.dart';
+import 'package:trace_stone/data/models/app_lock_settings.dart';
 import 'package:trace_stone/data/models/companion_answer.dart';
 import 'package:trace_stone/data/models/memory_entry.dart';
 import 'package:trace_stone/data/models/period_summary.dart';
@@ -30,12 +31,14 @@ import 'package:trace_stone/data/repositories/ai_profile_preference_repository.d
 import 'package:trace_stone/data/repositories/ai_prompt_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_retrieval_trace_repository.dart';
 import 'package:trace_stone/data/repositories/ai_research_session_repository.dart';
+import 'package:trace_stone/data/repositories/app_lock_repository.dart';
 import 'package:trace_stone/data/repositories/diary_repository.dart';
 import 'package:trace_stone/data/repositories/entry_summary_repository.dart';
 import 'package:trace_stone/data/repositories/insight_repository.dart';
 import 'package:trace_stone/data/repositories/memory_repository.dart';
 import 'package:trace_stone/data/repositories/period_summary_repository.dart';
 import 'package:trace_stone/data/repositories/stone_task_repository.dart';
+import 'package:trace_stone/data/services/app_lock_authenticator.dart';
 import 'package:trace_stone/data/services/ai_context_builder.dart';
 import 'package:trace_stone/data/services/ai_feedback_service.dart';
 import 'package:trace_stone/data/services/app_startup_service.dart';
@@ -53,6 +56,7 @@ import 'package:trace_stone/features/relationships/presentation/relationships_pa
 import 'package:trace_stone/features/review/presentation/review_page.dart';
 import 'package:trace_stone/features/settings/presentation/calendar_memory_page.dart';
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
+import 'package:trace_stone/features/settings/presentation/diary_lock_page.dart';
 import 'package:trace_stone/features/settings/presentation/ai_debug_page.dart';
 import 'package:trace_stone/features/settings/presentation/memory_management_page.dart';
 import 'package:trace_stone/features/settings/presentation/recycle_bin_page.dart';
@@ -84,9 +88,42 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
 
     expect(resumeCount, 1);
+  });
+
+  testWidgets('app lock gate requires pin on startup', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = _FakeAppLockSecureStore();
+    final repository = AppLockRepository(secureStore: store);
+    await repository.setLocalSecret(
+      method: AppLockMethod.pin,
+      secret: '1234',
+      requireAfterSeconds: 0,
+    );
+
+    await tester.pumpWidget(TraceStoneApp(
+      appLockRepository: repository,
+      appLockAuthenticator: const _FakeAppLockAuthenticator(),
+      startupService: AppStartupService(resumeAiQueue: () async {}),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('拾年已锁定'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '0000');
+    await tester.tap(find.widgetWithText(FilledButton, '解锁'));
+    await tester.pumpAndSettle();
+    expect(find.text('密码不正确'), findsOneWidget);
+    expect(find.text('拾年已锁定'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '1234');
+    await tester.tap(find.widgetWithText(FilledButton, '解锁'));
+    await tester.pumpAndSettle();
+    expect(find.text('拾年已锁定'), findsNothing);
+    expect(find.text('今日'), findsWidgets);
   });
 
   testWidgets('companion page shows progress before revealing answer',
@@ -825,6 +862,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('自定义 AI'), findsOneWidget);
+    expect(find.text('导入导出'), findsOneWidget);
+    await tester.tap(find.text('导入导出'));
+    await tester.pumpAndSettle();
+    expect(find.text('选择文本文件'), findsOneWidget);
+    expect(find.text('导出'), findsWidgets);
     expect(find.text('AI 记忆'), findsNothing);
     expect(find.text('纪念日'), findsNothing);
   });
@@ -915,6 +957,102 @@ void main() {
     expect(find.text('日记、附件、AI 总结备份'), findsOneWidget);
     expect(find.text('API Key、密码、登录凭证'), findsOneWidget);
     await tester.pump(const Duration(seconds: 2));
+  });
+
+  testWidgets('diary lock page configures pin and lock timing', (tester) async {
+    final store = _FakeAppLockSecureStore();
+    final repository = AppLockRepository(secureStore: store);
+    await tester.pumpWidget(MaterialApp(
+      home: DiaryLockPage(
+        repository: repository,
+        authenticator: const _FakeAppLockAuthenticator(),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('日记锁'), findsOneWidget);
+    expect(find.text('未启用'), findsOneWidget);
+    expect(find.text('PIN、密码或系统认证'), findsNothing);
+
+    await tester.tap(find.byType(Switch).first);
+    await tester.pumpAndSettle();
+    expect(find.text('设置独立 PIN'), findsOneWidget);
+
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), '1234');
+    await tester.enterText(fields.at(1), '1234');
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已保护'), findsOneWidget);
+    expect(find.text('独立 PIN'), findsOneWidget);
+    expect(await repository.verifySecret('1234'), isTrue);
+    expect(store.values.values.single, isNot(contains('1234')));
+
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, '15 分钟'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(ChoiceChip, '15 分钟'));
+    await tester.pumpAndSettle();
+    final settings = await repository.loadSettings();
+    expect(settings.requireAfterSeconds, 900);
+  });
+
+  testWidgets('diary lock page ignores save completion after leaving',
+      (tester) async {
+    final store = _SlowAppLockSecureStore();
+    final repository = AppLockRepository(secureStore: store);
+    await repository.setLocalSecret(
+      method: AppLockMethod.pin,
+      secret: '1234',
+      requireAfterSeconds: 0,
+    );
+    store.writeGate = Completer<void>();
+
+    await tester.pumpWidget(MaterialApp(
+      home: DiaryLockPage(
+        repository: repository,
+        authenticator: const _FakeAppLockAuthenticator(),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byType(Switch).first);
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    store.writeGate!.complete();
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('diary lock page disables lock from main switch', (tester) async {
+    final store = _FakeAppLockSecureStore();
+    final repository = AppLockRepository(secureStore: store);
+    await repository.setLocalSecret(
+      method: AppLockMethod.pin,
+      secret: '1234',
+      requireAfterSeconds: 0,
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: DiaryLockPage(
+        repository: repository,
+        authenticator: const _FakeAppLockAuthenticator(),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('已保护'), findsOneWidget);
+    await tester.tap(find.byType(Switch).first);
+    await tester.pumpAndSettle();
+
+    final settings = await repository.loadSettings();
+    expect(settings.enabled, isFalse);
+    expect(find.text('未启用'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('AI task queue page shows unified queue progress',
@@ -3938,4 +4076,47 @@ Future<void> _seedSearchEntry() async {
       ),
     ],
   ));
+}
+
+class _FakeAppLockSecureStore implements AppLockSecureStore {
+  final values = <String, String>{};
+
+  @override
+  Future<void> delete(String key) async {
+    values.remove(key);
+  }
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String value) async {
+    values[key] = value;
+  }
+}
+
+class _SlowAppLockSecureStore extends _FakeAppLockSecureStore {
+  Completer<void>? writeGate;
+
+  @override
+  Future<void> write(String key, String value) async {
+    final gate = writeGate;
+    if (gate != null && !gate.isCompleted) {
+      await gate.future;
+    }
+    await super.write(key, value);
+  }
+}
+
+class _FakeAppLockAuthenticator implements AppLockAuthenticator {
+  const _FakeAppLockAuthenticator();
+
+  @override
+  Future<bool> authenticate({required String reason}) async => true;
+
+  @override
+  Future<List<String>> availableBiometrics() async => const ['指纹'];
+
+  @override
+  Future<bool> isSystemAuthAvailable() async => true;
 }

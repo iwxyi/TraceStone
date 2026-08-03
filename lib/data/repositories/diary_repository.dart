@@ -53,6 +53,39 @@ class DiaryRepository {
     DiaryChangeBus.bump();
   }
 
+  Future<void> saveImportedEntries(List<DiaryEntry> entries) async {
+    if (entries.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final index = _safeGetStringList(prefs, _indexKey) ?? [];
+    final indexed = index.toSet();
+    final periodChangedEntries = <DiaryEntry>[];
+    for (final entry in entries) {
+      final previousRaw = _safeGetString(prefs, '$_entryPrefix${entry.id}');
+      final previous = previousRaw == null
+          ? null
+          : DiaryEntry.fromJson(
+              jsonDecode(previousRaw) as Map<String, dynamic>,
+            );
+      await prefs.setString(
+        '$_entryPrefix${entry.id}',
+        jsonEncode(entry.toJson()),
+      );
+      if (indexed.add(entry.id)) index.add(entry.id);
+      await prefs.remove('$_recoveryPrefix${entry.id}');
+      if (previous == null) {
+        periodChangedEntries.add(entry);
+      } else if (previous.date.year != entry.date.year ||
+          previous.date.month != entry.date.month) {
+        periodChangedEntries
+          ..add(previous)
+          ..add(entry);
+      }
+    }
+    await prefs.setStringList(_indexKey, index);
+    await _markPeriodSummariesChangedForEntries(periodChangedEntries);
+    DiaryChangeBus.bump();
+  }
+
   Future<DiaryEntry?> getEntryById(String id) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = _safeGetString(prefs, '$_entryPrefix$id');
@@ -379,6 +412,44 @@ class DiaryRepository {
       currentMonthEntryCount: monthCount,
       currentYearEntryCount: yearCount,
     );
+  }
+
+  Future<void> _markPeriodSummariesChangedForEntries(
+    List<DiaryEntry> changedEntries,
+  ) async {
+    if (changedEntries.isEmpty) return;
+    final entries = await listEntries();
+    final monthCounts = <String, int>{};
+    final yearCounts = <String, int>{};
+    for (final entry in entries) {
+      final monthId = PeriodSummaryRepository.monthId(entry.date);
+      final yearId = PeriodSummaryRepository.yearId(entry.date.year);
+      monthCounts[monthId] = (monthCounts[monthId] ?? 0) + 1;
+      yearCounts[yearId] = (yearCounts[yearId] ?? 0) + 1;
+    }
+    final changedMonthIds = <String, Set<String>>{};
+    final changedYearIds = <String, Set<String>>{};
+    for (final entry in changedEntries) {
+      final monthId = PeriodSummaryRepository.monthId(entry.date);
+      final yearId = PeriodSummaryRepository.yearId(entry.date.year);
+      (changedMonthIds[monthId] ??= <String>{}).add(entry.id);
+      (changedYearIds[yearId] ??= <String>{}).add(entry.id);
+    }
+    const repository = PeriodSummaryRepository();
+    for (final item in changedMonthIds.entries) {
+      await repository.markEntriesChangedForPeriod(
+        id: item.key,
+        entryIds: item.value,
+        currentEntryCount: monthCounts[item.key] ?? 0,
+      );
+    }
+    for (final item in changedYearIds.entries) {
+      await repository.markEntriesChangedForPeriod(
+        id: item.key,
+        entryIds: item.value,
+        currentEntryCount: yearCounts[item.key] ?? 0,
+      );
+    }
   }
 
   Future<void> _pruneProfilePreferences() async {

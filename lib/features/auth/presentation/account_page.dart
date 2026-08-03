@@ -160,120 +160,17 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<String?> _showNicknameDialog(String? current) async {
-    final controller = TextEditingController(text: current?.trim() ?? '');
-    try {
-      return showDialog<String>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('编辑昵称'),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              maxLength: 24,
-              textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
-                labelText: '昵称',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (_) => Navigator.of(context).pop(
-                controller.text.trim(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(
-                  controller.text.trim(),
-                ),
-                child: const Text('保存'),
-              ),
-            ],
-          );
-        },
-      );
-    } finally {
-      controller.dispose();
-    }
+    return showDialog<String>(
+      context: context,
+      builder: (context) => _NicknameDialog(current: current),
+    );
   }
 
   Future<String?> _showSetPasswordDialog() async {
-    final passwordController = TextEditingController();
-    final confirmController = TextEditingController();
-    try {
-      return showDialog<String>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('设置密码'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: passwordController,
-                  obscureText: true,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                    labelText: '新密码',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: confirmController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: '确认密码',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (_) => _submitPasswordDialog(
-                      context, passwordController, confirmController),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => _submitPasswordDialog(
-                    context, passwordController, confirmController),
-                child: const Text('保存'),
-              ),
-            ],
-          );
-        },
-      );
-    } finally {
-      passwordController.dispose();
-      confirmController.dispose();
-    }
-  }
-
-  void _submitPasswordDialog(
-    BuildContext context,
-    TextEditingController passwordController,
-    TextEditingController confirmController,
-  ) {
-    final password = passwordController.text.trim();
-    final confirm = confirmController.text.trim();
-    if (password.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('密码至少需要 6 位')),
-      );
-      return;
-    }
-    if (password != confirm) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('两次输入的密码不一致')),
-      );
-      return;
-    }
-    Navigator.of(context).pop(password);
+    return showDialog<String>(
+      context: context,
+      builder: (context) => const _SetPasswordDialog(),
+    );
   }
 
   @override
@@ -432,6 +329,143 @@ class _AccountHeaderCard extends StatelessWidget {
   String _maskMobile(String mobile) {
     if (mobile.length < 7) return mobile;
     return '${mobile.substring(0, 3)}****${mobile.substring(mobile.length - 4)}';
+  }
+}
+
+class _NicknameDialog extends StatefulWidget {
+  const _NicknameDialog({required this.current});
+
+  final String? current;
+
+  @override
+  State<_NicknameDialog> createState() => _NicknameDialogState();
+}
+
+class _NicknameDialogState extends State<_NicknameDialog> {
+  late final _controller =
+      TextEditingController(text: widget.current?.trim() ?? '');
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_controller.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑昵称'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 24,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(
+          labelText: '昵称',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+class _SetPasswordDialog extends StatefulWidget {
+  const _SetPasswordDialog();
+
+  @override
+  State<_SetPasswordDialog> createState() => _SetPasswordDialogState();
+}
+
+class _SetPasswordDialogState extends State<_SetPasswordDialog> {
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
+  String _error = '';
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    _confirmController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final password = _passwordController.text.trim();
+    final confirm = _confirmController.text.trim();
+    if (password.length < 6) {
+      setState(() => _error = '密码至少需要 6 位');
+      return;
+    }
+    if (password != confirm) {
+      setState(() => _error = '两次输入的密码不一致');
+      return;
+    }
+    Navigator.of(context).pop(password);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('设置密码'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _passwordController,
+            obscureText: true,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '新密码',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _confirmController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: '确认密码',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          if (_error.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('保存'),
+        ),
+      ],
+    );
   }
 }
 

@@ -24,13 +24,28 @@ class PeriodSummaryRepository {
   }) async {
     await _markSummaryNeedsUpdate(
       id: monthId(entry.date),
-      entryId: entry.id,
+      entryIds: [entry.id],
       currentEntryCount: currentMonthEntryCount,
     );
     await _markSummaryNeedsUpdate(
       id: yearId(entry.date.year),
-      entryId: entry.id,
+      entryIds: [entry.id],
       currentEntryCount: currentYearEntryCount,
+    );
+  }
+
+  Future<void> markEntriesChangedForPeriod({
+    required String id,
+    required Iterable<String> entryIds,
+    required int currentEntryCount,
+  }) async {
+    final ids = entryIds.where((id) => id.trim().isNotEmpty).toSet().toList()
+      ..sort();
+    if (ids.isEmpty) return;
+    await _markSummaryNeedsUpdate(
+      id: id,
+      entryIds: ids,
+      currentEntryCount: currentEntryCount,
     );
   }
 
@@ -135,7 +150,7 @@ class PeriodSummaryRepository {
       if (_summaryReferencesEntry(summary, value)) {
         await _markSummaryNeedsUpdate(
           id: summary.id,
-          entryId: value,
+          entryIds: [value],
           currentEntryCount:
               (summary.entryCount - 1).clamp(0, summary.entryCount),
         );
@@ -145,7 +160,7 @@ class PeriodSummaryRepository {
 
   Future<void> _markSummaryNeedsUpdate({
     required String id,
-    required String entryId,
+    required Iterable<String> entryIds,
     required int currentEntryCount,
   }) async {
     final summary = await getSummary(id);
@@ -153,7 +168,7 @@ class PeriodSummaryRepository {
     final currentStatus = await getStatus(id);
     final changedIds = <String>{
       ...?currentStatus?.changedEntryIds,
-      entryId,
+      ...entryIds,
     }.toList()
       ..sort();
     final baseEntryCount = currentStatus?.baseEntryCount ??

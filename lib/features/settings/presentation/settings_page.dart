@@ -11,7 +11,7 @@ class SettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = ['日记锁', 'WebDAV 备份', '提醒通知', '导出数据', '会员中心'];
+    final disabledItems = ['WebDAV 备份', '提醒通知', '会员中心'];
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -51,20 +51,42 @@ class SettingsPage extends StatelessWidget {
           const _DeveloperModeSection(),
           const SizedBox(height: 18),
           Card(
-            child: ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) => Opacity(
-                opacity: 0.45,
-                child: ListTile(
-                  enabled: false,
-                  title: Text(items[index]),
-                  subtitle: const Text('即将推出'),
-                  trailing: const Icon(Icons.lock_outline),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.lock_outline),
+                  title: const Text('日记锁'),
+                  subtitle: const Text('PIN、密码或系统认证'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.diaryLock),
                 ),
-              ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.import_export_outlined),
+                  title: const Text('导入导出'),
+                  subtitle: const Text('TXT 导入，文本或 JSON 导出'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context)
+                      .pushNamed(AppRoutes.diaryImportExport),
+                ),
+                const Divider(height: 1),
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: disabledItems.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) => Opacity(
+                    opacity: 0.45,
+                    child: ListTile(
+                      enabled: false,
+                      title: Text(disabledItems[index]),
+                      subtitle: const Text('即将推出'),
+                      trailing: const Icon(Icons.lock_outline),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
