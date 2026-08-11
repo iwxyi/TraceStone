@@ -59,6 +59,20 @@ class AiAnalysisQueueRunner {
 
   static bool _isRunning = false;
 
+  static bool get isRunning => _isRunning;
+
+  static Future<void> waitUntilIdle({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (_isRunning && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+    if (_isRunning) {
+      throw StateError('后台 AI 任务仍在运行，无法安全恢复数据');
+    }
+  }
+
   final AiAnalysisQueueRepository _queueRepository;
   final AiEmbeddingRepository _embeddingRepository;
   final DiaryRepository _diaryRepository;

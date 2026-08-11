@@ -11,8 +11,6 @@ class SettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final disabledItems = ['WebDAV 备份', '提醒通知', '会员中心'];
-
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
@@ -54,6 +52,15 @@ class SettingsPage extends StatelessWidget {
             child: Column(
               children: [
                 ListTile(
+                  leading: const Icon(Icons.cloud_sync_outlined),
+                  title: const Text('WebDAV 备份'),
+                  subtitle: const Text('备份和恢复日记'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.webDavSync),
+                ),
+                const Divider(height: 1),
+                ListTile(
                   leading: const Icon(Icons.lock_outline),
                   title: const Text('日记锁'),
                   subtitle: const Text('PIN、密码或系统认证'),
@@ -69,22 +76,6 @@ class SettingsPage extends StatelessWidget {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context)
                       .pushNamed(AppRoutes.diaryImportExport),
-                ),
-                const Divider(height: 1),
-                ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: disabledItems.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) => Opacity(
-                    opacity: 0.45,
-                    child: ListTile(
-                      enabled: false,
-                      title: Text(disabledItems[index]),
-                      subtitle: const Text('即将推出'),
-                      trailing: const Icon(Icons.lock_outline),
-                    ),
-                  ),
                 ),
               ],
             ),

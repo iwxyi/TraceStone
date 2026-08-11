@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:calendar_date_picker2/calendar_date_picker2.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -12,8 +13,10 @@ import 'package:uuid/uuid.dart';
 import '../../../core/widgets/simple_markdown_text.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/diary_analysis_status.dart';
+import '../../../data/models/diary_attachment.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/repositories/diary_media_repository.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
@@ -36,11 +39,12 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   final _focusNode = FocusNode();
   final _picker = ImagePicker();
   final _repository = const DiaryRepository();
+  final _mediaRepository = const DiaryMediaRepository();
   final _insightRepository = const InsightRepository();
   final _analysisQueueRunner = const AiAnalysisQueueRunner();
   final _aiRepairService = const AiRepairService();
   final _locationWeatherService = const LocationWeatherService();
-  final _images = <XFile>[];
+  final _attachments = <DiaryAttachment>[];
 
   bool _routeLoaded = false;
   bool _isEditing = true;
@@ -144,6 +148,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _weather = '';
       _temperature = null;
       _locationDetails = const {};
+      _attachments.clear();
       _hasManualLocation = false;
       _hasManualWeather = false;
       _hasUnsavedChanges = false;
@@ -181,6 +186,9 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       _weather = resolvedEntry.weather;
       _temperature = resolvedEntry.temperature;
       _locationDetails = resolvedEntry.locationDetails;
+      _attachments
+        ..clear()
+        ..addAll(resolvedEntry.attachments);
       _hasManualLocation = resolvedEntry.location.trim().isNotEmpty &&
           resolvedEntry.location != '未选择地点' &&
           resolvedEntry.location != '点击选择地点';
@@ -207,6 +215,7 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
       temperature: _temperature,
       updatedAt: DateTime.now(),
       locationDetails: _locationDetails,
+      attachments: List.unmodifiable(_attachments),
     );
   }
 
@@ -974,9 +983,9 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
     _restoreFocus();
   }
 
-  void _insertImageMarkdown(XFile image) {
-    final name = image.name.isEmpty ? 'image' : image.name;
-    _insertMarkdown('\n![$name](${image.path})\n');
+  void _insertImageMarkdown(DiaryAttachment attachment) {
+    final name = attachment.fileName.isEmpty ? 'image' : attachment.fileName;
+    _insertMarkdown('\n![$name](shinen-media://${attachment.id})\n');
   }
 
   Future<void> _loadCurrentLocationWeather() async {
@@ -1010,7 +1019,21 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
   Future<void> _pickImages() async {
     final picked = await _picker.pickMultiImage(imageQuality: 82);
     if (picked.isEmpty) return;
-    setState(() => _images.addAll(picked));
+    final saved = <DiaryAttachment>[];
+    for (final image in picked) {
+      saved.add(await _mediaRepository.saveImage(
+        entryId: _entryId,
+        file: image,
+      ));
+    }
+    if (!mounted) return;
+    setState(() {
+      _attachments.addAll(saved);
+      _hasUnsavedChanges = true;
+    });
+    if (_autoSave) {
+      _scheduleAutoSave();
+    }
   }
 
   Future<void> _openLocationMenu() async {
@@ -1302,7 +1325,11 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
             Expanded(
               child: _isEditing
                   ? (_isPreview
-                      ? _MarkdownPreview(text: _controller.text)
+                      ? _MarkdownPreview(
+                          text: _controller.text,
+                          attachments: _attachments,
+                          mediaRepository: _mediaRepository,
+                        )
                       : Center(
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 760),
@@ -1333,6 +1360,8 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
                         ))
                   : _DiaryReadView(
                       text: _controller.text,
+                      attachments: _attachments,
+                      mediaRepository: _mediaRepository,
                       isAnalyzing: _isAnalyzingDiary,
                       insightFuture: _insightFuture,
                       error: _analysisError,
@@ -1341,11 +1370,20 @@ class _DiaryEditPageState extends State<DiaryEditPage> {
                           _reloadInsightStatus(_entryId),
                     ),
             ),
-            if (_isEditing && _images.isNotEmpty)
+            if (_isEditing && _attachments.isNotEmpty)
               _ImageStrip(
-                images: _images,
+                attachments: _attachments,
+                mediaRepository: _mediaRepository,
                 onInsert: _insertImageMarkdown,
-                onRemove: (image) => setState(() => _images.remove(image)),
+                onRemove: (attachment) {
+                  setState(() {
+                    _attachments.remove(attachment);
+                    _hasUnsavedChanges = true;
+                  });
+                  if (_autoSave) {
+                    _scheduleAutoSave();
+                  }
+                },
               ),
             if (_isEditing)
               SafeArea(
@@ -2171,12 +2209,17 @@ class _LocationSheetState extends State<_LocationSheet> {
 }
 
 class _ImageStrip extends StatelessWidget {
-  const _ImageStrip(
-      {required this.images, required this.onInsert, required this.onRemove});
+  const _ImageStrip({
+    required this.attachments,
+    required this.mediaRepository,
+    required this.onInsert,
+    required this.onRemove,
+  });
 
-  final List<XFile> images;
-  final ValueChanged<XFile> onInsert;
-  final ValueChanged<XFile> onRemove;
+  final List<DiaryAttachment> attachments;
+  final DiaryMediaRepository mediaRepository;
+  final ValueChanged<DiaryAttachment> onInsert;
+  final ValueChanged<DiaryAttachment> onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -2186,18 +2229,20 @@ class _ImageStrip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         scrollDirection: Axis.horizontal,
         itemBuilder: (context, index) {
-          final image = images[index];
+          final attachment = attachments[index];
           return Stack(
             children: [
               InkWell(
-                onTap: () => onInsert(image),
+                onTap: () => onInsert(attachment),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: kIsWeb
-                      ? Image.network(image.path,
-                          width: 88, height: 88, fit: BoxFit.cover)
-                      : Image.file(File(image.path),
-                          width: 88, height: 88, fit: BoxFit.cover),
+                  child: _AttachmentImage(
+                    attachment: attachment,
+                    mediaRepository: mediaRepository,
+                    width: 88,
+                    height: 88,
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
               Positioned(
@@ -2205,7 +2250,7 @@ class _ImageStrip extends StatelessWidget {
                 top: 2,
                 child: IconButton.filledTonal(
                   visualDensity: VisualDensity.compact,
-                  onPressed: () => onRemove(image),
+                  onPressed: () => onRemove(attachment),
                   icon: const Icon(Icons.close, size: 16),
                 ),
               ),
@@ -2213,8 +2258,44 @@ class _ImageStrip extends StatelessWidget {
           );
         },
         separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemCount: images.length,
+        itemCount: attachments.length,
       ),
+    );
+  }
+}
+
+class _AttachmentImage extends StatelessWidget {
+  const _AttachmentImage({
+    required this.attachment,
+    required this.mediaRepository,
+    this.width,
+    this.height,
+    this.fit,
+  });
+
+  final DiaryAttachment attachment;
+  final DiaryMediaRepository mediaRepository;
+  final double? width;
+  final double? height;
+  final BoxFit? fit;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List?>(
+      future: mediaRepository.readAttachment(attachment),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes == null || bytes.isEmpty) {
+          return Container(
+            width: width,
+            height: height,
+            alignment: Alignment.center,
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: const Icon(Icons.image_not_supported_outlined, size: 20),
+          );
+        }
+        return Image.memory(bytes, width: width, height: height, fit: fit);
+      },
     );
   }
 }
@@ -2222,6 +2303,8 @@ class _ImageStrip extends StatelessWidget {
 class _DiaryReadView extends StatelessWidget {
   const _DiaryReadView({
     required this.text,
+    required this.attachments,
+    required this.mediaRepository,
     required this.isAnalyzing,
     required this.insightFuture,
     required this.error,
@@ -2230,6 +2313,8 @@ class _DiaryReadView extends StatelessWidget {
   });
 
   final String text;
+  final List<DiaryAttachment> attachments;
+  final DiaryMediaRepository mediaRepository;
   final bool isAnalyzing;
   final Future<_ReadInsightData>? insightFuture;
   final String? error;
@@ -2245,7 +2330,12 @@ class _DiaryReadView extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(22, 18, 22, 34),
           children: [
-            for (final line in lines) _PreviewLine(line: line),
+            for (final line in lines)
+              _PreviewLine(
+                line: line,
+                attachments: attachments,
+                mediaRepository: mediaRepository,
+              ),
             const SizedBox(height: 26),
             _SoftDivider(),
             const SizedBox(height: 20),
@@ -2600,24 +2690,43 @@ class _InsightResultBlock extends StatelessWidget {
 }
 
 class _MarkdownPreview extends StatelessWidget {
-  const _MarkdownPreview({required this.text});
+  const _MarkdownPreview({
+    required this.text,
+    required this.attachments,
+    required this.mediaRepository,
+  });
 
   final String text;
+  final List<DiaryAttachment> attachments;
+  final DiaryMediaRepository mediaRepository;
 
   @override
   Widget build(BuildContext context) {
     final lines = text.isEmpty ? ['还没有内容。'] : text.split('\n');
     return ListView(
       padding: const EdgeInsets.all(20),
-      children: [for (final line in lines) _PreviewLine(line: line)],
+      children: [
+        for (final line in lines)
+          _PreviewLine(
+            line: line,
+            attachments: attachments,
+            mediaRepository: mediaRepository,
+          ),
+      ],
     );
   }
 }
 
 class _PreviewLine extends StatelessWidget {
-  const _PreviewLine({required this.line});
+  const _PreviewLine({
+    required this.line,
+    required this.attachments,
+    required this.mediaRepository,
+  });
 
   final String line;
+  final List<DiaryAttachment> attachments;
+  final DiaryMediaRepository mediaRepository;
 
   @override
   Widget build(BuildContext context) {
@@ -2640,6 +2749,25 @@ class _PreviewLine extends StatelessWidget {
     final imageMatch = RegExp(r'^!\[[^\]]*\]\(([^)]+)\)$').firstMatch(line);
     if (imageMatch != null) {
       final path = imageMatch.group(1)!;
+      final internal = RegExp(r'^shinen-media://(.+)$').firstMatch(path);
+      if (internal != null) {
+        final id = internal.group(1)!;
+        final attachment =
+            attachments.where((item) => item.id == id).firstOrNull;
+        if (attachment != null) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: _AttachmentImage(
+                attachment: attachment,
+                mediaRepository: mediaRepository,
+                fit: BoxFit.contain,
+              ),
+            ),
+          );
+        }
+      }
       return Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: ClipRRect(

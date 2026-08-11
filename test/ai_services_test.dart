@@ -7025,11 +7025,14 @@ void main() {
         updatedAt: date,
         completedAt: date.add(const Duration(hours: 2)),
         status: StoneTaskStatus.completed,
+        checkIns: [
+          StoneTaskCheckIn(
+            id: 'checkin:period',
+            createdAt: date.add(const Duration(hours: 1)),
+            note: '晚饭后散步完成了一小圈',
+          ),
+        ],
       ));
-      await stoneRepository.addCheckIn(
-        'stone:period',
-        note: '晚饭后散步完成了一小圈',
-      );
 
       final summary = await const PeriodSummaryService()
           .buildMonthSummary(DateTime(2026, 7), [entry]);

@@ -1,3 +1,5 @@
+import 'diary_attachment.dart';
+
 class DiaryEntry {
   const DiaryEntry({
     required this.id,
@@ -9,6 +11,7 @@ class DiaryEntry {
     required this.temperature,
     required this.updatedAt,
     this.locationDetails = const {},
+    this.attachments = const [],
   });
 
   final String id;
@@ -20,6 +23,7 @@ class DiaryEntry {
   final String? temperature;
   final DateTime updatedAt;
   final Map<String, dynamic> locationDetails;
+  final List<DiaryAttachment> attachments;
 
   String get dayKey => dateKey(date);
 
@@ -79,6 +83,8 @@ class DiaryEntry {
         'temperature': temperature,
         'updatedAt': updatedAt.toIso8601String(),
         'locationDetails': locationDetails,
+        'attachments':
+            attachments.map((attachment) => attachment.toJson()).toList(),
       };
 
   static DiaryEntry fromJson(Map<String, dynamic> json) {
@@ -98,6 +104,13 @@ class DiaryEntry {
       updatedAt: updatedAt,
       locationDetails:
           json['locationDetails'] as Map<String, dynamic>? ?? const {},
+      attachments: (json['attachments'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => DiaryAttachment.fromJson(
+              item.map((key, value) => MapEntry(key.toString(), value))))
+          .where((attachment) =>
+              attachment.id.isNotEmpty && attachment.relativePath.isNotEmpty)
+          .toList(growable: false),
     );
   }
 

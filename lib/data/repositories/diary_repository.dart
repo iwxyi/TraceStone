@@ -12,6 +12,7 @@ import 'ai_profile_preference_repository.dart';
 import 'ai_prompt_trace_repository.dart';
 import 'ai_retrieval_trace_repository.dart';
 import 'diary_change_bus.dart';
+import 'diary_media_repository.dart';
 import 'entry_summary_repository.dart';
 import 'insight_repository.dart';
 import 'memory_repository.dart';
@@ -364,6 +365,12 @@ class DiaryRepository {
     await promptTraceRepository.deleteForEntry(id);
     await const EntrySummaryRepository().deleteForEntry(id);
     await retrievalTraceRepository.deleteForEntry(id);
+    try {
+      await const DiaryMediaRepository().deleteForEntry(id);
+    } on Object {
+      // Media files are auxiliary. Metadata and AI artifacts should still be
+      // deleted even if the platform file store is temporarily unavailable.
+    }
   }
 
   Future<void> _stopAiQueueForTrashedEntry(String id) async {

@@ -18,6 +18,7 @@ import '../../features/settings/presentation/diary_import_export_page.dart';
 import '../../features/settings/presentation/memory_management_page.dart';
 import '../../features/settings/presentation/recycle_bin_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
+import '../../features/settings/presentation/webdav_sync_page.dart';
 import '../../features/shaping_stone/presentation/shaping_stone_page.dart';
 
 class AppRoutes {
@@ -45,6 +46,7 @@ class AppRoutes {
   static const recycleBin = '/settings/recycle-bin';
   static const diaryLock = '/settings/diary-lock';
   static const diaryImportExport = '/settings/diary-import-export';
+  static const webDavSync = '/settings/webdav';
 
   static Route<dynamic>? onGenerateRoute(RouteSettings settings) {
     final name = settings.name ?? '';
@@ -83,6 +85,7 @@ class AppRoutes {
         recycleBin: (_) => const RecycleBinPage(),
         diaryLock: (_) => const DiaryLockPage(),
         diaryImportExport: (_) => const DiaryImportExportPage(),
+        webDavSync: (_) => const WebDavSyncPage(),
       };
 }
 

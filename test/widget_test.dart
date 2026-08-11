@@ -865,7 +865,7 @@ void main() {
     expect(find.text('导入导出'), findsOneWidget);
     await tester.tap(find.text('导入导出'));
     await tester.pumpAndSettle();
-    expect(find.text('选择文本文件'), findsOneWidget);
+    expect(find.text('选择文件'), findsOneWidget);
     expect(find.text('导出'), findsWidgets);
     expect(find.text('AI 记忆'), findsNothing);
     expect(find.text('纪念日'), findsNothing);
