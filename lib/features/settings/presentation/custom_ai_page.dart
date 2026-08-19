@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../data/repositories/ai_embedding_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/ai_client_service.dart';
 import '../../../data/services/embedding_service.dart';
 import 'ai_task_queue_page.dart';
 
@@ -328,39 +329,23 @@ class _CustomAiPageState extends State<CustomAiPage> {
     setState(() => _isTestingConfig = true);
     try {
       final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
-      final isAnthropic =
-          _selectedPlatform == 'Claude' || normalized.contains('anthropic');
-      final uri = Uri.parse(isAnthropic
-          ? '$normalized/messages'
-          : '$normalized/chat/completions');
-      final headers = isAnthropic
-          ? {
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'content-type': 'application/json',
-            }
-          : {
-              'Authorization': 'Bearer $apiKey',
-              'Content-Type': 'application/json',
-            };
-      final body = jsonEncode({
-        'model': model,
-        'max_tokens': 16,
-        'messages': [
-          {'role': 'user', 'content': 'Reply with OK'}
-        ]
-      });
-      final response = await http.post(uri, headers: headers, body: body);
+      await const AiClientService().completeJsonWithConfig(
+        config: AiClientConfig(
+          platform: _selectedPlatform,
+          baseUrl: normalized,
+          apiKey: apiKey,
+          model: model,
+        ),
+        systemPrompt: 'Return a JSON object only.',
+        userPrompt: 'Return {"ok": true}.',
+        maxTokens: 32,
+      );
       if (!mounted) return;
-      final ok = response.statusCode >= 200 && response.statusCode < 300;
       final embeddingResult = await _testEmbeddingConfiguration();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ok
-            ? embeddingResult == null
-                ? '模型配置可用，历史相似度可用'
-                : '模型配置可用；历史相似度将使用本地模式'
-            : '模型配置不可用：${_friendlyHttpStatus(response.statusCode)}'),
+        content: Text(
+            embeddingResult == null ? '模型配置可用，历史相似度可用' : '模型配置可用；历史相似度将使用本地模式'),
       ));
     } on Object catch (error) {
       if (!mounted) return;
@@ -386,13 +371,6 @@ class _CustomAiPageState extends State<CustomAiPage> {
           _defaultEmbeddingModels[value] ?? 'text-embedding-3-small';
     });
     _fetchModels();
-  }
-
-  String _friendlyHttpStatus(int statusCode) {
-    if (statusCode == 401 || statusCode == 403) return '秘钥无效或无权限';
-    if (statusCode == 404 || statusCode == 405) return '接口地址或模型不匹配';
-    if (statusCode >= 500) return '服务暂时不可用';
-    return '请求未通过';
   }
 
   void _handleEmbeddingPlatformChanged(String? value) {

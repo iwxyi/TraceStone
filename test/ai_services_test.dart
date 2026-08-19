@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/data/models/diary_entry.dart';
 import 'package:trace_stone/data/models/diary_analysis_status.dart';
@@ -68,6 +71,47 @@ Future<void> _throwStartupCleanupError() async {
 }
 
 void main() {
+  group('AiClientService', () {
+    test('rejects a 2xx response without JSON content', () async {
+      final client = AiClientService(
+        httpClient: MockClient((request) async {
+          expect(request.url.path, '/v1/chat/completions');
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'message': {'content': 'OK'}
+                }
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+
+      await expectLater(
+        client.completeJsonWithConfig(
+          config: const AiClientConfig(
+            platform: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com/v1',
+            apiKey: 'test-key',
+            model: 'retired-model',
+          ),
+          systemPrompt: 'Return a JSON object only.',
+          userPrompt: 'Return {"ok": true}.',
+          maxTokens: 32,
+        ),
+        throwsA(
+          isA<AiClientException>().having(
+            (error) => error.message,
+            'message',
+            'AI 响应格式错误：返回内容无法解析为 JSON',
+          ),
+        ),
+      );
+    });
+  });
+
   group('AppAuthService', () {
     test('sends code and logs in with configured app id', () async {
       SharedPreferences.setMockInitialValues({});
@@ -945,6 +989,8 @@ void main() {
 
       final trace = await promptRepository.getTrace(entry.id);
       final insight = await const InsightRepository().getInsight(entry.id);
+      expect(client.lastSystemPrompt, contains('用户关怀'));
+      expect(client.lastSystemPrompt, contains('危机安全'));
       expect(client.lastUserPrompt, contains('用户反馈：'));
       expect(client.lastUserPrompt, contains('上一版洞察被用户标记为不准确'));
       expect(client.lastUserPrompt, contains('不要把轻松判断成焦虑'));
@@ -2893,6 +2939,23 @@ void main() {
       expect(job?.stageLogs.last.message, '用户手动重试');
     });
 
+    test('failed jobs require an explicit manual retry before running', () {
+      final date = DateTime(2026, 7, 3);
+      final job = AiAnalysisJob(
+        id: 'explicit-retry-job',
+        entryId: 'explicit-retry-job',
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.failed,
+        currentStage: AiAnalysisStage.generatingInsight,
+        createdAt: date,
+        updatedAt: date,
+        retryCount: 1,
+      );
+
+      expect(job.canRun, isFalse);
+      expect(job.canRetry, isTrue);
+    });
+
     test('ignores invalid stored jobs and repairs the queue index', () async {
       final date = DateTime(2026, 7, 3);
       final valid = AiAnalysisJob(
@@ -3133,7 +3196,7 @@ void main() {
 
       await AiAnalysisQueueRunner(
         periodSummaryService: PeriodSummaryService(client: client),
-      ).processUntilIdle(maxJobs: 3);
+      ).processUntilIdle();
 
       final julySummary = await periodRepository.getSummary(
         PeriodSummaryRepository.monthId(DateTime(2026, 7)),
@@ -3239,6 +3302,132 @@ void main() {
       expect(after.jobs.map((job) => job.id), contains(first.id));
       expect(after.jobs.map((job) => job.id), contains(second.id));
       expect(next?.id, first.id);
+    });
+
+    test('period dependency repair preserves matching queued diary jobs',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'repair-existing-diary-job',
+        date: DateTime(2026, 8, 3),
+        content: '已有同版本的待整理日记不应被依赖补齐重置。',
+      );
+      await diaryRepository.saveEntry(entry);
+      final existing = AiAnalysisJob(
+        id: entry.id,
+        entryId: entry.id,
+        pipelineVersion: entry.updatedAt.microsecondsSinceEpoch,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: DateTime(2026, 8, 4),
+        updatedAt: DateTime(2026, 8, 4),
+        batchId: 'original-batch',
+        batchLabel: '原始批次',
+      );
+      await queueRepository.saveJob(existing);
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        entryId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        type: AiAnalysisJobType.monthSummary,
+        targetId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: DateTime(2026, 8, 5),
+        updatedAt: DateTime(2026, 8, 5),
+      ));
+
+      final repaired = await queueRepository.enqueueMissingPeriodDependencies();
+      final after = await queueRepository.getJob(entry.id);
+
+      expect(repaired, 0);
+      expect(after?.state, AiAnalysisJobState.pending);
+      expect(after?.batchId, 'original-batch');
+      expect(after?.updatedAt, existing.updatedAt);
+    });
+
+    test(
+        'period dependency repair rebuilds completed diary jobs with missing artifacts',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'repair-completed-missing-artifacts',
+        date: DateTime(2026, 8, 3),
+        content: '完成状态但摘要丢失的日记需要重新整理。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: entry.id,
+        entryId: entry.id,
+        pipelineVersion: entry.updatedAt.microsecondsSinceEpoch,
+        state: AiAnalysisJobState.completed,
+        currentStage: AiAnalysisStage.completed,
+        createdAt: DateTime(2026, 8, 4),
+        updatedAt: DateTime(2026, 8, 4),
+      ));
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        entryId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        type: AiAnalysisJobType.monthSummary,
+        targetId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: DateTime(2026, 8, 5),
+        updatedAt: DateTime(2026, 8, 5),
+      ));
+
+      final repaired = await queueRepository.enqueueMissingPeriodDependencies();
+      final after = await queueRepository.getJob(entry.id);
+
+      expect(repaired, 1);
+      expect(after?.state, AiAnalysisJobState.pending);
+      expect(after?.currentStage, AiAnalysisStage.queued);
+    });
+
+    test('period dependency reason exposes failed diary error', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'failed-period-dependency-entry',
+        date: DateTime(2026, 8, 3),
+        content: '这篇日记的 AI 请求超时。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: entry.id,
+        entryId: entry.id,
+        pipelineVersion: entry.updatedAt.microsecondsSinceEpoch,
+        state: AiAnalysisJobState.failed,
+        currentStage: AiAnalysisStage.generatingInsight,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        lastError: 'AI 请求超时（75 秒）',
+      ));
+      await queueRepository.saveJob(AiAnalysisJob(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        entryId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        type: AiAnalysisJobType.monthSummary,
+        targetId: PeriodSummaryRepository.monthId(DateTime(2026, 8)),
+        pipelineVersion: 1,
+        state: AiAnalysisJobState.pending,
+        currentStage: AiAnalysisStage.queued,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+      ));
+
+      final snapshot = await queueRepository.snapshot();
+
+      expect(
+        snapshot.dependencyReasons[
+            PeriodSummaryRepository.monthId(DateTime(2026, 8))],
+        contains('AI 请求超时（75 秒）'),
+      );
     });
 
     test('completed period jobs do not keep queue dependency blocked',
@@ -3917,7 +4106,41 @@ void main() {
       expect(job?.state, AiAnalysisJobState.completed);
     });
 
-    test('defers insight generation when custom AI is unavailable', () async {
+    test('runner refreshes an outdated job before processing it', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final date = DateTime(2026, 7, 3);
+      final oldEntry = _entry(
+        id: 'outdated-queued-entry',
+        date: date,
+        content: '旧版本日记。',
+      );
+      await diaryRepository.saveEntry(oldEntry);
+      await queueRepository.enqueueEntry(oldEntry);
+      final updatedEntry = DiaryEntry(
+        id: oldEntry.id,
+        date: oldEntry.date,
+        createdAt: oldEntry.createdAt,
+        content: '更新后的日记内容。',
+        location: oldEntry.location,
+        weather: oldEntry.weather,
+        temperature: oldEntry.temperature,
+        updatedAt: date.add(const Duration(minutes: 1)),
+      );
+      await diaryRepository.saveEntry(updatedEntry);
+
+      await AiAnalysisQueueRunner(
+        analysisService: const _FakeDiaryAnalysisService(),
+      ).processNext();
+
+      final job = await queueRepository.getJob(updatedEntry.id);
+      expect(
+          job?.pipelineVersion, updatedEntry.updatedAt.microsecondsSinceEpoch);
+      expect(job?.state, AiAnalysisJobState.completed);
+    });
+
+    test('pauses the queue when custom AI is unavailable', () async {
       SharedPreferences.setMockInitialValues({});
       const diaryRepository = DiaryRepository();
       const queueRunner = AiAnalysisQueueRunner();
@@ -3933,21 +4156,51 @@ void main() {
       await diaryRepository.saveEntry(entry);
       await queueRunner.enqueue(entry, start: false);
 
-      await queueRunner.processUntilIdle(maxJobs: 3);
+      await expectLater(
+        queueRunner.processUntilIdle(maxJobs: 3),
+        throwsA(isA<StateError>()),
+      );
 
       final job = await queueRepository.getJob(entry.id);
       final status = await insightRepository.getStatus(entry.id);
       final summary = await summaryRepository.getSummary(entry.id);
       final embeddings = await embeddingRepository.listForEntry(entry.id);
 
-      expect(job?.state, AiAnalysisJobState.incomplete);
+      expect(job?.state, AiAnalysisJobState.failed);
       expect(job?.currentStage, AiAnalysisStage.generatingInsight);
       expect(job?.retryCount, 0);
-      expect(job?.lastError, contains('等待 AI 可用'));
-      expect(status?.state, DiaryAnalysisState.incomplete);
-      expect(status?.message, contains('等待 AI 可用'));
+      expect(job?.lastError, contains('AI 配置错误：'));
+      expect(status?.state, DiaryAnalysisState.failed);
+      expect(status?.message, contains('AI 配置错误：'));
+      expect(await queueRepository.isPaused(), isTrue);
       expect(summary, isNotNull);
       expect(embeddings, isNotEmpty);
+    });
+
+    test('fails and pauses when the insight stage does not return', () async {
+      SharedPreferences.setMockInitialValues({});
+      const diaryRepository = DiaryRepository();
+      const queueRepository = AiAnalysisQueueRepository();
+      final entry = _entry(
+        id: 'hanging-insight-entry',
+        date: DateTime(2026, 7, 3),
+        content: '测试不会返回的分析阶段。',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueEntry(entry);
+
+      await expectLater(
+        AiAnalysisQueueRunner(
+          analysisService: const _HangingDiaryAnalysisService(),
+          insightStageTimeout: const Duration(milliseconds: 10),
+        ).processUntilIdle(),
+        throwsA(isA<StateError>()),
+      );
+
+      final job = await queueRepository.getJob(entry.id);
+      expect(job?.state, AiAnalysisJobState.failed);
+      expect(job?.lastError, contains('今日分析阶段超时'));
+      expect(await queueRepository.isPaused(), isTrue);
     });
 
     test('runner fails retryable AI errors after preserving local artifacts',
@@ -4857,6 +5110,8 @@ void main() {
       expect(trace?.contextSummary, contains('sourceFiltered=1'));
       expect(trace?.rawResponse, contains('hallucinated'));
       expect(trace?.rawResponsePreview, contains('hallucinated'));
+      expect(trace?.systemPrompt, contains('用户关怀'));
+      expect(trace?.systemPrompt, contains('危机安全'));
     });
 
     test('companion answer records multi step research evidence', () async {
@@ -6889,6 +7144,53 @@ void main() {
           contains('period_summary:month:2026-07'));
     });
 
+    test('period summaries include historical period references', () async {
+      SharedPreferences.setMockInitialValues({});
+      const periodRepository = PeriodSummaryRepository();
+      final client = _PeriodSummaryAiClientService();
+      await periodRepository.saveSummary(_periodSummaryForTest(
+        id: PeriodSummaryRepository.monthId(DateTime(2026, 6)),
+        type: PeriodSummaryType.month,
+        start: DateTime(2026, 6),
+        brief: '六月还在被动承受压力。',
+        notableChanges: const ['压力处理还比较被动'],
+      ));
+      await periodRepository.saveSummary(_periodSummaryForTest(
+        id: PeriodSummaryRepository.monthId(DateTime(2025, 7)),
+        type: PeriodSummaryType.month,
+        start: DateTime(2025, 7),
+        brief: '去年七月开始尝试散步恢复。',
+        growthHighlights: const ['第一次把散步作为恢复方式'],
+      ));
+      await periodRepository.saveSummary(_periodSummaryForTest(
+        id: PeriodSummaryRepository.yearId(2025),
+        type: PeriodSummaryType.year,
+        start: DateTime(2025),
+        brief: '2025 年主要在学习建立恢复节奏。',
+        growthHighlights: const ['开始主动寻找恢复方法'],
+      ));
+      final entry = _entry(
+        id: 'historical-period-entry',
+        date: DateTime(2026, 7, 6),
+        content: '今年七月继续散步，也更能提前识别压力。',
+      );
+
+      await PeriodSummaryService(client: client)
+          .buildMonthSummary(DateTime(2026, 7), [entry]);
+
+      expect(client.lastSystemPrompt, contains('用户关怀'));
+      expect(client.lastSystemPrompt, contains('安全'));
+      expect(client.lastUserPrompt, contains('历史周期参考'));
+      expect(client.lastUserPrompt, contains('六月还在被动承受压力'));
+      expect(client.lastUserPrompt, contains('去年七月开始尝试散步恢复'));
+
+      await PeriodSummaryService(client: client)
+          .buildYearSummary(2026, [entry]);
+
+      expect(client.lastUserPrompt, contains('历史周期参考'));
+      expect(client.lastUserPrompt, contains('2025 年主要在学习建立恢复节奏'));
+    });
+
     test('period summary stores context source lines for developer tracing',
         () async {
       SharedPreferences.setMockInitialValues({});
@@ -8879,6 +9181,36 @@ EntrySummary _summaryForTest({
   );
 }
 
+PeriodSummary _periodSummaryForTest({
+  required String id,
+  required PeriodSummaryType type,
+  required DateTime start,
+  required String brief,
+  List<String> growthHighlights = const [],
+  List<String> notableChanges = const [],
+}) {
+  final end = type == PeriodSummaryType.month
+      ? DateTime(start.year, start.month + 1, 0, 23, 59, 59)
+      : DateTime(start.year, 12, 31, 23, 59, 59);
+  return PeriodSummary(
+    id: id,
+    type: type,
+    startDate: start,
+    endDate: end,
+    generatedAt: end,
+    entryCount: 3,
+    brief: brief,
+    themes: const ['恢复'],
+    emotions: const ['平稳'],
+    representativeEntryIds: const [],
+    generator: type == PeriodSummaryType.month
+        ? 'ai-month-summary-v1'
+        : 'ai-year-summary-v1',
+    growthHighlights: growthHighlights,
+    notableChanges: notableChanges,
+  );
+}
+
 String _entryEmbeddingTextForTest(DiaryEntry entry, EntrySummary summary) {
   return '${summary.brief}\n${entry.bodyPreview}';
 }
@@ -9012,6 +9344,14 @@ class _ThrowingDiaryAnalysisService extends DiaryAnalysisService {
   Future<DiaryInsight> analyzeEntry(DiaryEntry entry) async {
     throw StateError('simulated insight failure');
   }
+}
+
+class _HangingDiaryAnalysisService extends DiaryAnalysisService {
+  const _HangingDiaryAnalysisService();
+
+  @override
+  Future<DiaryInsight> analyzeEntry(DiaryEntry entry) =>
+      Completer<DiaryInsight>().future;
 }
 
 class _RetryableAiErrorAnalysisService extends DiaryAnalysisService {

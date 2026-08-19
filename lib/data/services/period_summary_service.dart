@@ -166,10 +166,14 @@ class PeriodSummaryService {
     required AiContextPackage context,
   }) async {
     final systemPrompt =
-        '你是拾年的周期总结助手。你必须基于当期日记摘要和代表性来源生成阶段回望，再谨慎参考用户画像、关系档案、相关记忆和成长线索，帮助用户看见生活脉络、情绪潮汐、关系温度和真实变化；不做统计报表式堆砌，不制造任务压力，不虚构事实。输出必须是 JSON。';
+        '你是拾年的周期总结助手。你必须基于当期日记摘要和代表性来源生成阶段回望，再谨慎参考以“我”为中心的用户画像、历史周期总结、关系档案、相关记忆和成长线索。你可以借鉴心理学、社会学和发展研究中的成熟观察维度，但必须由当期材料和用户处境决定采用哪些维度；不能固定套模板、做诊断、贴标签或虚构事实。若当期材料出现轻生、自伤、极端绝望、被伤害或可能伤害他人的信号，用户关怀优先于成长总结：不要把痛苦包装成成长，先提示现实支持和安全资源。输出必须是 JSON。';
     final monthlySummaries = type == PeriodSummaryType.year
         ? await _monthSummariesForYear(start.year)
         : const <PeriodSummary>[];
+    final historicalSummaries = await _historicalSummariesForPeriod(
+      type: type,
+      start: start,
+    );
     final userPrompt = _buildPrompt(
       type: type,
       start: start,
@@ -177,6 +181,7 @@ class PeriodSummaryService {
       entries: entries,
       context: context,
       monthlySummaries: monthlySummaries,
+      historicalSummaries: historicalSummaries,
     );
     await _savePromptTrace(
       id: id,
@@ -208,6 +213,7 @@ class PeriodSummaryService {
       entries: entries,
       context: context,
       monthlySummaries: monthlySummaries,
+      historicalSummaries: historicalSummaries,
       json: decoded,
     );
   }
@@ -345,6 +351,7 @@ class PeriodSummaryService {
     required List<DiaryEntry> entries,
     required AiContextPackage context,
     required List<PeriodSummary> monthlySummaries,
+    required List<PeriodSummary> historicalSummaries,
     required Map<String, dynamic> json,
   }) {
     final brief = _stringValue(json['brief']).trim();
@@ -379,6 +386,7 @@ class PeriodSummaryService {
       contextDebugSummary: context.debugSummary,
       contextSourceLines: [
         ..._monthlySummarySourceLines(monthlySummaries),
+        ..._historicalSummarySourceLines(historicalSummaries),
         ..._periodContextSourceLines(context),
       ],
     );
@@ -391,6 +399,7 @@ class PeriodSummaryService {
     required List<DiaryEntry> entries,
     required AiContextPackage context,
     required List<PeriodSummary> monthlySummaries,
+    required List<PeriodSummary> historicalSummaries,
   }) {
     final isYear = type == PeriodSummaryType.year;
     final label = isYear ? '${start.year}年' : '${start.year}年${start.month}月';
@@ -415,6 +424,9 @@ class PeriodSummaryService {
 ${isYear ? _yearInstruction() : _monthInstruction()}
 
 ${isYear ? '已生成月度总结：\n${_monthlySummaryPromptLines(monthlySummaries)}' : ''}
+
+历史周期参考：
+${_historicalSummaryPromptLines(historicalSummaries)}
 
 当期日记摘要：
 ${context.periodSummaries.isEmpty ? _rawEntryLines(entries) : context.periodSummaries.map(_periodSummaryLine).join('\n')}
@@ -441,10 +453,15 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
 4. representative_entry_ids 只能使用“当期原始日记索引”里的 entry id；
 5. 月度总结关注具体事件、情绪波动、关系互动、重复模式和下月可自然延续的小线索；
 6. 年度总结关注阶段性主线、转折点、跨月变化、反复出现的模式、力量来源、模式陷阱和突破时刻，不要逐月流水账；
-7. 年度总结可以参考已生成月度总结，但仍要结合代表性日记摘要，避免把月报中的错误逐层放大；
-8. 成长相关结论必须来自来源，不要把普通状态写成励志口号；
-9. 不要输出成长评分、完成率、打卡、任务催促或“你应该”；
-10. 不要编造没有出现过的人、地点、事件、节日或趋势。''';
+7. 历史周期参考用于判断“和以前相比有什么变化”，但不能替代当期事实；没有历史证据时不要硬写成长；
+8. 先判断当期材料里用户真实关注的目标、资源、限制、偏好、关系和负荷，再选择合适观察维度；不要固定套用职业、健康、关系、效率等栏目；
+9. 可以使用情绪调节、压力应对、动机价值、关系边界、角色处境、行为模式和生命阶段变化等成熟观察维度来组织总结，但不要做心理诊断或学术化说教；
+10. 年度总结可以参考已生成月度总结，但仍要结合代表性日记摘要，避免把月报中的错误逐层放大；
+11. 成长相关结论必须来自来源，不要把普通状态写成励志口号；
+12. 输出前做适配检查：建议是否有证据、是否贴合用户处境、是否可选择、是否会增加压力；不适配或证据不足时宁可不写；
+13. 如果当期材料出现轻生、自伤、极端绝望、被伤害或可能伤害他人的信号，优先写承受、支持和安全；不要写成成长成绩，也不要输出任务式建议；
+14. 不要输出成长评分、完成率、打卡、任务催促或“你应该”；
+15. 不要编造没有出现过的人、地点、事件、节日或趋势。''';
   }
 
   String _monthInstruction() =>
@@ -462,6 +479,52 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
         .toList()
       ..sort((a, b) => a.startDate.compareTo(b.startDate));
     return months;
+  }
+
+  Future<List<PeriodSummary>> _historicalSummariesForPeriod({
+    required PeriodSummaryType type,
+    required DateTime start,
+  }) async {
+    final all = await _periodSummaryRepository.listSummaries();
+    final currentId = type == PeriodSummaryType.month
+        ? PeriodSummaryRepository.monthId(start)
+        : PeriodSummaryRepository.yearId(start.year);
+    final selected = <String, PeriodSummary>{};
+
+    void add(Iterable<PeriodSummary> summaries) {
+      for (final summary in summaries) {
+        if (summary.id == currentId) continue;
+        selected.putIfAbsent(summary.id, () => summary);
+      }
+    }
+
+    if (type == PeriodSummaryType.month) {
+      final previousMonth = DateTime(start.year, start.month - 1);
+      add(all.where((summary) =>
+          summary.id == PeriodSummaryRepository.monthId(previousMonth)));
+      final priorMonths = all
+          .where((summary) =>
+              summary.type == PeriodSummaryType.month &&
+              summary.startDate.isBefore(start))
+          .toList()
+        ..sort((a, b) => b.startDate.compareTo(a.startDate));
+      add(priorMonths.take(3));
+      add(priorMonths
+          .where((summary) => summary.startDate.month == start.month)
+          .take(5));
+    } else {
+      final priorYears = all
+          .where((summary) =>
+              summary.type == PeriodSummaryType.year &&
+              summary.startDate.year < start.year)
+          .toList()
+        ..sort((a, b) => b.startDate.compareTo(a.startDate));
+      add(priorYears.take(5));
+    }
+
+    final result = selected.values.toList()
+      ..sort((a, b) => a.startDate.compareTo(b.startDate));
+    return result;
   }
 
   String _monthlySummaryPromptLines(List<PeriodSummary> summaries) {
@@ -483,6 +546,28 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
     }).join('\n');
   }
 
+  String _historicalSummaryPromptLines(List<PeriodSummary> summaries) {
+    if (summaries.isEmpty) {
+      return '无。只总结当期材料，不要假设长期变化。';
+    }
+    return summaries.map((summary) {
+      final label = summary.type == PeriodSummaryType.month
+          ? '${summary.startDate.year}-${summary.startDate.month.toString().padLeft(2, '0')}'
+          : '${summary.startDate.year}';
+      return [
+        '- ${formatAiSourceId('period_summary', summary.id)}',
+        label,
+        summary.brief,
+        if (summary.growthHighlights.isNotEmpty)
+          'growth=${summary.growthHighlights.take(3).join('；')}',
+        if (summary.notableChanges.isNotEmpty)
+          'changes=${summary.notableChanges.take(3).join('；')}',
+        if (summary.themes.isNotEmpty)
+          'themes=${summary.themes.take(5).join('、')}',
+      ].where((value) => value.trim().isNotEmpty).join(' | ');
+    }).join('\n');
+  }
+
   List<String> _monthlySummarySourceLines(List<PeriodSummary> summaries) {
     return summaries
         .map((summary) => [
@@ -491,6 +576,19 @@ ${context.stoneTasks.isEmpty ? '无' : context.stoneTasks.map(_stoneLine).join('
               summary.brief,
               if (summary.generator.isNotEmpty)
                 'generator=${summary.generator}',
+            ].join(' | '))
+        .toList(growable: false);
+  }
+
+  List<String> _historicalSummarySourceLines(List<PeriodSummary> summaries) {
+    return summaries
+        .map((summary) => [
+              formatAiSourceId('period_summary', summary.id),
+              summary.type == PeriodSummaryType.month
+                  ? 'history_month'
+                  : 'history_year',
+              '${summary.startDate.year}-${summary.startDate.month.toString().padLeft(2, '0')}',
+              summary.brief,
             ].join(' | '))
         .toList(growable: false);
   }

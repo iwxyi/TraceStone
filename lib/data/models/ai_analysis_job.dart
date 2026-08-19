@@ -68,8 +68,9 @@ class AiAnalysisJob {
 
   bool get canRun =>
       state == AiAnalysisJobState.pending ||
-      state == AiAnalysisJobState.incomplete ||
-      (state == AiAnalysisJobState.failed && retryCount < 3);
+      state == AiAnalysisJobState.incomplete;
+
+  bool get canRetry => state == AiAnalysisJobState.failed && retryCount < 3;
 
   String get stageLabel {
     if (type == AiAnalysisJobType.embeddingRebuild) {

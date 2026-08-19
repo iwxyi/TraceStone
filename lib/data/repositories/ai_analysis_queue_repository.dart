@@ -23,7 +23,7 @@ class AiAnalysisQueueRepository {
   static const _indexKey = 'ai.analysis.jobs.index';
   static const _pausedKey = 'ai.analysis.jobs.paused';
   static const _prefix = 'ai.analysis.jobs.';
-  static const _staleRunningAge = Duration(minutes: 10);
+  static const _staleRunningAge = Duration(minutes: 2);
 
   final DiaryRepository _diaryRepository;
   final EntrySummaryRepository _summaryRepository;
@@ -157,26 +157,29 @@ class AiAnalysisQueueRepository {
     int? pipelineVersion,
     String? batchId,
     String? batchLabel,
+    bool includeMonthSummaries = true,
   }) async {
     final targetPipelineVersion =
         pipelineVersion ?? DateTime.now().microsecondsSinceEpoch;
     final monthBatchId = batchId ?? 'period:$year';
     final monthBatchLabel =
         batchLabel ?? '年度总结前置月度总结 ${_dateTimeLabel(DateTime.now())}';
-    final entries = await _diaryRepository.listEntries();
-    final monthsWithEntries = entries
-        .where((entry) => entry.date.year == year)
-        .map((entry) => entry.date.month)
-        .toSet()
-        .toList()
-      ..sort();
-    for (final month in monthsWithEntries) {
-      await enqueueMonthSummary(
-        DateTime(year, month),
-        pipelineVersion: targetPipelineVersion,
-        batchId: monthBatchId,
-        batchLabel: monthBatchLabel,
-      );
+    if (includeMonthSummaries) {
+      final entries = await _diaryRepository.listEntries();
+      final monthsWithEntries = entries
+          .where((entry) => entry.date.year == year)
+          .map((entry) => entry.date.month)
+          .toSet()
+          .toList()
+        ..sort();
+      for (final month in monthsWithEntries) {
+        await enqueueMonthSummary(
+          DateTime(year, month),
+          pipelineVersion: targetPipelineVersion,
+          batchId: monthBatchId,
+          batchLabel: monthBatchLabel,
+        );
+      }
     }
     return _enqueuePeriodSummary(
       id: PeriodSummaryRepository.yearId(year),
@@ -323,14 +326,15 @@ class AiAnalysisQueueRepository {
     final summaryReady = summary != null &&
         summary.entryUpdatedAt.isAtSameMomentAs(entry.updatedAt);
     if (summaryReady) return false;
-    if (existing != null &&
-        (existing.state == AiAnalysisJobState.pending ||
-            existing.state == AiAnalysisJobState.running ||
-            existing.state == AiAnalysisJobState.incomplete ||
-            existing.state == AiAnalysisJobState.failed)) {
+    if (existing == null) return true;
+
+    // A dependency sweep must never reset work already tracked for this entry.
+    // A completed job with missing artifacts is the exception: it must be
+    // rebuilt so a period summary cannot wait forever on a false completion.
+    if (existing.pipelineVersion != entry.updatedAt.microsecondsSinceEpoch) {
       return true;
     }
-    return true;
+    return existing.state == AiAnalysisJobState.completed;
   }
 
   Future<void> saveJob(AiAnalysisJob job) async {
@@ -497,17 +501,17 @@ class AiAnalysisQueueRepository {
       if (job.state != AiAnalysisJobState.running) continue;
       if (now.difference(job.updatedAt) < _staleRunningAge) continue;
       await saveJob(job.copyWith(
-        state: AiAnalysisJobState.incomplete,
+        state: AiAnalysisJobState.failed,
         updatedAt: now,
-        lastError: '上次整理被中断，已等待继续',
+        lastError: '上次整理异常中断，需手动重试',
         stageLogs: _appendStageLog(
           job.stageLogs,
           AiAnalysisStageLog(
             stage: job.currentStage,
             startedAt: now,
-            message: '上次整理被系统中断',
+            message: '上次整理异常中断',
             inputSummary: 'entryId=${job.entryId}',
-            outputSummary: 'state=running -> incomplete',
+            outputSummary: 'state=running -> failed',
             error: '超过 ${_staleRunningAge.inMinutes} 分钟未更新',
             retryCount: job.retryCount,
           ),
@@ -565,22 +569,40 @@ class AiAnalysisQueueRepository {
           in jobs.where((job) => job.type == AiAnalysisJobType.monthSummary))
         job.targetId: job,
     };
+    final diaryJobs = <String, AiAnalysisJob>{
+      for (final job
+          in jobs.where((job) => job.type == AiAnalysisJobType.diary))
+        job.entryId: job,
+    };
     for (final job in jobs) {
       if (!job.canRun && job.state != AiAnalysisJobState.running) continue;
       if (job.type == AiAnalysisJobType.monthSummary) {
         final month = _monthFromId(job.targetId);
         if (month == null) continue;
         var blockedEntries = 0;
+        final failedEntries = <AiAnalysisJob>[];
         for (final entry in entries.values.where((entry) =>
             entry.date.year == month.year && entry.date.month == month.month)) {
           final summary = await _summaryRepository.getSummary(entry.id);
           if (summary == null ||
               !summary.entryUpdatedAt.isAtSameMomentAs(entry.updatedAt)) {
             blockedEntries++;
+            final diaryJob = diaryJobs[entry.id];
+            if (diaryJob?.state == AiAnalysisJobState.failed) {
+              failedEntries.add(diaryJob!);
+            }
           }
         }
         if (blockedEntries > 0) {
-          reasons[job.id] = '等待 $blockedEntries 篇日记整理完成';
+          if (failedEntries.isNotEmpty) {
+            final details = failedEntries.take(2).map((failedJob) {
+              final error = failedJob.lastError?.trim();
+              return '${failedJob.entryId}${error == null || error.isEmpty ? '' : ': $error'}';
+            }).join('；');
+            reasons[job.id] = '有 ${failedEntries.length} 篇日记整理失败，需先重试：$details';
+          } else {
+            reasons[job.id] = '等待 $blockedEntries 篇日记整理完成';
+          }
         }
       } else if (job.type == AiAnalysisJobType.yearSummary) {
         final year = _yearFromId(job.targetId);

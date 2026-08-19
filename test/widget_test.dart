@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trace_stone/app/trace_stone_app.dart';
+import 'package:trace_stone/core/errors/app_error_reporter.dart';
 import 'package:trace_stone/core/routing/app_routes.dart';
+import 'package:trace_stone/core/widgets/app_error_overlay.dart';
 import 'package:trace_stone/data/models/ai_analysis_job.dart';
 import 'package:trace_stone/data/models/ai_embedding.dart';
 import 'package:trace_stone/data/models/ai_feedback.dart';
@@ -58,12 +60,34 @@ import 'package:trace_stone/features/settings/presentation/calendar_memory_page.
 import 'package:trace_stone/features/settings/presentation/custom_ai_page.dart';
 import 'package:trace_stone/features/settings/presentation/diary_lock_page.dart';
 import 'package:trace_stone/features/settings/presentation/ai_debug_page.dart';
+import 'package:trace_stone/features/settings/presentation/ai_task_queue_page.dart';
 import 'package:trace_stone/features/settings/presentation/memory_management_page.dart';
 import 'package:trace_stone/features/settings/presentation/recycle_bin_page.dart';
 import 'package:trace_stone/features/search/presentation/search_page.dart';
 import 'package:trace_stone/features/shaping_stone/presentation/shaping_stone_page.dart';
 
 void main() {
+  testWidgets('shows a copyable diagnostic for uncaught errors',
+      (tester) async {
+    AppErrorReporter.clear();
+    await tester.pumpWidget(const MaterialApp(
+      home: AppErrorOverlay(child: SizedBox.shrink()),
+    ));
+
+    AppErrorReporter.report(
+      StateError('unexpected queue state'),
+      StackTrace.fromString('test stack trace'),
+      source: 'test',
+    );
+    await tester.pump();
+
+    expect(find.textContaining('发生未处理错误'), findsOneWidget);
+    final report = AppErrorReporter.latest.value;
+    expect(report?.diagnosticText, contains('test stack trace'));
+
+    AppErrorReporter.clear();
+  });
+
   testWidgets('shows simplified main tabs', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(const TraceStoneApp());
@@ -720,7 +744,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('记忆整理已暂停'), findsOneWidget);
-    expect(find.textContaining('正在整理 1/3 篇'), findsOneWidget);
+    expect(find.textContaining('已完成 0/3 篇'), findsOneWidget);
     expect(find.textContaining('已完成 2/7 个阶段'), findsOneWidget);
     expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
   });
@@ -780,6 +804,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('记忆整理等待继续'), findsOneWidget);
+    expect(find.text('总结 1'), findsOneWidget);
     expect(find.textContaining('等待 1 篇日记整理完成'), findsWidgets);
     expect(find.widgetWithText(TextButton, '继续'), findsOneWidget);
     expect(find.widgetWithText(TextButton, '暂停'), findsNothing);
@@ -832,6 +857,158 @@ void main() {
     expect(retried?.retryCount, 0);
     expect(retried?.state, isNot(AiAnalysisJobState.failed));
     expect(retried?.lastError, isNot(contains('500')));
+  });
+
+  testWidgets('today page shows pending period summary count', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime.now();
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'today-pending-summary-entry',
+      date: date,
+      createdAt: date,
+      updatedAt: date,
+      content: '今天写了一篇还没有进入周期总结的日记。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 篇日记待总结'), findsOneWidget);
+    expect(find.text('1 个月 · 1 年'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '立即总结'), findsOneWidget);
+  });
+
+  testWidgets('today page offers to update existing period summaries',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final date = DateTime.now();
+    final entry = DiaryEntry(
+      id: 'today-update-summary-entry',
+      date: date,
+      createdAt: date,
+      updatedAt: date,
+      content: '今天补充了一篇会影响已有周期总结的日记。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    );
+    await const DiaryRepository().saveEntry(entry);
+    const periodRepository = PeriodSummaryRepository();
+    final monthId = PeriodSummaryRepository.monthId(date);
+    final yearId = PeriodSummaryRepository.yearId(date.year);
+    await periodRepository.saveSummary(_widgetPeriodSummary(
+      id: monthId,
+      type: PeriodSummaryType.month,
+      start: DateTime(date.year, date.month),
+      coveredEntryIds: const ['old-month-entry'],
+    ));
+    await periodRepository.saveSummary(_widgetPeriodSummary(
+      id: yearId,
+      type: PeriodSummaryType.year,
+      start: DateTime(date.year),
+      coveredEntryIds: const ['old-year-entry'],
+    ));
+    for (final id in [monthId, yearId]) {
+      await periodRepository.saveStatus(PeriodSummaryStatus(
+        id: id,
+        state: PeriodSummaryState.completed,
+        updatedAt: date,
+        needsUpdate: true,
+        changedEntryIds: [entry.id],
+        baseEntryCount: 1,
+        currentEntryCount: 2,
+      ));
+    }
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 篇日记待更新总结'), findsOneWidget);
+    expect(find.text('1 个月 · 1 年'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '立即更新总结'), findsOneWidget);
+  });
+
+  testWidgets('today page shows month and year rhythm card', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final now = DateTime.now();
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'today-progress-entry',
+      date: now,
+      createdAt: now,
+      updatedAt: now,
+      content: '今天留下了一点记录。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('时光刻度'), findsOneWidget);
+    expect(find.text('本月'), findsOneWidget);
+    expect(find.text('今年'), findsOneWidget);
+    expect(find.text('1 天 · 1 篇'), findsWidgets);
+  });
+
+  testWidgets('today page shows every entry with an optional title',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final now = DateTime.now();
+    const repository = DiaryRepository();
+    await repository.saveEntry(DiaryEntry(
+      id: 'today-titled-entry',
+      date: now,
+      createdAt: now,
+      updatedAt: now,
+      content: '# 晨间片段\n有标题日记的内容。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
+    await repository.saveEntry(DiaryEntry(
+      id: 'today-untitled-entry',
+      date: now,
+      createdAt: now,
+      updatedAt: now,
+      content: '没有标题日记的内容。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('晨间片段'), findsOneWidget);
+    expect(find.text('有标题日记的内容。'), findsOneWidget);
+    expect(find.text('没有标题日记的内容。'), findsOneWidget);
+  });
+
+  testWidgets('today page shows echoes from nearby past dates', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final now = DateTime.now();
+    final oldDate = DateTime(now.year - 1, now.month, now.day);
+    await const DiaryRepository().saveEntry(DiaryEntry(
+      id: 'today-echo-old-entry',
+      date: oldDate,
+      createdAt: oldDate,
+      updatedAt: oldDate,
+      content: '# 去年的今天\n那天也写下了一个小片段。',
+      location: '未选择地点',
+      weather: '晴',
+      temperature: '26',
+    ));
+
+    await tester.pumpWidget(const MaterialApp(home: TodayPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('今日回声'), findsOneWidget);
+    expect(find.text('1 年前今日'), findsOneWidget);
+    expect(find.text('去年的今天'), findsOneWidget);
   });
 
   testWidgets('profile page exposes AI assets and task queue', (tester) async {
@@ -1081,10 +1258,7 @@ void main() {
       updatedAt: now,
     ));
 
-    await tester.pumpWidget(const TraceStoneApp());
-    await tester.tap(find.text('我'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('AI 整理进度'));
+    await tester.pumpWidget(const MaterialApp(home: AiTaskQueuePage()));
     await tester.pumpAndSettle();
 
     expect(find.text('AI 整理队列'), findsOneWidget);
@@ -1119,6 +1293,42 @@ void main() {
     await tester.drag(find.byType(ListView), const Offset(0, -240));
     await tester.pumpAndSettle();
     expect(find.textContaining('年报 · 等待生成周期总结'), findsOneWidget);
+  });
+
+  testWidgets('AI task queue continue processes a serial batch',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({'ai.analysis.jobs.paused': true});
+    const diaryRepository = DiaryRepository();
+    const queueRepository = AiAnalysisQueueRepository();
+    final now = DateTime(2026, 7, 10);
+    for (var index = 0; index < 12; index++) {
+      final entry = DiaryEntry(
+        id: 'queue-continue-$index',
+        date: now,
+        createdAt: now,
+        updatedAt: now,
+        content: '第 ${index + 1} 篇队列日记。',
+        location: '未选择地点',
+        weather: '晴',
+        temperature: '26',
+      );
+      await diaryRepository.saveEntry(entry);
+      await queueRepository.enqueueEmbeddingRebuildEntry(entry);
+    }
+
+    await tester.pumpWidget(const MaterialApp(home: AiTaskQueuePage()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('继续整理'));
+    await tester.pumpAndSettle();
+
+    final jobs = await queueRepository.listJobs();
+    expect(
+      jobs
+          .where((job) => job.type == AiAnalysisJobType.embeddingRebuild)
+          .where((job) => job.state == AiAnalysisJobState.completed),
+      hasLength(12),
+    );
   });
 
   testWidgets('AI task queue page queues full embedding rebuild',
@@ -4076,6 +4286,33 @@ Future<void> _seedSearchEntry() async {
       ),
     ],
   ));
+}
+
+PeriodSummary _widgetPeriodSummary({
+  required String id,
+  required PeriodSummaryType type,
+  required DateTime start,
+  List<String> coveredEntryIds = const [],
+}) {
+  final end = type == PeriodSummaryType.month
+      ? DateTime(start.year, start.month + 1, 0, 23, 59, 59)
+      : DateTime(start.year, 12, 31, 23, 59, 59);
+  return PeriodSummary(
+    id: id,
+    type: type,
+    startDate: start,
+    endDate: end,
+    generatedAt: end,
+    entryCount: coveredEntryIds.length,
+    brief: '已有周期总结',
+    themes: const ['记录'],
+    emotions: const [],
+    representativeEntryIds: const [],
+    generator: type == PeriodSummaryType.month
+        ? 'ai-month-summary-v1'
+        : 'ai-year-summary-v1',
+    coveredEntryIds: coveredEntryIds,
+  );
 }
 
 class _FakeAppLockSecureStore implements AppLockSecureStore {

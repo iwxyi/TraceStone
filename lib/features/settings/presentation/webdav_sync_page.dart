@@ -1020,8 +1020,8 @@ class _RestorePreviewItem {
     required this.entry,
     required this.type,
     this.detail,
-    this.localEntry,
-  }) : invalidFile = null;
+  })  : localEntry = null,
+        invalidFile = null;
 
   const _RestorePreviewItem.update({
     required DiaryEntry remote,

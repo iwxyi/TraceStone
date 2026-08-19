@@ -1,4 +1,5 @@
 import '../models/ai_embedding.dart';
+import '../../core/errors/app_error_reporter.dart';
 import '../models/ai_analysis_job.dart';
 import '../models/diary_analysis_status.dart';
 import '../models/diary_entry.dart';
@@ -36,6 +37,7 @@ class AiAnalysisQueueRunner {
     PeriodSummaryRepository? periodSummaryRepository,
     PeriodSummaryService? periodSummaryService,
     AiUserProfileService? userProfileService,
+    Duration? insightStageTimeout,
   })  : _queueRepository = queueRepository ?? const AiAnalysisQueueRepository(),
         _embeddingRepository =
             embeddingRepository ?? const AiEmbeddingRepository(),
@@ -55,20 +57,32 @@ class AiAnalysisQueueRunner {
         _periodSummaryService =
             periodSummaryService ?? const PeriodSummaryService(),
         _userProfileService =
-            userProfileService ?? const AiUserProfileService();
+            userProfileService ?? const AiUserProfileService(),
+        _insightStageTimeout =
+            insightStageTimeout ?? _defaultInsightStageTimeout;
 
-  static bool _isRunning = false;
+  static Future<void>? _activeRun;
+  static DateTime? _activeRunStartedAt;
+  static const _orphanedRunAge = Duration(seconds: 15);
+  static const _defaultInsightStageTimeout = Duration(minutes: 2);
 
-  static bool get isRunning => _isRunning;
+  static bool get isRunning => _activeRun != null;
+
+  static String get debugRunState {
+    final startedAt = _activeRunStartedAt;
+    if (_activeRun == null || startedAt == null) return 'idle';
+    return 'active startedAt=${startedAt.toIso8601String()} '
+        'elapsed=${DateTime.now().difference(startedAt).inSeconds}s';
+  }
 
   static Future<void> waitUntilIdle({
     Duration timeout = const Duration(seconds: 30),
   }) async {
     final deadline = DateTime.now().add(timeout);
-    while (_isRunning && DateTime.now().isBefore(deadline)) {
+    while (isRunning && DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 80));
     }
-    if (_isRunning) {
+    if (isRunning) {
       throw StateError('后台 AI 任务仍在运行，无法安全恢复数据');
     }
   }
@@ -86,6 +100,7 @@ class AiAnalysisQueueRunner {
   final PeriodSummaryRepository _periodSummaryRepository;
   final PeriodSummaryService _periodSummaryService;
   final AiUserProfileService _userProfileService;
+  final Duration _insightStageTimeout;
 
   Future<void> enqueue(DiaryEntry entry, {bool start = true}) async {
     if (entry.content.trim().isEmpty) return;
@@ -191,29 +206,72 @@ class AiAnalysisQueueRunner {
   }
 
   Future<void> processNext() async {
-    if (_isRunning) return;
-    _isRunning = true;
-    try {
-      await _syncInterruptedStatuses();
-      await _queueRepository.enqueueMissingPeriodDependencies();
-      final job = await _queueRepository.nextRunnableJob();
-      if (job == null) return;
-      await _runJob(job);
-    } finally {
-      _isRunning = false;
+    await _runExclusively(maxJobs: 1);
+  }
+
+  Future<void> processUntilIdle({int? maxJobs}) async {
+    await _runExclusively(maxJobs: maxJobs);
+  }
+
+  Future<void> _runExclusively({required int? maxJobs}) async {
+    while (true) {
+      final activeRun = _activeRun;
+      if (activeRun != null) {
+        final startedAt = _activeRunStartedAt;
+        final hasRunLongEnoughToVerify = startedAt == null ||
+            DateTime.now().difference(startedAt) >= _orphanedRunAge;
+        if (hasRunLongEnoughToVerify) {
+          final snapshot = await _queueRepository.snapshot();
+          final hasPersistedRunningJob = snapshot.jobs
+              .any((job) => job.state == AiAnalysisJobState.running);
+          if (!hasPersistedRunningJob && identical(_activeRun, activeRun)) {
+            throw StateError(
+              'AI 队列执行状态异常：内存执行器已运行超过 '
+              '${_orphanedRunAge.inSeconds} 秒，但没有任何持久化的运行中任务。'
+              '请复制开发者队列审计以便排查。',
+            );
+          }
+        }
+        await activeRun;
+        continue;
+      }
+
+      late final Future<void> run;
+      run = _drainQueue(maxJobs: maxJobs).whenComplete(() {
+        if (identical(_activeRun, run)) {
+          _activeRun = null;
+          _activeRunStartedAt = null;
+        }
+      });
+      _activeRun = run;
+      _activeRunStartedAt = DateTime.now();
+      await run;
+      return;
     }
   }
 
-  Future<void> processUntilIdle({int maxJobs = 1}) async {
+  Future<void> _drainQueue({required int? maxJobs}) async {
     await _syncInterruptedStatuses();
-    for (var index = 0; index < maxJobs; index++) {
+    for (var index = 0; maxJobs == null || index < maxJobs; index++) {
       await _queueRepository.enqueueMissingPeriodDependencies();
-      final current = await _queueRepository.nextRunnableJob();
-      if (current == null) break;
-      await processNext();
-      final next = await _queueRepository.nextRunnableJob();
-      if (next == null) break;
-      if (next.id == current.id) break;
+      final job = await _queueRepository.nextRunnableJob();
+      if (job == null) break;
+      try {
+        await _runJob(job);
+      } on Object catch (error, stackTrace) {
+        await _queueRepository.setPaused(true);
+        AppErrorReporter.report(error, stackTrace, source: 'AI analysis queue');
+        rethrow;
+      }
+      final updatedJob = await _queueRepository.getJob(job.id);
+      if (updatedJob?.canRun ?? false) {
+        final error = StateError(
+          '队列任务执行后未进入终态：${job.id}/'
+          '${updatedJob!.state.name}/${updatedJob.currentStage.name}',
+        );
+        await _queueRepository.setPaused(true);
+        throw error;
+      }
     }
   }
 
@@ -304,7 +362,8 @@ class AiAnalysisQueueRunner {
       return;
     }
     if (entry.updatedAt.microsecondsSinceEpoch != job.pipelineVersion) {
-      await _queueRepository.enqueueEntry(entry);
+      final refreshedJob = await _queueRepository.enqueueEntry(entry);
+      await _runJob(refreshedJob);
       return;
     }
     await _insightRepository.deleteForEntry(entry.id);
@@ -520,7 +579,26 @@ class AiAnalysisQueueRunner {
         inputSummary: 'entryId=${entry.id} summary=${summary.brief}',
         clearLastError: true,
       );
-      final insight = await _analysisService.analyzeEntry(entry);
+      await _saveStage(
+        job,
+        state: AiAnalysisJobState.running,
+        stage: AiAnalysisStage.generatingInsight,
+        analysisState: DiaryAnalysisState.analyzing,
+        message: '调用 AI 生成今日分析',
+        retryCount: job.retryCount,
+        completedStages: completedStages,
+        inputSummary: 'entryId=${entry.id}',
+        outputSummary: 'request=starting',
+        clearLastError: true,
+      );
+      final insight = await _analysisService.analyzeEntry(entry).timeout(
+            _insightStageTimeout,
+            onTimeout: () => throw StateError(
+              '今日分析阶段超时（${_insightStageTimeout.inMinutes} 分钟）：'
+              '可能卡在上下文构建、AI 请求或响应解析。'
+              '请复制 aiRequest 和阶段日志诊断。',
+            ),
+          );
       final trace = await _retrievalTraceRepository.getTrace(entry.id);
       await _saveStage(
         job,
@@ -583,10 +661,12 @@ class AiAnalysisQueueRunner {
       if (error.retryable) {
         await _handleUnexpectedStageError(job, error, now);
       } else {
-        await _deferJobForAi(job, error.message);
+        await _deferJobForAi(job, error);
       }
+      throw StateError('日记整理失败：${error.message}');
     } on Object catch (error) {
       await _handleUnexpectedStageError(job, error, now);
+      throw StateError('日记整理失败：$error');
     }
   }
 
@@ -682,6 +762,7 @@ class AiAnalysisQueueRunner {
       );
     } on Object catch (error) {
       await _failJob(job, '历史相似度重建失败：$error');
+      throw StateError('历史相似度重建失败：$error');
     }
   }
 
@@ -691,7 +772,7 @@ class AiAnalysisQueueRunner {
     final period = _periodFromJob(job);
     if (period == null) {
       await _failJob(job, '周期任务目标无效：${job.targetId}');
-      return;
+      throw StateError('周期任务目标无效：${job.targetId}');
     }
     await _savePeriodStage(
       job,
@@ -749,6 +830,7 @@ class AiAnalysisQueueRunner {
       );
     } on Object catch (error) {
       await _handlePeriodSummaryError(job, error, now);
+      throw StateError('周期总结失败：$error');
     }
   }
 
@@ -890,9 +972,7 @@ class AiAnalysisQueueRunner {
   ) async {
     final latest = await _queueRepository.getJob(job.id) ?? job;
     final nextRetry = latest.retryCount + 1;
-    final nextState = nextRetry < 3
-        ? AiAnalysisJobState.incomplete
-        : AiAnalysisJobState.failed;
+    const nextState = AiAnalysisJobState.failed;
     await _queueRepository.saveJob(latest.copyWith(
       state: nextState,
       updatedAt: now,
@@ -903,9 +983,7 @@ class AiAnalysisQueueRunner {
         AiAnalysisStageLog(
           stage: latest.currentStage,
           startedAt: DateTime.now(),
-          message: nextState == AiAnalysisJobState.incomplete
-              ? '周期总结中断，等待继续'
-              : '周期总结失败',
+          message: '周期总结失败',
           inputSummary: 'target=${job.targetId}',
           error: error.toString(),
           retryCount: nextRetry,
@@ -963,9 +1041,7 @@ class AiAnalysisQueueRunner {
     } on Object catch (error) {
       final latest = await _queueRepository.getJob(job.id) ?? job;
       final nextRetry = latest.retryCount + 1;
-      final nextState = nextRetry < 3
-          ? AiAnalysisJobState.incomplete
-          : AiAnalysisJobState.failed;
+      const nextState = AiAnalysisJobState.failed;
       await _queueRepository.saveJob(latest.copyWith(
         state: nextState,
         updatedAt: now,
@@ -976,15 +1052,14 @@ class AiAnalysisQueueRunner {
           AiAnalysisStageLog(
             stage: latest.currentStage,
             startedAt: DateTime.now(),
-            message: nextState == AiAnalysisJobState.incomplete
-                ? '用户画像生成中断，等待继续'
-                : '用户画像生成失败',
+            message: '用户画像生成失败',
             inputSummary: 'target=${job.targetId}',
             error: error.toString(),
             retryCount: nextRetry,
           ),
         ),
       ));
+      throw StateError('用户画像生成失败：$error');
     }
   }
 
@@ -1084,16 +1159,10 @@ class AiAnalysisQueueRunner {
         latest.segmentIds.isNotEmpty ||
         latest.embeddingIds.isNotEmpty ||
         (latest.retrievalTraceId?.isNotEmpty ?? false);
-    final shouldKeepRecoverable = hasRecoverableArtifacts && nextRetry < 3;
-    final nextState = shouldKeepRecoverable
-        ? AiAnalysisJobState.incomplete
-        : AiAnalysisJobState.failed;
-    final analysisState = shouldKeepRecoverable
-        ? DiaryAnalysisState.incomplete
-        : DiaryAnalysisState.failed;
-    final message = shouldKeepRecoverable ? '阶段被中断，等待继续' : '阶段失败';
-    final statusMessage =
-        shouldKeepRecoverable ? '已保留本地资料，下次将从未完成阶段继续' : error.toString();
+    const nextState = AiAnalysisJobState.failed;
+    const analysisState = DiaryAnalysisState.failed;
+    const message = '阶段失败';
+    final statusMessage = error.toString();
 
     await _queueRepository.saveJob(latest.copyWith(
       state: nextState,
@@ -1108,7 +1177,7 @@ class AiAnalysisQueueRunner {
           startedAt: DateTime.now(),
           message: message,
           inputSummary: 'entryId=${job.entryId}',
-          outputSummary: shouldKeepRecoverable
+          outputSummary: hasRecoverableArtifacts
               ? [
                   if (latest.completedStages.isNotEmpty)
                     'completed=${latest.completedStages.map((item) => item.name).join(',')}',
@@ -1133,32 +1202,35 @@ class AiAnalysisQueueRunner {
     ));
   }
 
-  Future<void> _deferJobForAi(AiAnalysisJob job, String message) async {
+  Future<void> _deferJobForAi(
+    AiAnalysisJob job,
+    AiClientException error,
+  ) async {
     final latest = await _queueRepository.getJob(job.id) ?? job;
     final now = DateTime.now();
     await _queueRepository.saveJob(latest.copyWith(
-      state: AiAnalysisJobState.incomplete,
+      state: AiAnalysisJobState.failed,
       currentStage: AiAnalysisStage.generatingInsight,
       updatedAt: now,
-      lastError: '等待 AI 可用：$message',
+      lastError: error.message,
       stageLogs: _appendStageLog(
         latest.stageLogs,
         AiAnalysisStageLog(
           stage: AiAnalysisStage.generatingInsight,
           startedAt: now,
-          message: '等待 AI 可用',
+          message: 'AI 配置或接口错误',
           inputSummary: 'entryId=${job.entryId}',
           outputSummary: '本地摘要、分段和向量已保留',
-          error: message,
+          error: error.message,
           retryCount: latest.retryCount,
         ),
       ),
     ));
     await _insightRepository.saveStatus(DiaryAnalysisStatus(
       entryId: job.entryId,
-      state: DiaryAnalysisState.incomplete,
+      state: DiaryAnalysisState.failed,
       updatedAt: now,
-      message: '本地资料已整理，等待 AI 可用后生成今日分析',
+      message: error.message,
     ));
   }
 

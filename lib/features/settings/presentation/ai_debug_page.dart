@@ -24,6 +24,7 @@ import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/memory_repository.dart';
 import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/ai_client_service.dart';
 import '../../../data/services/ai_artifact_rebuild_service.dart';
 import '../../../data/services/ai_data_inventory_service.dart';
 import '../../../data/services/ai_embedding_text_builder.dart';
@@ -67,15 +68,21 @@ class _AiDebugPageState extends State<AiDebugPage> {
 
   Future<void> _continueQueue() async {
     final messenger = ScaffoldMessenger.of(context);
-    await _queueRepository.setPaused(false);
-    final repaired = await _queueRepository.enqueueMissingPeriodDependencies();
-    await _queueRunner.processUntilIdle(maxJobs: 5);
-    _refresh();
-    if (!mounted) return;
-    final snapshot = await _queueRepository.snapshot();
-    messenger.showSnackBar(
-      SnackBar(content: Text(_continueResultLabel(repaired, snapshot))),
-    );
+    try {
+      await _queueRepository.setPaused(false);
+      final repaired =
+          await _queueRepository.enqueueMissingPeriodDependencies();
+      await _queueRunner.processUntilIdle();
+      _refresh();
+      if (!mounted) return;
+      final snapshot = await _queueRepository.snapshot();
+      messenger.showSnackBar(
+        SnackBar(content: Text(_continueResultLabel(repaired, snapshot))),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('队列执行失败：$error')));
+    }
   }
 
   String _continueResultLabel(
@@ -93,10 +100,17 @@ class _AiDebugPageState extends State<AiDebugPage> {
   }
 
   Future<void> _toggleQueuePaused(bool paused) async {
-    await _queueRepository.setPaused(paused);
-    if (!paused) {
-      await _queueRepository.enqueueMissingPeriodDependencies();
-      await _queueRunner.processUntilIdle(maxJobs: 5);
+    try {
+      await _queueRepository.setPaused(paused);
+      if (!paused) {
+        await _queueRepository.enqueueMissingPeriodDependencies();
+        await _queueRunner.processUntilIdle();
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('队列执行失败：$error')));
+      }
     }
     _refresh();
   }
@@ -727,11 +741,9 @@ class _QueueSummaryCard extends StatelessWidget {
     final incomplete = queue.jobs
         .where((job) => job.state == AiAnalysisJobState.incomplete)
         .length;
-    final retryableFailed = queue.jobs
-        .where((job) => job.state == AiAnalysisJobState.failed && job.canRun)
-        .length;
+    final retryableFailed = queue.jobs.where((job) => job.canRetry).length;
     final blockedFailed = queue.jobs
-        .where((job) => job.state == AiAnalysisJobState.failed && !job.canRun)
+        .where((job) => job.state == AiAnalysisJobState.failed && !job.canRetry)
         .length;
     final completed = queue.jobs
         .where((job) => job.state == AiAnalysisJobState.completed)
@@ -862,6 +874,8 @@ class _QueueSummaryCard extends StatelessWidget {
     final lines = <String>[
       '## AI Analysis Queue Audit',
       'paused=${queue.isPaused}',
+      'runner=${AiAnalysisQueueRunner.debugRunState}',
+      'aiRequest=${AiClientService.debugRequestState}',
       'jobs=${queue.jobs.length}',
       'runnable=${queue.runnableCount}',
       'waiting=${queue.waitingCount}',

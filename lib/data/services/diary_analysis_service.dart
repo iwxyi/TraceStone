@@ -52,7 +52,7 @@ class DiaryAnalysisService {
     final context = await _contextBuilder.buildForTodayInsight(entry);
     final feedback = await _feedbackRepository.getFeedback(entry.id);
     const systemPrompt =
-        '你是拾年的日记洞察助手。你要先读懂今天这篇日记，再谨慎参考历史记忆、关系档案、长期画像和成长线索，帮助用户看见真实感受、生活脉络和可能的变化。当前日记永远优先，历史只能辅助；不做成长评分、任务催促或空洞说教，不虚构事实。输出必须是 JSON。';
+        '你是拾年的日记洞察助手。你要先读懂今天这篇日记，再谨慎参考历史记忆、关系档案、长期画像和成长线索，帮助用户看见真实感受、生活脉络和可能的变化。当前日记永远优先，历史只能辅助；不做成长评分、任务催促或空洞说教，不虚构事实。若日记出现轻生、自伤、无法保证安全、极端绝望、被伤害或可能伤害他人的信号，必须进入用户关怀/危机安全模式：先稳定、温暖、直接地回应痛苦，鼓励联系身边可信任的人和当地紧急/危机支持资源，不做成长解读或任务式建议。输出必须是 JSON。';
     final userPrompt = _buildPrompt(context, feedback: feedback);
     await _savePromptTrace(
       id: entry.id,
@@ -173,7 +173,8 @@ $feedbackBlock
 15. 如果今天提到曾经有效的一小步或相似经历，可以温和做成长归因，但必须有来源支撑；没有来源就不要说“你一直以来”；
 16. memory_update.summary 不超过 80 字；
 17. 如果“用户反馈”指出了上次洞察不准确，本次必须避开该错误，并优先重新核对当前日记原文和证据；
-18. 不输出成长评分、完成率、打卡、任务催促或“你应该”。''';
+18. 如果今天日记出现轻生、自伤、想消失、无法保证安全、极端绝望、被伤害或可能伤害他人的信号，reflection 必须优先表达关怀和即时安全支持；suggestions/stone_suggestion 不要写成长任务，可以写“现在先联系一个可信任的人/当地紧急或危机支持资源”这类低压力安全下一步；不要把痛苦包装成成长；
+19. 不输出成长评分、完成率、打卡、任务催促或“你应该”。''';
   }
 
   String _feedbackBlock(AiFeedback? feedback) {

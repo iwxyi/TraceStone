@@ -817,7 +817,7 @@ class AiDataInventoryService {
         stageCounts.update(job.currentStage, (value) => value + 1,
             ifAbsent: () => 1);
         if (job.state == AiAnalysisJobState.failed) {
-          if (job.canRun) {
+          if (job.canRetry) {
             retryableFailed += 1;
           } else {
             blockedFailed += 1;

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/constants/app_constants.dart';
 import '../core/routing/app_route_observer.dart';
 import '../core/routing/app_routes.dart';
+import '../core/widgets/app_error_overlay.dart';
 import '../data/repositories/app_lock_repository.dart';
 import '../data/services/app_lock_authenticator.dart';
 import '../data/services/app_startup_service.dart';
@@ -74,11 +75,13 @@ class _TraceStoneAppState extends State<TraceStoneApp>
           navigatorObservers: [appRouteObserver],
           initialRoute: AppRoutes.home,
           builder: (context, child) {
-            return AppLockGate(
-              key: _lockGateKey,
-              repository: widget.appLockRepository,
-              authenticator: widget.appLockAuthenticator,
-              child: child ?? const SizedBox.shrink(),
+            return AppErrorOverlay(
+              child: AppLockGate(
+                key: _lockGateKey,
+                repository: widget.appLockRepository,
+                authenticator: widget.appLockAuthenticator,
+                child: child ?? const SizedBox.shrink(),
+              ),
             );
           },
         );

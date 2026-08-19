@@ -11,13 +11,16 @@ import '../../../data/models/ai_analysis_job.dart';
 import '../../../data/models/diary_analysis_status.dart';
 import '../../../data/models/diary_entry.dart';
 import '../../../data/models/diary_insight.dart';
+import '../../../data/models/period_summary.dart';
 import '../../../data/repositories/ai_analysis_queue_bus.dart';
 import '../../../data/repositories/ai_analysis_queue_repository.dart';
 import '../../../data/repositories/developer_settings_repository.dart';
 import '../../../data/repositories/diary_change_bus.dart';
 import '../../../data/repositories/diary_repository.dart';
 import '../../../data/repositories/insight_repository.dart';
+import '../../../data/repositories/period_summary_repository.dart';
 import '../../../data/services/ai_analysis_queue_runner.dart';
+import '../../../data/services/ai_client_service.dart';
 import '../../../data/services/location_weather_service.dart';
 import '../../ai_insight/presentation/ai_feedback_bar.dart';
 
@@ -31,21 +34,26 @@ class TodayPage extends StatefulWidget {
 }
 
 class _TodayPageState extends State<TodayPage> {
-  static const _homeQueueBatchSize = 5;
-
   final repository = const DiaryRepository();
   final insightRepository = const InsightRepository();
   final queueRepository = const AiAnalysisQueueRepository();
+  final periodSummaryRepository = const PeriodSummaryRepository();
   final queueRunner = const AiAnalysisQueueRunner();
   final locationWeatherService = const LocationWeatherService();
   late Future<List<DiaryEntry>> _entriesFuture =
       repository.getEntriesForDate(DateTime.now());
   late Future<AiAnalysisQueueSnapshot> _queueSnapshotFuture =
       queueRepository.snapshot();
+  late Future<_PendingSummaryData> _pendingSummaryFuture =
+      _loadPendingSummaryData();
+  late Future<_TodayProgressData> _todayProgressFuture =
+      _loadTodayProgressData();
+  late Future<List<_TodayEchoItem>> _todayEchoFuture = _loadTodayEchoes();
   late final Future<LocationWeather> _locationWeatherFuture =
       locationWeatherService.getCachedCurrent();
   late Future<bool> _developerModeFuture = _loadDeveloperMode();
   bool _isContinuingQueue = false;
+  bool _isEnqueueingSummaries = false;
   String? _queueActionDebug;
 
   @override
@@ -67,6 +75,9 @@ class _TodayPageState extends State<TodayPage> {
     if (!mounted) return;
     setState(() {
       _entriesFuture = repository.getEntriesForDate(DateTime.now());
+      _pendingSummaryFuture = _loadPendingSummaryData();
+      _todayProgressFuture = _loadTodayProgressData();
+      _todayEchoFuture = _loadTodayEchoes();
     });
   }
 
@@ -74,6 +85,7 @@ class _TodayPageState extends State<TodayPage> {
     if (!mounted) return;
     setState(() {
       _queueSnapshotFuture = queueRepository.snapshot();
+      _pendingSummaryFuture = _loadPendingSummaryData();
       _developerModeFuture = _loadDeveloperMode();
     });
   }
@@ -88,6 +100,9 @@ class _TodayPageState extends State<TodayPage> {
     if (!mounted) return;
     setState(() {
       _entriesFuture = repository.getEntriesForDate(DateTime.now());
+      _pendingSummaryFuture = _loadPendingSummaryData();
+      _todayProgressFuture = _loadTodayProgressData();
+      _todayEchoFuture = _loadTodayEchoes();
     });
     if (result is DiaryEntry) {
       widget.onDiarySaved?.call(result);
@@ -97,12 +112,28 @@ class _TodayPageState extends State<TodayPage> {
     }
   }
 
-  Future<void> _runQueuedAnalysis() async {
-    await queueRunner.processUntilIdle(maxJobs: _homeQueueBatchSize);
+  Future<void> _runQueuedAnalysis({bool rethrowError = false}) async {
+    try {
+      await queueRunner.processUntilIdle();
+    } on Object catch (error, stackTrace) {
+      if (rethrowError) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      if (!mounted) return;
+      setState(() {
+        _queueActionDebug = '队列执行失败：$error';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('整理已停止：$error')),
+      );
+    }
     if (!mounted) return;
     setState(() {
       _entriesFuture = repository.getEntriesForDate(DateTime.now());
       _queueSnapshotFuture = queueRepository.snapshot();
+      _pendingSummaryFuture = _loadPendingSummaryData();
+      _todayProgressFuture = _loadTodayProgressData();
+      _todayEchoFuture = _loadTodayEchoes();
     });
   }
 
@@ -128,7 +159,7 @@ class _TodayPageState extends State<TodayPage> {
           _queueSnapshotFuture = queueRepository.snapshot();
         });
       }
-      await _runQueuedAnalysis();
+      await _runQueuedAnalysis(rethrowError: true);
       final latest = await queueRepository.snapshot();
       if (!mounted) return;
       setState(() {
@@ -154,14 +185,20 @@ class _TodayPageState extends State<TodayPage> {
 
   String _queueContinueResult(int repaired, AiAnalysisQueueSnapshot snapshot) {
     final firstDependency = snapshot.dependencyReasons.values.firstOrNull;
-    final current = snapshot.currentJob;
+    final next = snapshot.currentJob;
+    final dependencyJob = snapshot.dependencyReasons.keys
+        .map((id) => snapshot.jobs.where((job) => job.id == id).firstOrNull)
+        .firstOrNull;
     final parts = [
       if (repaired > 0) '已补齐 $repaired 个依赖任务' else '没有新增依赖任务',
       'runnable=${snapshot.runnableCount}',
       'waiting=${snapshot.waitingCount}',
       'blocked=${snapshot.dependencyReasons.length}',
-      if (current != null)
-        'current=${current.id}/${current.state.name}/${current.currentStage.name}',
+      'runner=${AiAnalysisQueueRunner.debugRunState}',
+      'aiRequest=${AiClientService.debugRequestState}',
+      if (next != null)
+        'next=${next.id}/${next.state.name}/${next.currentStage.name}',
+      if (dependencyJob != null) 'blockedJob=${dependencyJob.id}',
       if (firstDependency != null) 'reason=$firstDependency',
     ];
     return parts.join('；');
@@ -180,6 +217,216 @@ class _TodayPageState extends State<TodayPage> {
     final status = await insightRepository.getStatus(entry.id);
     final insight = await insightRepository.getInsight(entry.id);
     return _AnalysisData(status: status, insight: insight);
+  }
+
+  Future<_PendingSummaryData> _loadPendingSummaryData() async {
+    final entries = (await repository.listEntries())
+        .where((entry) => entry.content.trim().isNotEmpty)
+        .toList(growable: false);
+    if (entries.isEmpty) return const _PendingSummaryData.empty();
+
+    final summaries = {
+      for (final summary in await periodSummaryRepository.listSummaries())
+        summary.id: summary,
+    };
+    final statuses = {
+      for (final status in await periodSummaryRepository.listStatuses())
+        status.id: status,
+    };
+    final jobs = {
+      for (final job in await queueRepository.listJobs()) job.id: job,
+    };
+    final months = <String, _PeriodScope>{};
+    final years = <String, _PeriodScope>{};
+    for (final entry in entries) {
+      final monthId = PeriodSummaryRepository.monthId(entry.date);
+      months
+          .putIfAbsent(
+            monthId,
+            () =>
+                _PeriodScope.month(DateTime(entry.date.year, entry.date.month)),
+          )
+          .entryIds
+          .add(entry.id);
+      final yearId = PeriodSummaryRepository.yearId(entry.date.year);
+      years
+          .putIfAbsent(yearId, () => _PeriodScope.year(entry.date.year))
+          .entryIds
+          .add(entry.id);
+    }
+
+    final actions = <_PeriodSummaryAction>[];
+    void collect(_PeriodScope scope) {
+      final summary = summaries[scope.id];
+      final status = statuses[scope.id];
+      final job = jobs[scope.id];
+      final hasActiveJob = job != null &&
+          job.state != AiAnalysisJobState.completed &&
+          job.type == scope.jobType;
+      if (summary == null) {
+        actions.add(_PeriodSummaryAction(
+          scope: scope,
+          kind: _PeriodSummaryActionKind.create,
+          entryIds: scope.entryIds,
+        ));
+        return;
+      }
+      if (status?.needsUpdate ?? false) {
+        final changedIds = status!.changedEntryIds
+            .where(scope.entryIds.contains)
+            .toSet()
+            .toList();
+        actions.add(_PeriodSummaryAction(
+          scope: scope,
+          kind: _PeriodSummaryActionKind.update,
+          entryIds: changedIds.isEmpty ? scope.entryIds : changedIds,
+        ));
+        return;
+      }
+      if (hasActiveJob) {
+        actions.add(_PeriodSummaryAction(
+          scope: scope,
+          kind: _PeriodSummaryActionKind.update,
+          entryIds: scope.entryIds,
+        ));
+      }
+    }
+
+    for (final scope in months.values) {
+      collect(scope);
+    }
+    for (final scope in years.values) {
+      collect(scope);
+    }
+    return _PendingSummaryData(actions);
+  }
+
+  Future<_TodayProgressData> _loadTodayProgressData() async {
+    final now = DateTime.now();
+    final entries = await repository.listEntries();
+    final monthEntries = entries
+        .where((entry) =>
+            entry.date.year == now.year && entry.date.month == now.month)
+        .toList(growable: false);
+    final yearEntries = entries
+        .where((entry) => entry.date.year == now.year)
+        .toList(growable: false);
+    final monthStart = DateTime(now.year, now.month);
+    final yearStart = DateTime(now.year);
+    return _TodayProgressData(
+      now: now,
+      monthEntryCount: monthEntries.length,
+      monthRecordedDays:
+          monthEntries.map((entry) => entry.dayKey).toSet().length,
+      monthDiaryMarkers: _recordedDayMarkers(
+          monthEntries, monthStart, DateTime(now.year, now.month + 1, 0).day),
+      yearEntryCount: yearEntries.length,
+      yearRecordedDays: yearEntries.map((entry) => entry.dayKey).toSet().length,
+      yearDiaryMarkers: _recordedDayMarkers(
+        yearEntries,
+        yearStart,
+        DateTime(now.year + 1).difference(yearStart).inDays,
+      ),
+    );
+  }
+
+  List<double> _recordedDayMarkers(
+    Iterable<DiaryEntry> entries,
+    DateTime periodStart,
+    int totalDays,
+  ) {
+    final offsets = entries
+        .map((entry) => entry.date.difference(periodStart).inDays)
+        .where((offset) => offset >= 0 && offset < totalDays)
+        .toSet()
+        .toList()
+      ..sort();
+    return offsets
+        .map((offset) => (offset + 0.5) / totalDays)
+        .toList(growable: false);
+  }
+
+  Future<List<_TodayEchoItem>> _loadTodayEchoes() async {
+    final now = DateTime.now();
+    final todayKey = DiaryEntry.dateKey(now);
+    final entries = (await repository.listEntries())
+        .where((entry) => entry.dayKey != todayKey)
+        .where((entry) =>
+            entry.date.isBefore(DateTime(now.year, now.month, now.day)))
+        .toList(growable: false);
+    final echoes = <_TodayEchoItem>[];
+    for (final entry in entries) {
+      final yearDistance = now.year - entry.date.year;
+      if (yearDistance <= 0) continue;
+      final offset = _monthDayOffset(entry.date, now);
+      if (offset.abs() > 3) continue;
+      echoes.add(_TodayEchoItem(
+        entry: entry,
+        dayOffset: offset,
+        yearDistance: yearDistance,
+      ));
+    }
+    echoes.sort((a, b) {
+      final byOffset = a.dayOffset.abs().compareTo(b.dayOffset.abs());
+      if (byOffset != 0) return byOffset;
+      return a.yearDistance.compareTo(b.yearDistance);
+    });
+    return echoes.take(2).toList(growable: false);
+  }
+
+  int _monthDayOffset(DateTime entryDate, DateTime now) {
+    final anchor = DateTime(now.year, entryDate.month, entryDate.day);
+    return anchor.difference(DateTime(now.year, now.month, now.day)).inDays;
+  }
+
+  Future<void> _summarizeNow(_PendingSummaryData data) async {
+    if (_isEnqueueingSummaries || !data.hasWork) return;
+    setState(() {
+      _isEnqueueingSummaries = true;
+    });
+    try {
+      final version = DateTime.now().microsecondsSinceEpoch;
+      final monthActions = data.actions
+          .where((action) => action.scope.type == PeriodSummaryType.month)
+          .toList()
+        ..sort((a, b) => a.scope.start.compareTo(b.scope.start));
+      final yearActions = data.actions
+          .where((action) => action.scope.type == PeriodSummaryType.year)
+          .toList()
+        ..sort((a, b) => a.scope.start.compareTo(b.scope.start));
+      for (final action in monthActions) {
+        await queueRepository.enqueueMonthSummary(
+          action.scope.start,
+          pipelineVersion: version,
+        );
+      }
+      for (final action in yearActions) {
+        await queueRepository.enqueueYearSummary(
+          action.scope.start.year,
+          pipelineVersion: version,
+          includeMonthSummaries: false,
+        );
+      }
+      await queueRepository.setPaused(false);
+      unawaited(_runQueuedAnalysis());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已加入总结队列：${data.periodCountLabel}')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('加入总结队列失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isEnqueueingSummaries = false;
+          _queueSnapshotFuture = queueRepository.snapshot();
+          _pendingSummaryFuture = _loadPendingSummaryData();
+        });
+      }
+    }
   }
 
   Widget _buildQueueCard() {
@@ -203,6 +450,57 @@ class _TodayPageState extends State<TodayPage> {
               onRetry: _retryQueue,
               onPauseChanged: _toggleQueuePaused,
             ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPendingSummaryCard() {
+    return FutureBuilder<_PendingSummaryData>(
+      future: _pendingSummaryFuture,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        if (data == null || !data.hasWork) {
+          return const SizedBox.shrink();
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _PendingSummaryCard(
+            data: data,
+            isWorking: _isEnqueueingSummaries,
+            onPressed: () => _summarizeNow(data),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildProgressCard() {
+    return FutureBuilder<_TodayProgressData>(
+      future: _todayProgressFuture,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        if (data == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _TodayProgressCard(data: data),
+        );
+      },
+    );
+  }
+
+  Widget _buildEchoCard() {
+    return FutureBuilder<List<_TodayEchoItem>>(
+      future: _todayEchoFuture,
+      builder: (context, snapshot) {
+        final items = snapshot.data ?? const <_TodayEchoItem>[];
+        if (items.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _TodayEchoCard(
+            items: items,
+            onTap: (entry) => _openEditor(entry.id),
           ),
         );
       },
@@ -292,6 +590,10 @@ class _TodayPageState extends State<TodayPage> {
                 const SizedBox(height: 16),
                 _buildAnalysisCard(latestEntry),
               ],
+              const SizedBox(height: 6),
+              _buildProgressCard(),
+              _buildPendingSummaryCard(),
+              _buildEchoCard(),
             ],
           ),
         );
@@ -305,6 +607,431 @@ class _AnalysisData {
 
   final DiaryAnalysisStatus? status;
   final DiaryInsight? insight;
+}
+
+class _PendingSummaryData {
+  const _PendingSummaryData(this.actions);
+
+  const _PendingSummaryData.empty() : actions = const [];
+
+  final List<_PeriodSummaryAction> actions;
+
+  bool get hasWork => actions.isNotEmpty;
+
+  bool get hasCreate =>
+      actions.any((action) => action.kind == _PeriodSummaryActionKind.create);
+
+  int get pendingEntryCount {
+    final ids = <String>{};
+    for (final action in actions) {
+      ids.addAll(action.entryIds);
+    }
+    return ids.length;
+  }
+
+  int get monthCount => actions
+      .where((action) => action.scope.type == PeriodSummaryType.month)
+      .map((action) => action.scope.id)
+      .toSet()
+      .length;
+
+  int get yearCount => actions
+      .where((action) => action.scope.type == PeriodSummaryType.year)
+      .map((action) => action.scope.id)
+      .toSet()
+      .length;
+
+  String get actionLabel => hasCreate ? '立即总结' : '立即更新总结';
+
+  String get title {
+    final count = pendingEntryCount;
+    if (hasCreate) return '$count 篇日记待总结';
+    return '$count 篇日记待更新总结';
+  }
+
+  String get periodCountLabel {
+    final parts = [
+      if (monthCount > 0) '$monthCount 个月',
+      if (yearCount > 0) '$yearCount 年',
+    ];
+    return parts.isEmpty ? '暂无周期' : parts.join(' · ');
+  }
+}
+
+enum _PeriodSummaryActionKind { create, update }
+
+class _PeriodSummaryAction {
+  const _PeriodSummaryAction({
+    required this.scope,
+    required this.kind,
+    required this.entryIds,
+  });
+
+  final _PeriodScope scope;
+  final _PeriodSummaryActionKind kind;
+  final Iterable<String> entryIds;
+}
+
+class _PeriodScope {
+  _PeriodScope.month(this.start)
+      : type = PeriodSummaryType.month,
+        id = PeriodSummaryRepository.monthId(start);
+
+  _PeriodScope.year(int year)
+      : type = PeriodSummaryType.year,
+        start = DateTime(year),
+        id = PeriodSummaryRepository.yearId(year);
+
+  final PeriodSummaryType type;
+  final DateTime start;
+  final String id;
+  final Set<String> entryIds = {};
+
+  AiAnalysisJobType get jobType => type == PeriodSummaryType.month
+      ? AiAnalysisJobType.monthSummary
+      : AiAnalysisJobType.yearSummary;
+}
+
+class _PendingSummaryCard extends StatelessWidget {
+  const _PendingSummaryCard({
+    required this.data,
+    required this.isWorking,
+    required this.onPressed,
+  });
+
+  final _PendingSummaryData data;
+  final bool isWorking;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _HomeCard(
+      child: Row(
+        children: [
+          Icon(Icons.auto_stories_outlined, color: theme.colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(data.title,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                Text(data.periodCountLabel, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton.tonal(
+            onPressed: isWorking ? null : onPressed,
+            child: isWorking
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(data.actionLabel),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodayProgressData {
+  const _TodayProgressData({
+    required this.now,
+    required this.monthEntryCount,
+    required this.monthRecordedDays,
+    required this.monthDiaryMarkers,
+    required this.yearEntryCount,
+    required this.yearRecordedDays,
+    required this.yearDiaryMarkers,
+  });
+
+  final DateTime now;
+  final int monthEntryCount;
+  final int monthRecordedDays;
+  final List<double> monthDiaryMarkers;
+  final int yearEntryCount;
+  final int yearRecordedDays;
+  final List<double> yearDiaryMarkers;
+
+  int get daysInMonth => DateTime(now.year, now.month + 1, 0).day;
+
+  int get dayOfYear => now.difference(DateTime(now.year)).inDays + 1;
+
+  int get daysInYear =>
+      DateTime(now.year + 1).difference(DateTime(now.year)).inDays;
+
+  double get monthProgress => (now.day / daysInMonth).clamp(0.0, 1.0);
+
+  double get yearProgress => (dayOfYear / daysInYear).clamp(0.0, 1.0);
+
+  List<double> get monthWeekMarkers => List<int>.generate(
+        daysInMonth - 1,
+        (index) => index + 2,
+        growable: false,
+      )
+          .where((day) =>
+              DateTime(now.year, now.month, day).weekday == DateTime.monday)
+          // A divider at the start of Monday separates the prior Sunday.
+          .map((day) => (day - 1) / daysInMonth)
+          .toList(growable: false);
+
+  List<double> get yearMonthMarkers {
+    final yearStart = DateTime(now.year);
+    return List<double>.generate(
+      11,
+      (index) =>
+          DateTime(now.year, index + 2).difference(yearStart).inDays /
+          daysInYear,
+      growable: false,
+    );
+  }
+}
+
+class _TodayProgressCard extends StatelessWidget {
+  const _TodayProgressCard({required this.data});
+
+  final _TodayProgressData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return _HomeCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('时光刻度',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 14),
+          _ProgressLine(
+            label: '本月',
+            progress: data.monthProgress,
+            percent: '${(data.monthProgress * 100).round()}%',
+            meta: '${data.monthRecordedDays} 天 · ${data.monthEntryCount} 篇',
+            markers: data.monthWeekMarkers,
+            diaryMarkers: data.monthDiaryMarkers,
+          ),
+          const SizedBox(height: 14),
+          _ProgressLine(
+            label: '今年',
+            progress: data.yearProgress,
+            percent: '${(data.yearProgress * 100).round()}%',
+            meta: '${data.yearRecordedDays} 天 · ${data.yearEntryCount} 篇',
+            markers: data.yearMonthMarkers,
+            diaryMarkers: data.yearDiaryMarkers,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgressLine extends StatelessWidget {
+  const _ProgressLine({
+    required this.label,
+    required this.progress,
+    required this.percent,
+    required this.meta,
+    required this.markers,
+    required this.diaryMarkers,
+  });
+
+  final String label;
+  final double progress;
+  final String percent;
+  final String meta;
+  final List<double> markers;
+  final List<double> diaryMarkers;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 44,
+              child: Text(label, style: theme.textTheme.bodyMedium),
+            ),
+            Expanded(
+              child: Text(meta, style: theme.textTheme.bodySmall),
+            ),
+            Text(percent, style: theme.textTheme.bodySmall),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _SegmentedProgressBar(
+          progress: progress,
+          markers: markers,
+          diaryMarkers: diaryMarkers,
+        ),
+      ],
+    );
+  }
+}
+
+class _SegmentedProgressBar extends StatelessWidget {
+  const _SegmentedProgressBar({
+    required this.progress,
+    required this.markers,
+    required this.diaryMarkers,
+  });
+
+  final double progress;
+  final List<double> markers;
+  final List<double> diaryMarkers;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 5,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(value: progress, minHeight: 5),
+              ),
+              IgnorePointer(
+                child: Stack(
+                  children: [
+                    for (final marker in markers)
+                      Positioned(
+                        left: (constraints.maxWidth * marker - 0.5)
+                            .clamp(0.0, constraints.maxWidth - 1),
+                        top: 0,
+                        bottom: 0,
+                        child: Container(width: 1, color: colorScheme.surface),
+                      ),
+                    for (final marker in diaryMarkers)
+                      Positioned(
+                        left: (constraints.maxWidth * marker - 2.5)
+                            .clamp(0.0, constraints.maxWidth - 5),
+                        top: 0,
+                        child: Container(
+                          width: 5,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: colorScheme.surface,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: colorScheme.primary,
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _TodayEchoItem {
+  const _TodayEchoItem({
+    required this.entry,
+    required this.dayOffset,
+    required this.yearDistance,
+  });
+
+  final DiaryEntry entry;
+  final int dayOffset;
+  final int yearDistance;
+
+  String get label {
+    final dayText = dayOffset == 0
+        ? '今日'
+        : dayOffset > 0
+            ? '后 $dayOffset 天'
+            : '前 ${dayOffset.abs()} 天';
+    return '$yearDistance 年前$dayText';
+  }
+}
+
+class _TodayEchoCard extends StatelessWidget {
+  const _TodayEchoCard({required this.items, required this.onTap});
+
+  final List<_TodayEchoItem> items;
+  final ValueChanged<DiaryEntry> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _HomeCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('今日回声',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          for (var index = 0; index < items.length; index++) ...[
+            _TodayEchoTile(item: items[index], onTap: onTap),
+            if (index != items.length - 1)
+              Divider(
+                height: 18,
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TodayEchoTile extends StatelessWidget {
+  const _TodayEchoTile({required this.item, required this.onTap});
+
+  final _TodayEchoItem item;
+  final ValueChanged<DiaryEntry> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () => onTap(item.entry),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(item.label,
+                    style: theme.textTheme.labelMedium
+                        ?.copyWith(color: theme.colorScheme.primary)),
+                const Spacer(),
+                Text(
+                  '${item.entry.date.year}.${item.entry.date.month.toString().padLeft(2, '0')}.${item.entry.date.day.toString().padLeft(2, '0')}',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              item.entry.title ?? item.entry.bodyPreview,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _TodayTitle extends StatelessWidget {
@@ -372,7 +1099,7 @@ class _NewDiaryCard extends StatelessWidget {
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('写日记',
+          Text('留下今天',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
           SizedBox(height: 10),
           Text('写几句话就好，不用完整，也不用漂亮。'),
@@ -436,12 +1163,14 @@ class _AiQueueCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final job = snapshot.currentJob;
     final theme = Theme.of(context);
-    final hasRunning = job?.state == AiAnalysisJobState.running;
+    final hasRunning = AiAnalysisQueueRunner.isRunning ||
+        job?.state == AiAnalysisJobState.running;
     final hasFailed = snapshot.failedCount > 0 && !hasRunning;
     final failedJob = hasFailed ? snapshot.firstFailedJob : null;
     final isResuming = job?.state == AiAnalysisJobState.incomplete;
     final hasVisibleWork = snapshot.hasVisibleWork;
     final dependencyReason = snapshot.dependencyReasons.values.firstOrNull;
+    final hasFailedDependency = dependencyReason?.contains('整理失败') ?? false;
     final title = snapshot.isPaused
         ? '记忆整理已暂停'
         : hasFailed
@@ -451,34 +1180,43 @@ class _AiQueueCard extends StatelessWidget {
                 : job == null
                     ? (hasVisibleWork ? '记忆整理等待继续' : '暂无待整理记忆')
                     : '正在整理记忆';
-    final stage = job?.stageLabel ??
-        failedJob?.stageLabel ??
-        dependencyReason ??
-        (hasVisibleWork ? '等待继续' : '当前没有新的整理任务');
+    final stage = hasFailedDependency
+        ? dependencyReason
+        : job?.stageLabel ??
+            failedJob?.stageLabel ??
+            dependencyReason ??
+            (hasVisibleWork ? '等待继续' : '当前没有新的整理任务');
     final errorText = job?.lastError ?? failedJob?.lastError;
     final waiting = snapshot.waitingCount;
     final currentBatch = job == null ? null : snapshot.batchForJob(job.id);
     final continueOnly = !snapshot.isPaused && !hasRunning && hasVisibleWork;
-    final primaryActionLabel = isContinuing
-        ? '继续中'
+    final canPauseRunningQueue =
+        isContinuing && hasRunning && !snapshot.isPaused;
+    final primaryActionLabel = canPauseRunningQueue
+        ? '暂停'
+        : isContinuing
+            ? '继续中'
+            : snapshot.isPaused || continueOnly
+                ? '继续'
+                : '暂停';
+    final primaryAction = canPauseRunningQueue
+        ? () => onPauseChanged(true)
         : snapshot.isPaused || continueOnly
-            ? '继续'
-            : '暂停';
-    final primaryAction = snapshot.isPaused || continueOnly
-        ? onContinue
-        : () => onPauseChanged(true);
+            ? onContinue
+            : () => onPauseChanged(true);
     final totalActive = snapshot.runnableCount +
         (job?.state == AiAnalysisJobState.running ? 1 : 0);
     final batchProgress = job == null
         ? ''
         : currentBatch != null
-            ? '正在整理 ${currentBatch.ordinalOf(job.id)}/${currentBatch.totalCount} 篇'
+            ? '已完成 ${currentBatch.completedCount}/${currentBatch.totalCount} 篇'
             : totalActive <= 0
                 ? ''
-                : '正在整理 ${snapshot.activeOrdinal}/$totalActive 篇';
+                : '已完成 ${snapshot.completedCount}/${snapshot.totalTrackedCount} 篇';
     final progress = job == null
         ? 0.0
         : (job.completedStages.length / _pipelineStageCount).clamp(0.0, 1.0);
+    final metrics = _pendingMetrics();
 
     return _HomeCard(
       child: Column(
@@ -501,8 +1239,10 @@ class _AiQueueCard extends StatelessWidget {
                         fontSize: 18, fontWeight: FontWeight.w600)),
               ),
               TextButton(
-                onPressed: isContinuing ? null : primaryAction,
-                child: isContinuing
+                onPressed: isContinuing && !canPauseRunningQueue
+                    ? null
+                    : primaryAction,
+                child: isContinuing && !canPauseRunningQueue
                     ? Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -521,6 +1261,17 @@ class _AiQueueCard extends StatelessWidget {
                 TextButton(onPressed: onRetry, child: const Text('重试')),
             ],
           ),
+          if (metrics.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final metric in metrics)
+                  _AiQueueMetricChip(metric: metric),
+              ],
+            ),
+          ],
           const SizedBox(height: 10),
           if (job != null) ...[
             LinearProgressIndicator(value: progress, minHeight: 3),
@@ -531,10 +1282,10 @@ class _AiQueueCard extends StatelessWidget {
             const SizedBox(height: 4),
           ],
           Text(snapshot.isPaused
-              ? '已暂停，继续后会从当前队列位置整理：$stage'
+              ? '已暂停，继续后会从当前队列位置整理：${stage ?? '等待处理'}'
               : isResuming
-                  ? '上次整理被中断，将从已完成阶段继续：$stage'
-                  : stage),
+                  ? '上次整理被中断，将从已完成阶段继续：${stage ?? '等待处理'}'
+                  : stage ?? '等待处理'),
           if (snapshot.estimatedRemainingLabel.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text('预计剩余 ${snapshot.estimatedRemainingLabel}',
@@ -578,6 +1329,58 @@ class _AiQueueCard extends StatelessWidget {
       .where((stage) =>
           stage != AiAnalysisStage.queued && stage != AiAnalysisStage.completed)
       .length;
+
+  List<_AiQueueMetric> _pendingMetrics() {
+    final activeJobs = snapshot.jobs
+        .where((job) => job.state != AiAnalysisJobState.completed)
+        .toList(growable: false);
+    int count(bool Function(AiAnalysisJob job) test) =>
+        activeJobs.where(test).length;
+    return [
+      _AiQueueMetric('日记', count((job) => job.type == AiAnalysisJobType.diary)),
+      _AiQueueMetric('相似度',
+          count((job) => job.type == AiAnalysisJobType.embeddingRebuild)),
+      _AiQueueMetric(
+        '总结',
+        count((job) =>
+            job.type == AiAnalysisJobType.monthSummary ||
+            job.type == AiAnalysisJobType.yearSummary),
+      ),
+      _AiQueueMetric(
+          '画像', count((job) => job.type == AiAnalysisJobType.userProfile)),
+    ].where((metric) => metric.count > 0).toList(growable: false);
+  }
+}
+
+class _AiQueueMetric {
+  const _AiQueueMetric(this.label, this.count);
+
+  final String label;
+  final int count;
+}
+
+class _AiQueueMetricChip extends StatelessWidget {
+  const _AiQueueMetricChip({required this.metric});
+
+  final _AiQueueMetric metric;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        child: Text(
+          '${metric.label} ${metric.count}',
+          style: theme.textTheme.labelMedium,
+        ),
+      ),
+    );
+  }
 }
 
 class _HomeQueueDebug extends StatelessWidget {

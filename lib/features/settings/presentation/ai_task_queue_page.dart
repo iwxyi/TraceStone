@@ -25,6 +25,7 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
   final _diaryRepository = const DiaryRepository();
 
   late Future<_AiTaskQueueData> _dataFuture = _loadData();
+  bool _isStartingQueue = false;
 
   @override
   void initState() {
@@ -72,38 +73,61 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
   }
 
   Future<void> _continueQueue() async {
-    final messenger = ScaffoldMessenger.of(context);
-    await _queueRepository.setPaused(false);
-    final repaired = await _queueRepository.enqueueMissingPeriodDependencies();
-    await _queueRunner.processUntilIdle(maxJobs: 1);
-    await _refreshAsync();
-    if (!mounted) return;
-    final snapshot = await _queueRepository.snapshot();
-    messenger.showSnackBar(
-      SnackBar(content: Text(_continueResultLabel(repaired, snapshot))),
-    );
+    if (_isStartingQueue) return;
+    setState(() {
+      _isStartingQueue = true;
+    });
+    try {
+      await _queueRepository.setPaused(false);
+      final repaired =
+          await _queueRepository.enqueueMissingPeriodDependencies();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(repaired > 0 ? '已补齐 $repaired 项依赖，开始整理' : '开始整理')),
+      );
+      unawaited(_runInteractiveQueue());
+      await _refreshAsync();
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('启动整理失败：$error')),
+      );
+      setState(() {
+        _isStartingQueue = false;
+      });
+    }
   }
 
-  String _continueResultLabel(
-    int repaired,
-    AiAnalysisQueueSnapshot snapshot,
-  ) {
-    final firstDependency = snapshot.dependencyReasons.values.firstOrNull;
-    final parts = [
-      if (repaired > 0) '已补齐 $repaired 个依赖任务' else '没有新增依赖任务',
-      '可运行 ${snapshot.runnableCount}',
-      if (snapshot.dependencyReasons.isNotEmpty)
-        '阻塞 ${snapshot.dependencyReasons.length}',
-      if (firstDependency != null) firstDependency,
-    ];
-    return parts.join(' · ');
+  Future<void> _runInteractiveQueue() async {
+    try {
+      await _queueRunner.processUntilIdle();
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('整理已停止：$error')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStartingQueue = false;
+          _dataFuture = _loadData();
+        });
+      }
+    }
   }
 
   Future<void> _togglePaused(bool paused) async {
     await _queueRepository.setPaused(paused);
     if (!paused) {
       await _queueRepository.enqueueMissingPeriodDependencies();
-      unawaited(_queueRunner.processUntilIdle(maxJobs: 1));
+      if (!_isStartingQueue) {
+        setState(() {
+          _isStartingQueue = true;
+        });
+        unawaited(_runInteractiveQueue());
+      }
     }
     await _refreshAsync();
   }
@@ -114,7 +138,12 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(count == 0 ? '没有可重建的日记' : '已加入后台整理：$count 篇日记'),
     ));
-    unawaited(_queueRunner.processUntilIdle(maxJobs: 1));
+    if (!_isStartingQueue) {
+      setState(() {
+        _isStartingQueue = true;
+      });
+      unawaited(_runInteractiveQueue());
+    }
     await _refreshAsync();
   }
 
@@ -142,6 +171,7 @@ class _AiTaskQueuePageState extends State<AiTaskQueuePage> {
                   onContinue: _continueQueue,
                   onRebuild: _enqueueEmbeddingRebuild,
                   onPauseChanged: _togglePaused,
+                  isStarting: _isStartingQueue,
                 ),
               ],
             );
@@ -175,6 +205,7 @@ class _UnifiedQueueSection extends StatelessWidget {
     required this.onContinue,
     required this.onRebuild,
     required this.onPauseChanged,
+    required this.isStarting,
   });
 
   final AiAnalysisQueueSnapshot snapshot;
@@ -184,6 +215,7 @@ class _UnifiedQueueSection extends StatelessWidget {
   final VoidCallback onContinue;
   final VoidCallback onRebuild;
   final Future<void> Function(bool paused) onPauseChanged;
+  final bool isStarting;
 
   @override
   Widget build(BuildContext context) {
@@ -292,9 +324,17 @@ class _UnifiedQueueSection extends StatelessWidget {
               runSpacing: 8,
               children: [
                 FilledButton.icon(
-                  onPressed: snapshot.hasVisibleWork ? onContinue : null,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('继续整理'),
+                  onPressed: snapshot.hasVisibleWork && !isStarting
+                      ? onContinue
+                      : null,
+                  icon: isStarting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.play_arrow),
+                  label: Text(isStarting ? '整理中' : '继续整理'),
                 ),
                 OutlinedButton.icon(
                   onPressed: rebuildableEmbeddingCount > 0 ? onRebuild : null,
